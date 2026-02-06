@@ -1,0 +1,65 @@
+---
+title: Energy Orchestrator – Decision Flow
+---
+flowchart TD
+    START([Every 30s]) --> SURPLUS[Calculate solar_surplus_w]
+    SURPLUS --> PROD{Production Scenario?}
+    
+    PROD -->|"1: Insufficient solar"| NOSOLAR
+    PROD -->|"2: Enough for one load"| ONELOAD
+    PROD -->|"3: Enough for both"| BOTHLOAD
+
+    %% No Solar Path
+    NOSOLAR --> SAFETY_A{Jacuzzi below min?<br/>State A}
+    SAFETY_A -->|Yes| HEAT_GRID[Heat Jacuzzi<br/>on grid - SAFETY]
+    SAFETY_A -->|No| CAR_X1{Car trip-critical?<br/>State X}
+    CAR_X1 -->|Yes| CHARGE_TARIFF[Queue car charge<br/>for low tariff]
+    CAR_X1 -->|No| IDLE1[No action<br/>Wait for solar]
+
+    %% One Load Path
+    ONELOAD --> SAFETY_A2{Jacuzzi State A?}
+    SAFETY_A2 -->|Yes| HEAT_SOLAR1[Heat Jacuzzi<br/>on solar - SAFETY]
+    SAFETY_A2 -->|No| PRIORITY{Evaluate Priority Queue}
+    
+    PRIORITY --> JAC_D{Jacuzzi event imminent?<br/>State D}
+    JAC_D -->|Yes| HEAT_SOLAR2[Heat Jacuzzi on solar]
+    JAC_D -->|No| CAR_X2{Car trip-critical?<br/>State X}
+    CAR_X2 -->|Yes| CHARGE_SOLAR1[Charge car on solar]
+    CAR_X2 -->|No| JAC_C{Jacuzzi needs heat?<br/>State B/C}
+    JAC_C -->|Yes| HEAT_SOLAR3[Heat Jacuzzi on solar]
+    JAC_C -->|No| CAR_Y{Car below daily max?<br/>State Y}
+    CAR_Y -->|Yes| CHARGE_SOLAR2[Charge car on solar]
+    CAR_Y -->|No| IDLE2[No load needed]
+
+    %% Both Loads Path
+    BOTHLOAD --> ALLOC[Allocate: Jacuzzi 3500W<br/>Remainder → Car charging]
+    ALLOC --> JAC_NEED{Jacuzzi needs heat?<br/>State A/B/C/D}
+    JAC_NEED -->|Yes| BOTH_JAC[Heat Jacuzzi +<br/>Charge car with remainder]
+    JAC_NEED -->|No, State E| ALL_CAR[All surplus → Car charging]
+
+    %% Outputs
+    HEAT_GRID --> OUTPUT
+    HEAT_SOLAR1 --> OUTPUT
+    HEAT_SOLAR2 --> OUTPUT
+    HEAT_SOLAR3 --> OUTPUT
+    CHARGE_TARIFF --> OUTPUT
+    CHARGE_SOLAR1 --> OUTPUT
+    CHARGE_SOLAR2 --> OUTPUT
+    BOTH_JAC --> OUTPUT
+    ALL_CAR --> OUTPUT
+    IDLE1 --> OUTPUT
+    IDLE2 --> OUTPUT
+
+    OUTPUT([Set orchestrator<br/>output helpers]) --> LOG[Log decision +<br/>scenario code]
+
+    style START fill:#4CAF50,color:#fff
+    style OUTPUT fill:#2196F3,color:#fff
+    style HEAT_GRID fill:#f44336,color:#fff
+    style HEAT_SOLAR1 fill:#FF9800,color:#fff
+    style HEAT_SOLAR2 fill:#FF9800,color:#fff
+    style HEAT_SOLAR3 fill:#FF9800,color:#fff
+    style CHARGE_SOLAR1 fill:#9C27B0,color:#fff
+    style CHARGE_SOLAR2 fill:#9C27B0,color:#fff
+    style CHARGE_TARIFF fill:#607D8B,color:#fff
+    style BOTH_JAC fill:#00BCD4,color:#fff
+    style ALL_CAR fill:#9C27B0,color:#fff

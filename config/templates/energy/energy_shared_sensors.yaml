@@ -1,0 +1,395 @@
+###############################################################################
+# ENERGY ORCHESTRATOR – SHARED SENSORS
+# File: templates/energy/energy_shared_sensors.yaml
+#
+# Phase 1B: Shared sensors consumed by the orchestrator (Phase 1C) and
+# available to all subsystems. These replace per-system duplicates.
+#
+# Format: YAML list for template: !include_dir_merge_list templates/
+#
+# Sensors:
+#   1. energy_tariff_current        – Low/main tariff with CHF rates
+#   2. energy_low_tariff_active     – Binary: low tariff window active
+#   3. energy_solar_surplus_w       – Net solar surplus in watts
+#   4. energy_production_scenario   – Solar tier (1/2/3)
+#   5. energy_jacuzzi_demand_scenario – Jacuzzi state (A–E)
+#   6. energy_ev_demand_scenario    – EV state (X/Y/idle)
+#   7. energy_orchestrator_decision – Human-readable scenario + action
+###############################################################################
+
+
+# =============================================================================
+# 1. TARIFF SENSOR
+# Shared replacement for sensor.electricity_tariff (jacuzzi_sensors.yaml).
+# Schedule: Mon–Thu 22:00–06:00 = low, Fri from 22:00 through entire weekend
+# until Mon 06:00 = low. All other hours = main.
+# =============================================================================
+- sensor:
+    - name: "Energy Tariff Current"
+      unique_id: energy_tariff_current
+      icon: mdi:cash-clock
+      state: >
+        {% set hour = now().hour %}
+        {% set dow = now().weekday() %}
+        {% if dow in [5, 6] %}
+          low
+        {% elif dow in [0, 1, 2, 3] and (hour >= 22 or hour < 6) %}
+          low
+        {% elif dow == 4 and hour >= 22 %}
+          low
+        {% else %}
+          main
+        {% endif %}
+      attributes:
+        rate_chf_kwh: >
+          {% set hour = now().hour %}
+          {% set dow = now().weekday() %}
+          {% set is_low = dow in [5, 6]
+                          or (dow in [0, 1, 2, 3] and (hour >= 22 or hour < 6))
+                          or (dow == 4 and hour >= 22) %}
+          {{ 0.25 if is_low else 0.35 }}
+        opportunity_cost: 0.10
+        next_low_start: >
+          {% set now_time = now() %}
+          {% set hour = now_time.hour %}
+          {% set dow = now_time.weekday() %}
+          {% if dow in [0, 1, 2, 3] %}
+            {{ now_time.replace(hour=22, minute=0, second=0) }}
+          {% elif dow == 4 %}
+            {{ now_time.replace(hour=22, minute=0, second=0) }}
+          {% else %}
+            {{ (now_time + timedelta(days=(7 - dow))).replace(hour=22, minute=0, second=0) }}
+          {% endif %}
+
+
+# =============================================================================
+# 2. LOW TARIFF BINARY SENSOR
+# Simple boolean for condition blocks — avoids template duplication.
+# =============================================================================
+- binary_sensor:
+    - name: "Energy Low Tariff Active"
+      unique_id: energy_low_tariff_active
+      device_class: power
+      icon: mdi:transmission-tower-off
+      state: >
+        {% set hour = now().hour %}
+        {% set dow = now().weekday() %}
+        {{ dow in [5, 6]
+           or (dow in [0, 1, 2, 3] and (hour >= 22 or hour < 6))
+           or (dow == 4 and hour >= 22) }}
+
+
+# =============================================================================
+# 3. SOLAR SURPLUS (WATTS)
+# Net exportable power after house consumption, with no margin applied.
+# Individual systems apply their own margins when consuming this value.
+#
+# Source entities (may report W or kW depending on SolarEdge config):
+#   sensor.solaredge_current_power      – PV production
+#   sensor.solaredge_power_consumption  – Total site consumption
+# Both are normalized to watts via unit_of_measurement check.
+# =============================================================================
+- sensor:
+    - name: "Energy Solar Surplus W"
+      unique_id: energy_solar_surplus_w
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      icon: mdi:solar-power-variant
+      state: >
+        {% set prod = states('sensor.solaredge_current_power') | float(0) %}
+        {% set prod = prod * 1000 if state_attr('sensor.solaredge_current_power', 'unit_of_measurement') == 'kW' else prod %}
+        {% set cons = states('sensor.solaredge_power_consumption') | float(0) %}
+        {% set cons = cons * 1000 if state_attr('sensor.solaredge_power_consumption', 'unit_of_measurement') == 'kW' else cons %}
+        {{ [0, (prod - cons)] | max | round(0) }}
+      attributes:
+        production_w: >
+          {% set v = states('sensor.solaredge_current_power') | float(0) %}
+          {{ (v * 1000 if state_attr('sensor.solaredge_current_power', 'unit_of_measurement') == 'kW' else v) | round(0) }}
+        consumption_w: >
+          {% set v = states('sensor.solaredge_power_consumption') | float(0) %}
+          {{ (v * 1000 if state_attr('sensor.solaredge_power_consumption', 'unit_of_measurement') == 'kW' else v) | round(0) }}
+        grid_w: >
+          {% set v = states('sensor.solaredge_grid_power') | float(0) %}
+          {{ (v * 1000 if state_attr('sensor.solaredge_grid_power', 'unit_of_measurement') == 'kW' else v) | round(0) }}
+        exporting: >
+          {% set prod = states('sensor.solaredge_current_power') | float(0) %}
+          {% set prod = prod * 1000 if state_attr('sensor.solaredge_current_power', 'unit_of_measurement') == 'kW' else prod %}
+          {% set cons = states('sensor.solaredge_power_consumption') | float(0) %}
+          {% set cons = cons * 1000 if state_attr('sensor.solaredge_power_consumption', 'unit_of_measurement') == 'kW' else cons %}
+          {{ prod > cons }}
+
+
+# =============================================================================
+# 4. PRODUCTION SCENARIO
+# Classifies available solar into three tiers for the orchestrator.
+#
+# Tier 1 – Insufficient:  surplus < minimum useful EV charge (~1380 W)
+# Tier 2 – One load:      surplus can power jacuzzi OR EV, not both
+# Tier 3 – Both loads:    surplus can power jacuzzi (3500 W) + minimum EV
+#
+# EV minimum = min_amps * voltage * phases  (from ev_system helpers)
+# Jacuzzi heater = 3500 W fixed
+# =============================================================================
+- sensor:
+    - name: "Energy Production Scenario"
+      unique_id: energy_production_scenario
+      icon: mdi:weather-sunny-alert
+      state: >
+        {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
+        {% set voltage = states('input_number.ev_voltage') | float(230) %}
+        {% set phases = states('input_number.ev_phases') | int(3) %}
+        {% set min_amps = states('input_number.ev_min_amps') | int(5) %}
+        {% set min_ev_w = min_amps * voltage * phases %}
+        {% set jacuzzi_w = 3500 %}
+        {% set one_load_w = [min_ev_w, jacuzzi_w] | min %}
+        {% set both_w = jacuzzi_w + min_ev_w %}
+        {% if surplus < one_load_w %}
+          1
+        {% elif surplus < both_w %}
+          2
+        {% else %}
+          3
+        {% endif %}
+      attributes:
+        surplus_w: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
+        min_ev_w: >
+          {{ (states('input_number.ev_min_amps') | int(5)
+              * states('input_number.ev_voltage') | float(230)
+              * states('input_number.ev_phases') | int(3)) | round(0) }}
+        jacuzzi_w: 3500
+        description: >
+          {% set s = states('sensor.energy_production_scenario') %}
+          {% if s == '1' %}Insufficient solar
+          {% elif s == '2' %}Enough for one load
+          {% elif s == '3' %}Enough for both loads
+          {% else %}Unknown{% endif %}
+
+
+# =============================================================================
+# 5. JACUZZI DEMAND SCENARIO
+# Maps the current jacuzzi state to the orchestrator's 5-state model.
+#
+# State A – Safety:      water temp < 5 °C (freeze risk)        → Tier 1
+# State D – Imminent:    event within heat-up window, below      → Tier 2
+#                        target and smart-start time reached
+# State C – Solar heat:  event within 24 h, below target         → Tier 3
+# State B – Standby gap: below standby temp, no imminent event   → Tier 3
+# State E – Satisfied:   at target or no demand                  → No load
+#
+# Source entities:
+#   climate.jacuzzi                        – current_temperature attr
+#   input_number.jacuzzi_target_temp       – 40 °C when heating
+#   input_number.jacuzzi_standby_temp      – standby setpoint
+#   sensor.jacuzzi_smart_start_time        – calculated preheat start
+#   calendar.jacuzzi_schedule              – next event start_time attr
+#   input_boolean.jacuzzi_automation_enabled
+#   input_boolean.jacuzzi_manual_override
+# =============================================================================
+- sensor:
+    - name: "Energy Jacuzzi Demand Scenario"
+      unique_id: energy_jacuzzi_demand_scenario
+      icon: mdi:hot-tub
+      state: >
+        {% set current_temp = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+        {% set target_temp = states('input_number.jacuzzi_target_temp') | float(40) %}
+        {% set standby_temp = states('input_number.jacuzzi_standby_temp') | float(15) %}
+        {% set auto_on = is_state('input_boolean.jacuzzi_automation_enabled', 'on') %}
+        {% set override = is_state('input_boolean.jacuzzi_manual_override', 'on') %}
+
+        {# Disabled or overridden — orchestrator should not intervene #}
+        {% if not auto_on or override %}
+          E
+        {# State A — freeze protection (absolute priority) #}
+        {% elif current_temp < 5 %}
+          A
+        {% else %}
+          {# Check for upcoming calendar event #}
+          {% set cal = states.calendar.jacuzzi_schedule %}
+          {% set has_event = cal is not none and cal.attributes.start_time is defined %}
+          {% if has_event %}
+            {% set event_start = as_timestamp(cal.attributes.start_time) %}
+            {% set now_ts = as_timestamp(now()) %}
+            {% set hours_to_event = (event_start - now_ts) / 3600 %}
+            {% set smart_start = states('sensor.jacuzzi_smart_start_time') %}
+            {% set in_heat_window = smart_start not in ['unavailable', 'unknown']
+                                    and now_ts >= as_timestamp(smart_start) %}
+
+            {# State D — event imminent, within preheat window, not at target #}
+            {% if in_heat_window and current_temp < (target_temp - 0.5) and hours_to_event > 0 %}
+              D
+            {# State C — event within 24 h, below target, solar opportunity #}
+            {% elif hours_to_event > 0 and hours_to_event <= 24 and current_temp < (target_temp - 0.5) %}
+              C
+            {# Below standby with no imminent pressure #}
+            {% elif current_temp < (standby_temp - 0.5) %}
+              B
+            {% else %}
+              E
+            {% endif %}
+          {% else %}
+            {# No event — check standby #}
+            {% if current_temp < (standby_temp - 0.5) %}
+              B
+            {% else %}
+              E
+            {% endif %}
+          {% endif %}
+        {% endif %}
+      attributes:
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) }}"
+        target_temp: "{{ states('input_number.jacuzzi_target_temp') | float(40) }}"
+        standby_temp: "{{ states('input_number.jacuzzi_standby_temp') | float(15) }}"
+        priority_tier: >
+          {% set s = states('sensor.energy_jacuzzi_demand_scenario') %}
+          {% if s == 'A' %}1
+          {% elif s == 'D' %}2
+          {% elif s in ['B', 'C'] %}3
+          {% else %}99{% endif %}
+        power_demand_w: >
+          {% set s = states('sensor.energy_jacuzzi_demand_scenario') %}
+          {{ 3500 if s in ['A', 'B', 'C', 'D'] else 0 }}
+        can_use_grid: >
+          {% set s = states('sensor.energy_jacuzzi_demand_scenario') %}
+          {{ s == 'A' }}
+        can_use_low_tariff: >
+          {% set s = states('sensor.energy_jacuzzi_demand_scenario') %}
+          {{ s in ['A', 'D'] }}
+        description: >
+          {% set s = states('sensor.energy_jacuzzi_demand_scenario') %}
+          {% if s == 'A' %}Below minimum – freeze risk (Tier 1)
+          {% elif s == 'B' %}Below standby temp (Tier 3)
+          {% elif s == 'C' %}Event <24h, solar preheat (Tier 3)
+          {% elif s == 'D' %}Event imminent, preheat active (Tier 2)
+          {% elif s == 'E' %}Satisfied – no demand
+          {% else %}Unknown{% endif %}
+
+
+# =============================================================================
+# 6. EV DEMAND SCENARIO
+# Classifies combined EV charging need into the orchestrator's state model.
+#
+# State X – Trip-critical: tomorrow's trip requires more SOC than predicted
+#           at home for either car assigned to a driver      → Tier 1
+# State Y – Top-up:        a car is plugged at home, SOC below charge limit,
+#           but no trip-critical need                        → Tier 3
+# idle   – No charging needed or no car plugged
+#
+# Source entities:
+#   input_number.ev_horace_predicted_soc_home / ev_horatio_predicted_soc_home
+#   input_number.ev_night_charge_target_soc
+#   input_number.ev_horace_current_soc / ev_horatio_current_soc
+#   input_number.ev_horace_charge_limit / ev_horatio_charge_limit
+#   input_boolean.ev_horace_trip_mode / ev_horatio_trip_mode
+#   input_select.ev_night_charge_car
+#   input_number.ev_trip_km_fraser_tomorrow / ev_trip_km_heather_tomorrow
+#   sensor.ev_plugged_vehicle  (from ev_templates.yaml)
+#   device_tracker.horace_location / horatio_location
+# =============================================================================
+- sensor:
+    - name: "Energy EV Demand Scenario"
+      unique_id: energy_ev_demand_scenario
+      icon: mdi:car-electric
+      state: >
+        {% set km_fraser = states('input_number.ev_trip_km_fraser_tomorrow') | float(0) %}
+        {% set km_heather = states('input_number.ev_trip_km_heather_tomorrow') | float(0) %}
+        {% set has_trip = (km_fraser + km_heather) > 0 %}
+
+        {% set horace_trip = is_state('input_boolean.ev_horace_trip_mode', 'on') %}
+        {% set horatio_trip = is_state('input_boolean.ev_horatio_trip_mode', 'on') %}
+
+        {% set night_car = states('input_select.ev_night_charge_car') %}
+        {% set target_soc = states('input_number.ev_night_charge_target_soc') | float(0) %}
+
+        {# Check if the car selected for overnight charging has a deficit #}
+        {% set horace_soc = states('input_number.ev_horace_predicted_soc_home') | float(0) %}
+        {% set horatio_soc = states('input_number.ev_horatio_predicted_soc_home') | float(0) %}
+
+        {% set horace_deficit = (night_car == 'Horace' and horace_soc < target_soc) %}
+        {% set horatio_deficit = (night_car == 'Horatio' and horatio_soc < target_soc) %}
+        {% set trip_critical = (has_trip or horace_trip or horatio_trip)
+                               and (horace_deficit or horatio_deficit) %}
+
+        {# Check if any car is plugged at home and below its charge limit #}
+        {% set plugged = states('sensor.ev_plugged_vehicle') %}
+        {% set horace_limit = states('input_number.ev_horace_charge_limit') | float(80) %}
+        {% set horatio_limit = states('input_number.ev_horatio_charge_limit') | float(80) %}
+        {% set horace_current = states('input_number.ev_horace_current_soc') | float(0) %}
+        {% set horatio_current = states('input_number.ev_horatio_current_soc') | float(0) %}
+
+        {% set can_top_up = (plugged == 'Horace' and horace_current < horace_limit)
+                            or (plugged == 'Horatio' and horatio_current < horatio_limit) %}
+
+        {% if trip_critical %}
+          X
+        {% elif can_top_up %}
+          Y
+        {% else %}
+          idle
+        {% endif %}
+      attributes:
+        plugged_vehicle: "{{ states('sensor.ev_plugged_vehicle') }}"
+        night_charge_car: "{{ states('input_select.ev_night_charge_car') }}"
+        target_soc: "{{ states('input_number.ev_night_charge_target_soc') | float(0) }}"
+        horace_predicted_soc: "{{ states('input_number.ev_horace_predicted_soc_home') | float(0) }}"
+        horatio_predicted_soc: "{{ states('input_number.ev_horatio_predicted_soc_home') | float(0) }}"
+        priority_tier: >
+          {% set s = states('sensor.energy_ev_demand_scenario') %}
+          {% if s == 'X' %}1
+          {% elif s == 'Y' %}3
+          {% else %}99{% endif %}
+        power_demand_w: >
+          {% set s = states('sensor.energy_ev_demand_scenario') %}
+          {% if s in ['X', 'Y'] %}
+            {{ (states('input_number.ev_charger_max_amps') | int(16)
+                * states('input_number.ev_voltage') | float(230)
+                * states('input_number.ev_phases') | int(3)) | round(0) }}
+          {% else %}
+            0
+          {% endif %}
+        can_use_grid: >
+          {{ states('sensor.energy_ev_demand_scenario') == 'X' }}
+        can_use_low_tariff: >
+          {{ states('sensor.energy_ev_demand_scenario') == 'X' }}
+        description: >
+          {% set s = states('sensor.energy_ev_demand_scenario') %}
+          {% if s == 'X' %}Trip-critical – must charge (Tier 1)
+          {% elif s == 'Y' %}Top-up – solar opportunistic (Tier 3)
+          {% elif s == 'idle' %}No charging needed
+          {% else %}Unknown{% endif %}
+
+
+# =============================================================================
+# 7. ORCHESTRATOR DECISION
+# Human-readable summary of the current scenario code and the orchestrator's
+# recommended action. Reads the output helpers set by auto_energy_001.
+#
+# State format: "{prod}-{jac}-{ev}: {action summary}"
+# Example:      "2-D-X: Heat jacuzzi, EV solar@8A"
+# =============================================================================
+- sensor:
+    - name: "Energy Orchestrator Decision"
+      unique_id: energy_orchestrator_decision
+      icon: mdi:head-cog
+      state: >
+        {% set prod = states('sensor.energy_production_scenario') %}
+        {% set jac = states('sensor.energy_jacuzzi_demand_scenario') %}
+        {% set ev = states('sensor.energy_ev_demand_scenario') %}
+        {% set code = prod ~ '-' ~ jac ~ '-' ~ ev %}
+        {% set jac_on = is_state('input_boolean.energy_jacuzzi_heat_allowed', 'on') %}
+        {% set ev_solar = is_state('input_boolean.energy_ev_solar_charge_allowed', 'on') %}
+        {% set ev_tariff = is_state('input_boolean.energy_ev_tariff_charge_allowed', 'on') %}
+        {% set ev_amps = states('input_number.energy_ev_max_solar_amps') | int(0) %}
+        {% set jac_text = 'Heat jacuzzi' if (jac_on and jac not in ['E', 'unknown', 'unavailable']) else '' %}
+        {% set ev_text = ('EV solar@' ~ ev_amps ~ 'A') if ev_solar
+                         else ('EV low-tariff' if ev_tariff else '') %}
+        {% set parts = [jac_text, ev_text] | reject('eq', '') | list %}
+        {{ code ~ ': ' ~ (parts | join(', ') if parts else 'No action') }}
+      attributes:
+        scenario_code: >
+          {{ states('sensor.energy_production_scenario') ~ '-' ~ states('sensor.energy_jacuzzi_demand_scenario') ~ '-' ~ states('sensor.energy_ev_demand_scenario') }}
+        jacuzzi_allowed: "{{ is_state('input_boolean.energy_jacuzzi_heat_allowed', 'on') }}"
+        ev_solar_allowed: "{{ is_state('input_boolean.energy_ev_solar_charge_allowed', 'on') }}"
+        ev_tariff_allowed: "{{ is_state('input_boolean.energy_ev_tariff_charge_allowed', 'on') }}"
+        ev_max_solar_amps: "{{ states('input_number.energy_ev_max_solar_amps') | int(0) }}"
+        last_decision: "{{ states('input_select.energy_last_decision') }}"

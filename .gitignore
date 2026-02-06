@@ -1,0 +1,16 @@
+# Secrets
+.ha_token
+secrets.yaml
+
+# Data files (generated at runtime)
+config/python_scripts/ev_text_store.json
+config/python_scripts/elevation_results.json
+config/python_scripts/elevation_result.json
+config/python_scripts/trip_input.json
+
+# Source uploads (reference only, not deployed)
+source_uploads/
+
+# OS
+.DS_Store
+*.swp

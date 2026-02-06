@@ -1,0 +1,240 @@
+###############################################################################
+# JACUZZI TEMPLATE SENSORS
+# File: templates/jacuzzi/jacuzzi_sensors.yaml
+#
+# Format: YAML list for template: !include_dir_merge_list templates/
+# Phase 1A: MeteoSwiss bug fixed (la_dole_temperature)
+###############################################################################
+
+# =============================================================================
+# NON-TRIGGER SENSORS (polled)
+# =============================================================================
+- sensor:
+    # Current Electricity Tariff
+    - name: "Electricity Tariff"
+      unique_id: electricity_tariff
+      state: >
+        {% set now_time = now() %}
+        {% set hour = now_time.hour %}
+        {% set day = now_time.weekday() %}
+
+        {# Monday=0, Thursday=3, Friday=4, Sunday=6 #}
+        {% if (day >= 0 and day <= 3 and hour >= 22) or (day >= 0 and day <= 3 and hour < 6) %}
+          low
+        {% elif day == 4 and hour >= 22 %}
+          low
+        {% elif (day == 5 or day == 6) %}
+          low
+        {% elif day == 0 and hour < 6 %}
+          low
+        {% else %}
+          main
+        {% endif %}
+      attributes:
+        rate_chf_kwh: >
+          {% if is_state('sensor.electricity_tariff', 'low') %}
+            0.25
+          {% else %}
+            0.35
+          {% endif %}
+        opportunity_cost: 0.10
+
+    # Next Low Tariff Period Start
+    - name: "Next Low Tariff Start"
+      unique_id: next_low_tariff_start
+      state: >
+        {% set now_time = now() %}
+        {% set hour = now_time.hour %}
+        {% set day = now_time.weekday() %}
+
+        {# If currently in low tariff, find next one #}
+        {% if is_state('sensor.electricity_tariff', 'low') %}
+          {% if day >= 0 and day <= 3 and hour < 6 %}
+            {{ now_time.replace(hour=22, minute=0, second=0) }}
+          {% elif day == 4 %}
+            {{ now_time.replace(hour=22, minute=0, second=0) }}
+          {% elif day == 5 or day == 6 %}
+            {{ (now_time + timedelta(days=1)).replace(hour=0, minute=0, second=0) }}
+          {% else %}
+            {{ (now_time + timedelta(days=(7-day))).replace(hour=22, minute=0, second=0) }}
+          {% endif %}
+        {% else %}
+          {# Currently in main tariff #}
+          {% if day >= 0 and day <= 3 %}
+            {{ now_time.replace(hour=22, minute=0, second=0) }}
+          {% elif day == 4 %}
+            {{ now_time.replace(hour=22, minute=0, second=0) }}
+          {% else %}
+            {{ (now_time + timedelta(days=(7-day))).replace(hour=22, minute=0, second=0) }}
+          {% endif %}
+        {% endif %}
+      device_class: timestamp
+
+    # Next Jacuzzi Event from Calendar
+    - name: "Next Jacuzzi Event"
+      unique_id: next_jacuzzi_event
+      state: >
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {% if cal is not none and cal.attributes.start_time is defined %}
+          {{ as_timestamp(cal.attributes.start_time) | timestamp_custom('%Y-%m-%d %H:%M') }}
+        {% else %}
+          unavailable
+        {% endif %}
+      attributes:
+        start_time: >
+          {% set cal = states.calendar.jacuzzi_schedule %}
+          {% if cal is not none and cal.attributes.start_time is defined %}
+            {{ cal.attributes.start_time }}
+          {% else %}
+            null
+          {% endif %}
+        end_time: >
+          {% set cal = states.calendar.jacuzzi_schedule %}
+          {% if cal is not none and cal.attributes.end_time is defined %}
+            {{ cal.attributes.end_time }}
+          {% else %}
+            null
+          {% endif %}
+        summary: >
+          {% set cal = states.calendar.jacuzzi_schedule %}
+          {% if cal is not none and cal.attributes.message is defined %}
+            {{ cal.attributes.message }}
+          {% else %}
+            ''
+          {% endif %}
+
+    # Estimated Heat-Up Time
+    - name: "Jacuzzi Heat Up Time Required"
+      unique_id: jacuzzi_heat_up_time
+      state: >
+        {% set current_temp = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+        {% set target_temp = states('input_number.jacuzzi_target_temp') | float(40) %}
+        {% set temp_diff = target_temp - current_temp %}
+
+        {% set outdoor_temp = states('sensor.la_dole_temperature') | float(10) %}
+
+        {# Adjust heating rate based on season/outdoor temp #}
+        {% if outdoor_temp > 15 %}
+          {% set heat_rate = states('input_number.jacuzzi_heat_rate_summer') | float(5) %}
+        {% else %}
+          {% set heat_rate = states('input_number.jacuzzi_heat_rate_winter') | float(3) %}
+        {% endif %}
+
+        {# Calculate hours needed #}
+        {% if temp_diff > 0 %}
+          {{ (temp_diff / heat_rate) | round(1) }}
+        {% else %}
+          0
+        {% endif %}
+      unit_of_measurement: "h"
+      icon: mdi:clock-outline
+      attributes:
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) }}"
+        target_temp: "{{ states('input_number.jacuzzi_target_temp') | float(40) }}"
+        temp_difference: >
+          {{ (states('input_number.jacuzzi_target_temp') | float(40) - state_attr('climate.jacuzzi', 'current_temperature') | float(20)) | round(1) }}
+        heating_rate_used: >
+          {% set outdoor_temp = states('sensor.la_dole_temperature') | float(10) %}
+          {% if outdoor_temp > 15 %}
+            {{ states('input_number.jacuzzi_heat_rate_summer') | float(5) }}
+          {% else %}
+            {{ states('input_number.jacuzzi_heat_rate_winter') | float(3) }}
+          {% endif %}
+
+    # Smart Start Time Calculator
+    - name: "Jacuzzi Smart Start Time"
+      unique_id: jacuzzi_smart_start_time
+      state: >
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {% if cal is not none and cal.attributes.start_time is defined %}
+          {% set event_start = as_timestamp(cal.attributes.start_time) %}
+          {% set heat_hours = states('sensor.jacuzzi_heat_up_time_required') | float(3) %}
+          {% set buffer_min = states('input_number.jacuzzi_preheat_buffer') | float(30) %}
+          {% set total_seconds = (heat_hours * 3600) + (buffer_min * 60) %}
+          {% set start_time = event_start - total_seconds %}
+
+          {# Check if we should wait for solar or low tariff #}
+          {% set solar_priority = is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
+          {% set now_ts = now().timestamp() %}
+
+          {# If solar priority and enough time, try to align with solar hours (9-16) #}
+          {% if solar_priority and (event_start - now_ts) > 28800 %}
+            {% set start_hour = start_time | timestamp_custom('%H') | int %}
+            {% if start_hour < 9 %}
+              {# Delay start to 9am if possible #}
+              {% set proposed_start = start_time | timestamp_custom('%Y-%m-%d') + ' 09:00:00' %}
+              {% set proposed_ts = as_timestamp(proposed_start) %}
+              {% if proposed_ts + total_seconds <= event_start %}
+                {{ proposed_ts | timestamp_custom('%Y-%m-%d %H:%M') }}
+              {% else %}
+                {{ start_time | timestamp_custom('%Y-%m-%d %H:%M') }}
+              {% endif %}
+            {% else %}
+              {{ start_time | timestamp_custom('%Y-%m-%d %H:%M') }}
+            {% endif %}
+          {% else %}
+            {{ start_time | timestamp_custom('%Y-%m-%d %H:%M') }}
+          {% endif %}
+        {% else %}
+          unavailable
+        {% endif %}
+      attributes:
+        calculation_method: >
+          {% if is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
+            solar_optimized
+          {% else %}
+            standard
+          {% endif %}
+        heating_duration_hours: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(0) }}"
+
+    # Cost Savings Tracker (Daily)
+    - name: "Jacuzzi Daily Savings"
+      unique_id: jacuzzi_daily_savings
+      state: >
+        {# Calculate savings vs 24/7 at 40C #}
+        {# Estimate: 3.5kW * 40% duty cycle at steady state = 1.4kW avg * 24h = 33.6 kWh/day #}
+        {# At 0.35 CHF/kWh average = 11.76 CHF/day baseline cost #}
+
+        {# This is a simplified estimate - enhance with actual power monitoring #}
+        {% set baseline_daily_cost = 11.76 %}
+        {% set actual_cost = states('sensor.jacuzzi_daily_cost') | float(0) %}
+        {{ (baseline_daily_cost - actual_cost) | round(2) }}
+      unit_of_measurement: "CHF"
+      icon: mdi:piggy-bank
+
+    # Current Mode
+    - name: "Jacuzzi Current Mode"
+      unique_id: jacuzzi_current_mode
+      state: >
+        {% if is_state('input_boolean.jacuzzi_maintenance_mode', 'on') %}
+          maintenance
+        {% elif is_state('input_boolean.jacuzzi_manual_override', 'on') %}
+          manual_override
+        {% elif not is_state('input_boolean.jacuzzi_automation_enabled', 'on') %}
+          disabled
+        {% else %}
+          {% set current_temp = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+          {% set target_temp = state_attr('climate.jacuzzi', 'temperature') | float(40) %}
+          {% set hvac_mode = states('climate.jacuzzi') %}
+          {% if current_temp >= (target_temp - 0.5) %}
+            ready
+          {% elif hvac_mode == 'heat' %}
+            heating
+          {% else %}
+            standby
+          {% endif %}
+        {% endif %}
+      icon: >
+        {% if is_state('sensor.jacuzzi_current_mode', 'ready') %}
+          mdi:hot-tub
+        {% elif is_state('sensor.jacuzzi_current_mode', 'heating') %}
+          mdi:fire
+        {% elif is_state('sensor.jacuzzi_current_mode', 'maintenance') %}
+          mdi:wrench
+        {% else %}
+          mdi:power-sleep
+        {% endif %}
+      attributes:
+        current_temperature: "{{ state_attr('climate.jacuzzi', 'current_temperature') }}"
+        target_temperature: "{{ state_attr('climate.jacuzzi', 'temperature') }}"
+        hvac_mode: "{{ states('climate.jacuzzi') }}"

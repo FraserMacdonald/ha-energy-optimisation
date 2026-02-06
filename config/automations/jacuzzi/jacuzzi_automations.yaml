@@ -1,0 +1,600 @@
+###############################################################################
+# JACUZZI AUTOMATIONS
+# File: automations/jacuzzi/jacuzzi_automations.yaml
+#
+# Numbering scheme (3-digit, per-system):
+#   001-019: Core / lifecycle
+#   020-039: Solar / energy
+#   040-059: Scheduling / calendar
+#   060-079: Notifications / alerts
+#   080-099: Safety / override
+#
+# Phase 1A: Renumbered, bug-fixed, syntax modernised
+###############################################################################
+
+
+# ==============================================================================
+# 001 – TEMPERATURE CONTROL LOOP
+# ==============================================================================
+- id: auto_jacuzzi_001_temperature_control
+  alias: "Jacuzzi 001 – Temperature Control Loop"
+  description: >
+    Controls heater based on target temperature with 0.5°C hysteresis.
+    Runs every 2 minutes and on temperature/target changes.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: climate.jacuzzi
+      attribute: current_temperature
+    - trigger: state
+      entity_id: input_number.jacuzzi_target_temp
+    - trigger: time_pattern
+      minutes: "/2"
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.jacuzzi_automation_enabled
+      state: "on"
+    - condition: state
+      entity_id: input_boolean.jacuzzi_manual_override
+      state: "off"
+    - condition: state
+      entity_id: input_boolean.jacuzzi_maintenance_mode
+      state: "off"
+
+  actions:
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: >
+                {% set current = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+                {% set target = states('input_number.jacuzzi_target_temp') | float(40) %}
+                {{ current < (target - 0.5) }}
+          sequence:
+            - action: climate.set_temperature
+              target:
+                entity_id: climate.jacuzzi
+              data:
+                temperature: "{{ states('input_number.jacuzzi_target_temp') }}"
+            - action: climate.set_hvac_mode
+              target:
+                entity_id: climate.jacuzzi
+              data:
+                hvac_mode: heat
+
+        - conditions:
+            - condition: template
+              value_template: >
+                {% set current = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+                {% set target = states('input_number.jacuzzi_target_temp') | float(40) %}
+                {{ current >= target }}
+          sequence:
+            - action: climate.set_hvac_mode
+              target:
+                entity_id: climate.jacuzzi
+              data:
+                hvac_mode: "off"
+
+
+# ==============================================================================
+# 020 – SOLAR OPPORTUNISTIC HEATING
+# Note: Will be retired in Phase 1C when orchestrator handles solar dispatch.
+# ==============================================================================
+- id: auto_jacuzzi_020_solar_opportunistic
+  alias: "Jacuzzi 020 – Solar Opportunistic Heating"
+  description: >
+    Uses excess solar to pre-heat jacuzzi when event is scheduled within 24h.
+    RETIRE in Phase 1C – orchestrator will handle solar dispatch.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    # Bug fix: was binary_sensor.solar_available_jacuzzi (wrong entity_id)
+    # Name "Solar Available for Jacuzzi" → entity binary_sensor.solar_available_for_jacuzzi
+    - trigger: state
+      entity_id: binary_sensor.solar_available_for_jacuzzi
+      to: "on"
+      for:
+        minutes: 5
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.jacuzzi_automation_enabled
+      state: "on"
+    - condition: state
+      entity_id: input_boolean.jacuzzi_solar_priority
+      state: "on"
+    - condition: state
+      entity_id: input_boolean.jacuzzi_manual_override
+      state: "off"
+    # Orchestrator gate: legacy mode (off) OR orchestrator grants permission
+    - condition: or
+      conditions:
+        - condition: state
+          entity_id: input_boolean.energy_orchestrator_enabled
+          state: "off"
+        - condition: state
+          entity_id: input_boolean.energy_jacuzzi_heat_allowed
+          state: "on"
+    - condition: template
+      value_template: >
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {% if cal is not none and cal.attributes.start_time is defined %}
+          {% set event_start = as_timestamp(cal.attributes.start_time) %}
+          {% set now_ts = now().timestamp() %}
+          {{ (event_start - now_ts) < 86400 and (event_start - now_ts) > 0 }}
+        {% else %}
+          false
+        {% endif %}
+    - condition: template
+      value_template: >
+        {{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) < 38 }}
+
+  actions:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_target_temp
+      data:
+        value: 40
+    - action: logbook.log
+      data:
+        name: "Jacuzzi Solar Heating"
+        message: >
+          Using excess solar to pre-heat jacuzzi.
+          Solar: {{ state_attr('binary_sensor.solar_available_for_jacuzzi', 'solar_power_w') }}W
+
+
+# ==============================================================================
+# 021 – LOW TARIFF HEATING PREFERENCE
+# Note: Will be retired in Phase 1C when orchestrator handles tariff logic.
+# ==============================================================================
+- id: auto_jacuzzi_021_low_tariff_heating
+  alias: "Jacuzzi 021 – Low Tariff Heating Preference"
+  description: >
+    Delays heating to low tariff period if enough time available.
+    RETIRE in Phase 1C – orchestrator will handle tariff decisions.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: sensor.electricity_tariff
+      to: "low"
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.jacuzzi_automation_enabled
+      state: "on"
+    - condition: state
+      entity_id: input_boolean.jacuzzi_manual_override
+      state: "off"
+    # Orchestrator gate: legacy mode (off) OR orchestrator grants permission
+    - condition: or
+      conditions:
+        - condition: state
+          entity_id: input_boolean.energy_orchestrator_enabled
+          state: "off"
+        - condition: state
+          entity_id: input_boolean.energy_jacuzzi_heat_allowed
+          state: "on"
+    - condition: template
+      value_template: >
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {% if cal is not none and cal.attributes.start_time is defined %}
+          {% set event_start = as_timestamp(cal.attributes.start_time) %}
+          {% set now_ts = now().timestamp() %}
+          {% set heat_time = states('sensor.jacuzzi_heat_up_time_required') | float(3) * 3600 %}
+          {% set time_available = event_start - now_ts %}
+          {{ time_available > heat_time and time_available < 43200 }}
+        {% else %}
+          false
+        {% endif %}
+    - condition: template
+      value_template: >
+        {{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) < 35 }}
+
+  actions:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_target_temp
+      data:
+        value: 40
+    - action: logbook.log
+      data:
+        name: "Jacuzzi Low Tariff Heating"
+        message: >
+          Starting heating during low tariff for event
+          at {{ state_attr('calendar.jacuzzi_schedule', 'start_time') }}
+
+
+# ==============================================================================
+# 022 – SOLAR OFF FALLBACK
+# Reverts to standby when solar surplus drops while jacuzzi was solar-heating.
+# ==============================================================================
+- id: auto_jacuzzi_022_solar_off_fallback
+  alias: "Jacuzzi 022 – Solar Off Fallback"
+  description: >
+    If jacuzzi is heating due to solar opportunistic mode and solar surplus
+    drops below 3500W for more than 10 minutes, reverts target to standby.
+    Prevents grid heating when clouds appear.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: numeric_state
+      entity_id: sensor.energy_solar_surplus_w
+      below: 3500
+      for:
+        minutes: 10
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.jacuzzi_automation_enabled
+      state: "on"
+    - condition: state
+      entity_id: input_boolean.jacuzzi_solar_priority
+      state: "on"
+    # Only if currently heating (target at 40)
+    - condition: template
+      value_template: >
+        {{ states('input_number.jacuzzi_target_temp') | float(15) >= 40 }}
+    # Don't revert if in a calendar-driven preheat window
+    - condition: template
+      value_template: >
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {% set smart_start = states('sensor.jacuzzi_smart_start_time') %}
+        {% set in_preheat = false %}
+        {% if cal is not none and cal.attributes.start_time is defined
+           and smart_start not in ['unavailable', 'unknown', ''] %}
+          {% set now_ts = as_timestamp(now()) %}
+          {% set event_ts = as_timestamp(cal.attributes.start_time) %}
+          {% set smart_ts = as_timestamp(smart_start) %}
+          {% set in_preheat = now_ts >= smart_ts and now_ts < event_ts %}
+        {% endif %}
+        {{ not in_preheat }}
+
+  actions:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_target_temp
+      data:
+        value: "{{ states('input_number.jacuzzi_standby_temp') | float(15) }}"
+    - action: logbook.log
+      data:
+        name: "Jacuzzi Solar Fallback"
+        message: >
+          Solar surplus dropped below 3500W for 10 min. Reverting to standby
+          ({{ states('input_number.jacuzzi_standby_temp') }}°C) to prevent grid heating.
+
+
+# ==============================================================================
+# 040 – CALENDAR EVENT SCHEDULER
+# ==============================================================================
+- id: auto_jacuzzi_040_calendar_scheduler
+  alias: "Jacuzzi 040 – Calendar Event Scheduler"
+  description: >
+    Monitors calendar and schedules heating to start at the optimal time
+    calculated by sensor.jacuzzi_smart_start_time.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/5"
+    - trigger: state
+      entity_id: calendar.jacuzzi_schedule
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.jacuzzi_automation_enabled
+      state: "on"
+    - condition: state
+      entity_id: input_boolean.jacuzzi_manual_override
+      state: "off"
+
+  actions:
+    - choose:
+        # Preheat window: start time reached but event hasn't started
+        - conditions:
+            - condition: template
+              value_template: >
+                {% set cal = states.calendar.jacuzzi_schedule %}
+                {% if cal is not none and cal.attributes.start_time is defined %}
+                  {% set event_start = as_timestamp(cal.attributes.start_time) %}
+                  {% set smart_start_raw = states('sensor.jacuzzi_smart_start_time') %}
+                  {% if smart_start_raw not in ['unavailable', 'unknown', ''] %}
+                    {% set smart_start = as_timestamp(smart_start_raw) %}
+                    {% set now_ts = now().timestamp() %}
+                    {{ now_ts >= smart_start and now_ts < event_start }}
+                  {% else %}
+                    false
+                  {% endif %}
+                {% else %}
+                  false
+                {% endif %}
+            # Orchestrator gate: legacy mode (off) OR orchestrator grants permission
+            - condition: or
+              conditions:
+                - condition: state
+                  entity_id: input_boolean.energy_orchestrator_enabled
+                  state: "off"
+                - condition: state
+                  entity_id: input_boolean.energy_jacuzzi_heat_allowed
+                  state: "on"
+          sequence:
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.jacuzzi_target_temp
+              data:
+                value: 40
+
+        # Event ongoing — maintain temperature
+        - conditions:
+            - condition: state
+              entity_id: calendar.jacuzzi_schedule
+              state: "on"
+            # Orchestrator gate: legacy mode (off) OR orchestrator grants permission
+            - condition: or
+              conditions:
+                - condition: state
+                  entity_id: input_boolean.energy_orchestrator_enabled
+                  state: "off"
+                - condition: state
+                  entity_id: input_boolean.energy_jacuzzi_heat_allowed
+                  state: "on"
+          sequence:
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.jacuzzi_target_temp
+              data:
+                value: 40
+
+      # Default: no event or event passed — standby
+      default:
+        - action: input_number.set_value
+          target:
+            entity_id: input_number.jacuzzi_target_temp
+          data:
+            value: "{{ states('input_number.jacuzzi_standby_temp') }}"
+
+
+# ==============================================================================
+# 060 – EVENT READINESS REMINDER
+# ==============================================================================
+- id: auto_jacuzzi_060_event_reminder
+  alias: "Jacuzzi 060 – Event Readiness Reminder"
+  description: >
+    Notifies 30 minutes before a jacuzzi event if the water is ready.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: template
+      value_template: >
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {% if cal is not none and cal.attributes.start_time is defined %}
+          {% set event_start = as_timestamp(cal.attributes.start_time) %}
+          {% set now_ts = now().timestamp() %}
+          {% set diff = event_start - now_ts %}
+          {{ diff <= 1800 and diff > 1740 }}
+        {% else %}
+          false
+        {% endif %}
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) >= 38 }}
+
+  actions:
+    - action: notify.notify
+      data:
+        title: "Jacuzzi Ready 🛁"
+        message: >
+          Your jacuzzi is at {{ state_attr('climate.jacuzzi', 'current_temperature') }}°C
+          and ready for your session!
+
+
+# ==============================================================================
+# 061 – NOT READY WARNING
+# Companion to 060 – fires when jacuzzi is NOT ready before an event.
+# ==============================================================================
+- id: auto_jacuzzi_061_not_ready_warning
+  alias: "Jacuzzi 061 – Not Ready Warning"
+  description: >
+    Notifies 30 minutes before a calendar event if the jacuzzi water
+    temperature is below 38°C, with the current temp and estimated
+    time to ready.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: template
+      value_template: >
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {% if cal is not none and cal.attributes.start_time is defined %}
+          {% set event_start = as_timestamp(cal.attributes.start_time) %}
+          {% set now_ts = now().timestamp() %}
+          {% set diff = event_start - now_ts %}
+          {{ diff <= 1800 and diff > 1740 }}
+        {% else %}
+          false
+        {% endif %}
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) < 38 }}
+
+  actions:
+    - variables:
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) }}"
+        heat_hours: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(3) }}"
+        heat_mins: "{{ (heat_hours | float * 60) | round(0) }}"
+    - action: notify.notify
+      data:
+        title: "Jacuzzi Not Ready"
+        message: >
+          Jacuzzi is {{ current_temp }}°C (target 40°C) with ~{{ heat_mins }} min
+          estimated to heat. Event starts in 30 minutes.
+
+
+# ==============================================================================
+# 080 – MANUAL OVERRIDE HANDLER
+# ==============================================================================
+- id: auto_jacuzzi_080_manual_override
+  alias: "Jacuzzi 080 – Manual Override Handler"
+  description: >
+    Handles manual override activation and expiration.
+    When override expires, returns to automatic control.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: input_boolean.jacuzzi_manual_override
+      to: "on"
+    - trigger: template
+      value_template: >
+        {% set override_until = states('input_datetime.jacuzzi_override_until') %}
+        {{ is_state('input_boolean.jacuzzi_manual_override', 'on')
+           and override_until not in ['unknown', 'unavailable', '']
+           and as_timestamp(now()) >= as_timestamp(override_until) }}
+
+  actions:
+    - choose:
+        # Override activated (and not yet expired)
+        - conditions:
+            - condition: state
+              entity_id: input_boolean.jacuzzi_manual_override
+              state: "on"
+            - condition: template
+              value_template: >
+                {% set override_until = states('input_datetime.jacuzzi_override_until') %}
+                {{ override_until in ['unknown', 'unavailable', '']
+                   or as_timestamp(now()) < as_timestamp(override_until) }}
+          sequence:
+            - action: logbook.log
+              data:
+                name: "Jacuzzi Manual Override"
+                message: >
+                  Manual override activated
+                  until {{ states('input_datetime.jacuzzi_override_until') }}
+
+        # Override expired
+        - conditions:
+            - condition: template
+              value_template: >
+                {% set override_until = states('input_datetime.jacuzzi_override_until') %}
+                {{ override_until not in ['unknown', 'unavailable', '']
+                   and as_timestamp(now()) >= as_timestamp(override_until) }}
+          sequence:
+            - action: input_boolean.turn_off
+              target:
+                entity_id: input_boolean.jacuzzi_manual_override
+            - action: logbook.log
+              data:
+                name: "Jacuzzi Manual Override"
+                message: "Override expired, returning to automatic control"
+
+
+# ==============================================================================
+# 090 – FREEZE PROTECTION
+# ==============================================================================
+- id: auto_jacuzzi_090_freeze_protection
+  alias: "Jacuzzi 090 – Freeze Protection"
+  description: >
+    Prevents freezing in extreme cold. Activates heating if water
+    temperature drops below 5°C. Overrides all other modes.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: template
+      value_template: >
+        {{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) < 5 }}
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.jacuzzi_automation_enabled
+      state: "on"
+
+  actions:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_target_temp
+      data:
+        value: 10
+    - action: notify.notify
+      data:
+        title: "⚠️ Jacuzzi Freeze Protection"
+        message: >
+          Temperature critically low
+          ({{ state_attr('climate.jacuzzi', 'current_temperature') }}°C).
+          Freeze protection activated, heating to 10°C.
+
+
+# ==============================================================================
+# 091 – PIPE FREEZE PUMP CYCLING
+# Safety tier 0 — bypasses orchestrator. Runs independently of heating demand.
+# ==============================================================================
+- id: auto_jacuzzi_091_pipe_freeze_cycling
+  alias: "Jacuzzi 091 – Pipe Freeze Pump Cycling"
+  description: >
+    Cycles the jacuzzi pump for 5 minutes every 30 minutes when outdoor
+    temperature is below 0°C and the jacuzzi is in standby. Prevents pipe
+    freezing by circulating water. Safety tier 0 — bypasses orchestrator.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/30"
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.jacuzzi_automation_enabled
+      state: "on"
+    - condition: numeric_state
+      entity_id: sensor.la_dole_temperature
+      below: 0
+    # Only cycle when in standby (not actively heating for an event)
+    - condition: template
+      value_template: >
+        {{ states('input_number.jacuzzi_target_temp') | float(40)
+           <= states('input_number.jacuzzi_standby_temp') | float(15) }}
+
+  actions:
+    # Temporarily raise target to trigger pump circulation
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_target_temp
+      data:
+        value: >
+          {{ [state_attr('climate.jacuzzi', 'current_temperature') | float(5) + 2,
+              states('input_number.jacuzzi_standby_temp') | float(15)] | max }}
+    - delay:
+        minutes: 5
+    # Restore standby temperature
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_target_temp
+      data:
+        value: "{{ states('input_number.jacuzzi_standby_temp') | float(15) }}"
+    - action: logbook.log
+      data:
+        name: "Jacuzzi Pipe Protection"
+        message: >
+          Pump cycled for 5 min (outdoor: {{ states('sensor.la_dole_temperature') }}°C)

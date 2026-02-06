@@ -1,0 +1,730 @@
+###############################################################################
+# EV SYSTEM – HELPER DEFINITIONS
+# File: packages/ev_system.yaml
+#
+# All helpers for the EV charging and trip planning system.
+# Defined in YAML (not UI) for version control.
+#
+# Phase 1A: 6 helpers renamed to add ev_ prefix
+#   horace_allow_charging → ev_horace_allow_charging
+#   horatio_allow_charging → ev_horatio_allow_charging
+#   horace_trip_mode → ev_horace_trip_mode
+#   horatio_trip_mode → ev_horatio_trip_mode
+#   horace_charge_limit → ev_horace_charge_limit
+#   horatio_charge_limit → ev_horatio_charge_limit
+#
+# NOTE: Trip leg data stored via input_select.set_options (compacted JSON,
+# max 255 chars). For days with many stops, event titles are truncated.
+###############################################################################
+
+# =============================================================================
+# INPUT BOOLEANS - On/Off flags and modes
+# =============================================================================
+input_boolean:
+  # --- System Modes ---
+  ev_solar_mode_enabled:
+    name: "EV Solar Charging Mode"
+    icon: mdi:solar-power
+
+  ev_horace_allow_charging:
+    name: "Horace Allow Charging"
+    icon: mdi:ev-station
+
+  ev_horatio_allow_charging:
+    name: "Horatio Allow Charging"
+    icon: mdi:ev-station
+
+  ev_horace_trip_mode:
+    name: "Horace Trip Mode (100% charge)"
+    icon: mdi:road-variant
+
+  ev_horatio_trip_mode:
+    name: "Horatio Trip Mode (100% charge)"
+    icon: mdi:road-variant
+
+  # --- External Charging Warnings ---
+  ev_external_charge_required:
+    name: "External Charging Required"
+    icon: mdi:alert-circle
+
+  ev_horace_charged_externally_today:
+    name: "Horace Charged Externally Today"
+    icon: mdi:battery-charging-outline
+
+  ev_horatio_charged_externally_today:
+    name: "Horatio Charged Externally Today"
+    icon: mdi:battery-charging-outline
+
+  # --- Climate Confirmation Flags ---
+  ev_horace_climate_active:
+    name: "Horace Climate Currently Active"
+    icon: mdi:fan
+
+  ev_horatio_climate_active:
+    name: "Horatio Climate Currently Active"
+    icon: mdi:fan
+
+
+# =============================================================================
+# INPUT NUMBERS - Numeric values and measurements
+# =============================================================================
+input_number:
+  # --- Charger Configuration ---
+  ev_charger_max_amps:
+    name: "Charger Max Amps"
+    min: 6
+    max: 32
+    step: 1
+    unit_of_measurement: "A"
+    icon: mdi:current-ac
+    initial: 16
+
+  ev_min_amps:
+    name: "Minimum Charging Amps"
+    min: 1
+    max: 16
+    step: 1
+    unit_of_measurement: "A"
+    icon: mdi:current-ac
+    initial: 5
+
+  ev_voltage:
+    name: "Grid Voltage"
+    min: 200
+    max: 250
+    step: 1
+    unit_of_measurement: "V"
+    icon: mdi:flash
+    initial: 230
+
+  ev_phases:
+    name: "Charger Phases"
+    min: 1
+    max: 3
+    step: 1
+    icon: mdi:sine-wave
+    initial: 3
+
+  ev_solar_margin_w:
+    name: "Solar Margin (Watts)"
+    min: 0
+    max: 2000
+    step: 50
+    unit_of_measurement: "W"
+    icon: mdi:solar-power
+    initial: 500
+
+  # --- Charge Limits (synced to Tesla) ---
+  ev_horace_charge_limit:
+    name: "Horace Charge Limit"
+    min: 50
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-charging-80
+    initial: 80
+
+  ev_horatio_charge_limit:
+    name: "Horatio Charge Limit"
+    min: 50
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-charging-80
+    initial: 80
+
+  # --- Trip Distances (Tomorrow) ---
+  ev_trip_km_fraser_tomorrow:
+    name: "Fraser Tomorrow Trip Distance"
+    min: 0
+    max: 1000
+    step: 1
+    unit_of_measurement: "km"
+    icon: mdi:map-marker-distance
+
+  ev_trip_km_heather_tomorrow:
+    name: "Heather Tomorrow Trip Distance"
+    min: 0
+    max: 1000
+    step: 1
+    unit_of_measurement: "km"
+    icon: mdi:map-marker-distance
+
+  ev_horace_consumption_factor:
+    name: "Horace Consumption Correction Factor"
+    min: 0.5
+    max: 2.0
+    step: 0.01
+    initial: 1.0
+    icon: mdi:tune
+
+  ev_horatio_consumption_factor:
+    name: "Horatio Consumption Correction Factor"
+    min: 0.5
+    max: 2.0
+    step: 0.01
+    initial: 1.0
+    icon: mdi:tune
+
+  ev_fraser_elevation_soc_drop:
+    name: "Fraser Elevation-Adjusted SOC Drop"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "%"
+    icon: mdi:elevation-rise
+
+  ev_heather_elevation_soc_drop:
+    name: "Heather Elevation-Adjusted SOC Drop"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "%"
+    icon: mdi:elevation-rise
+
+  # --- Travel Times ---
+  ev_fraser_travel_minutes:
+    name: "Fraser Travel Time to First Event"
+    min: 0
+    max: 300
+    step: 1
+    unit_of_measurement: "min"
+    icon: mdi:clock-outline
+
+  ev_heather_travel_minutes:
+    name: "Heather Travel Time to First Event"
+    min: 0
+    max: 300
+    step: 1
+    unit_of_measurement: "min"
+    icon: mdi:clock-outline
+
+  # --- SOC Tracking ---
+  ev_horace_current_soc:
+    name: "Horace Current SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery
+
+  ev_horatio_current_soc:
+    name: "Horatio Current SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery
+
+  ev_horace_previous_soc:
+    name: "Horace Previous SOC Reading"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-clock
+
+  ev_horatio_previous_soc:
+    name: "Horatio Previous SOC Reading"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-clock
+
+  ev_horace_predicted_soc_home:
+    name: "Horace Predicted SOC at Home"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-arrow-down
+
+  ev_horatio_predicted_soc_home:
+    name: "Horatio Predicted SOC at Home"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-arrow-down
+
+  # --- Departure SOC Predictions ---
+  ev_fraser_departure_soc:
+    name: "Fraser Expected Departure SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-check
+
+  ev_heather_departure_soc:
+    name: "Heather Expected Departure SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-check
+
+  # --- External Charging Tracking ---
+  ev_horace_external_kwh_today:
+    name: "Horace External kWh Today"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "kWh"
+    icon: mdi:battery-plus-variant
+
+  ev_horatio_external_kwh_today:
+    name: "Horatio External kWh Today"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "kWh"
+    icon: mdi:battery-plus-variant
+
+  ev_external_charge_kwh_fraser:
+    name: "Fraser External Charge Needed"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "kWh"
+    icon: mdi:battery-alert
+
+  ev_external_charge_kwh_heather:
+    name: "Heather External Charge Needed"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "kWh"
+    icon: mdi:battery-alert
+
+  # --- Planner Outputs ---
+  ev_night_charge_target_soc:
+    name: "Night Charge Target SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-charging-100
+
+  ev_required_start_soc:
+    name: "Required Starting SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-check
+
+  # --- Per-Leg SOC Data (numeric, one per leg, max 6 legs per driver) ---
+  # These store the SOC at arrival for each trip leg
+  ev_fraser_leg_0_arrive_soc:
+    name: "Fraser Leg 0 Arrive SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-outline
+
+  ev_fraser_leg_1_arrive_soc:
+    name: "Fraser Leg 1 Arrive SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-outline
+
+  ev_fraser_leg_2_arrive_soc:
+    name: "Fraser Leg 2 Arrive SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-outline
+
+  ev_fraser_leg_3_arrive_soc:
+    name: "Fraser Leg 3 Arrive SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-outline
+
+  ev_fraser_leg_4_arrive_soc:
+    name: "Fraser Leg 4 Arrive SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-outline
+
+  ev_fraser_leg_5_arrive_soc:
+    name: "Fraser Leg 5 Arrive SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-outline
+
+  ev_heather_leg_0_arrive_soc:
+    name: "Heather Leg 0 Arrive SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-outline
+
+  ev_heather_leg_1_arrive_soc:
+    name: "Heather Leg 1 Arrive SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-outline
+
+  ev_heather_leg_2_arrive_soc:
+    name: "Heather Leg 2 Arrive SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-outline
+
+  ev_heather_leg_3_arrive_soc:
+    name: "Heather Leg 3 Arrive SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-outline
+
+  ev_heather_leg_4_arrive_soc:
+    name: "Heather Leg 4 Arrive SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-outline
+
+  ev_heather_leg_5_arrive_soc:
+    name: "Heather Leg 5 Arrive SOC"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-outline
+
+  # --- Leg count (how many legs are valid) ---
+  ev_fraser_leg_count:
+    name: "Fraser Trip Leg Count"
+    min: 0
+    max: 6
+    step: 1
+    icon: mdi:counter
+
+  ev_heather_leg_count:
+    name: "Heather Trip Leg Count"
+    min: 0
+    max: 6
+    step: 1
+    icon: mdi:counter
+
+  # --- Cooldown Timers ---
+  ev_plug_request_cooldown_min:
+    name: "Plug Request Cooldown"
+    min: 15
+    max: 180
+    step: 15
+    unit_of_measurement: "min"
+    icon: mdi:timer-outline
+    initial: 60
+
+  ev_swap_request_cooldown_min:
+    name: "Swap Request Cooldown"
+    min: 15
+    max: 180
+    step: 15
+    unit_of_measurement: "min"
+    icon: mdi:timer-outline
+    initial: 60
+
+  ev_fraser_soc_drop_horace:
+    name: "Fraser Trip SOC Drop (Horace)"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "%"
+    icon: mdi:battery-minus
+
+  ev_fraser_soc_drop_horatio:
+    name: "Fraser Trip SOC Drop (Horatio)"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "%"
+    icon: mdi:battery-minus
+
+  ev_heather_soc_drop_horace:
+    name: "Heather Trip SOC Drop (Horace)"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "%"
+    icon: mdi:battery-minus
+
+  ev_heather_soc_drop_horatio:
+    name: "Heather Trip SOC Drop (Horatio)"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "%"
+    icon: mdi:battery-minus
+
+  ev_horace_solar_kwh_today:
+    name: "Horace Solar kWh Today"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "kWh"
+    icon: mdi:solar-power
+
+  ev_horatio_solar_kwh_today:
+    name: "Horatio Solar kWh Today"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "kWh"
+    icon: mdi:solar-power
+
+  ev_horace_grid_kwh_today:
+    name: "Horace Grid kWh Today"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "kWh"
+    icon: mdi:transmission-tower
+
+  ev_horatio_grid_kwh_today:
+    name: "Horatio Grid kWh Today"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "kWh"
+    icon: mdi:transmission-tower
+
+  ev_horace_soc_at_departure:
+    name: "Horace SOC at Departure"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-arrow-down
+
+  ev_horatio_soc_at_departure:
+    name: "Horatio SOC at Departure"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-arrow-down
+
+# =============================================================================
+# INPUT SELECTS - Dropdown choices
+# =============================================================================
+input_select:
+  # --- Car Assignments ---
+  ev_long_trip_car:
+    name: "Long Trip Car"
+    options:
+      - "None"
+      - "Horace"
+      - "Horatio"
+    icon: mdi:car
+
+  ev_night_charge_car:
+    name: "Night Charge Car"
+    options:
+      - "None"
+      - "Horace"
+      - "Horatio"
+    icon: mdi:car-electric
+
+  ev_fraser_assigned_car:
+    name: "Fraser Assigned Car"
+    options:
+      - "None"
+      - "Horace"
+      - "Horatio"
+    icon: mdi:car-key
+
+  ev_heather_assigned_car:
+    name: "Heather Assigned Car"
+    options:
+      - "None"
+      - "Horace"
+      - "Horatio"
+    icon: mdi:car-key
+
+  ev_requested_vehicle:
+    name: "Plug-In Requested Vehicle"
+    options:
+      - "None"
+      - "Horace"
+      - "Horatio"
+    icon: mdi:ev-plug-type2
+
+  ev_fraser_stops_json:
+    name: "Fraser Tomorrow Stops (JSON)"
+    icon: mdi:code-json
+    options:
+      - "none"
+
+  ev_heather_stops_json:
+    name: "Heather Tomorrow Stops (JSON)"
+    icon: mdi:code-json
+    options:
+      - "none"
+
+  ev_fraser_trip_legs_json:
+    name: "Fraser Trip Legs (JSON)"
+    icon: mdi:code-json
+    options:
+      - "none"
+
+  ev_heather_trip_legs_json:
+    name: "Heather Trip Legs (JSON)"
+    icon: mdi:code-json
+    options:
+      - "none"
+
+  ev_trip_digest_signature:
+    name: "Trip Digest Signature"
+    icon: mdi:fingerprint
+    options:
+      - "none"
+
+  ev_elevation_summary:
+    name: "Elevation Calculation Summary"
+    icon: mdi:mountain
+    options:
+      - "none"
+
+  ev_last_planner_decision:
+    name: "Last Planner Decision"
+    icon: mdi:text-box-outline
+    options:
+      - "none"
+
+# =============================================================================
+# INPUT DATETIMES - Date and time values
+# =============================================================================
+input_datetime:
+  # --- Departure Times ---
+  ev_fraser_departure_time:
+    name: "Fraser Departure Time"
+    has_date: true
+    has_time: true
+    icon: mdi:clock-start
+
+  ev_heather_departure_time:
+    name: "Heather Departure Time"
+    has_date: true
+    has_time: true
+    icon: mdi:clock-start
+
+  # --- Expected Return Times ---
+  ev_horace_expected_return:
+    name: "Horace Expected Return"
+    has_date: true
+    has_time: true
+    icon: mdi:home-clock
+
+  ev_horatio_expected_return:
+    name: "Horatio Expected Return"
+    has_date: true
+    has_time: true
+    icon: mdi:home-clock
+
+  # --- SOC Update Timestamps ---
+  ev_horace_soc_last_updated:
+    name: "Horace SOC Last Updated"
+    has_date: true
+    has_time: true
+    icon: mdi:update
+
+  ev_horatio_soc_last_updated:
+    name: "Horatio SOC Last Updated"
+    has_date: true
+    has_time: true
+    icon: mdi:update
+
+  # --- Anti-Repeat Timestamps ---
+  ev_last_plug_request:
+    name: "Last Plug Request Time"
+    has_date: true
+    has_time: true
+    icon: mdi:history
+
+  ev_last_swap_request:
+    name: "Last Swap Request Time"
+    has_date: true
+    has_time: true
+    icon: mdi:history
+
+  ev_last_digest_sent:
+    name: "Last Digest Sent"
+    has_date: true
+    has_time: true
+    icon: mdi:history
+
+  ev_last_fraser_departure_notify:
+    name: "Last Fraser Departure Notify"
+    has_date: true
+    has_time: true
+    icon: mdi:history
+
+  ev_last_heather_departure_notify:
+    name: "Last Heather Departure Notify"
+    has_date: true
+    has_time: true
+    icon: mdi:history
+
+  ev_last_horace_defrost:
+    name: "Last Horace Defrost"
+    has_date: true
+    has_time: true
+    icon: mdi:history
+
+  ev_last_horatio_defrost:
+    name: "Last Horatio Defrost"
+    has_date: true
+    has_time: true
+    icon: mdi:history
+
+  ev_last_horace_preheat:
+    name: "Last Horace Preheat"
+    has_date: true
+    has_time: true
+    icon: mdi:history
+
+  ev_last_horatio_preheat:
+    name: "Last Horatio Preheat"
+    has_date: true
+    has_time: true
+    icon: mdi:history
+
+  ev_last_horace_climate_confirm:
+    name: "Last Horace Climate Confirmation"
+    has_date: true
+    has_time: true
+    icon: mdi:history
+
+  ev_last_horatio_climate_confirm:
+    name: "Last Horatio Climate Confirmation"
+    has_date: true
+    has_time: true
+    icon: mdi:history
+
+# =============================================================================
+# TEXT STORAGE (using input_select as input_text is removed in HA 2026)
+# =============================================================================
+# These use input_select.set_options to store arbitrary text as the single option

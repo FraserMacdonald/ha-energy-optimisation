@@ -1,0 +1,110 @@
+###############################################################################
+# JACUZZI SYSTEM – HELPER DEFINITIONS
+# File: packages/jacuzzi_system.yaml
+#
+# All helpers for the jacuzzi heating optimisation system.
+# Defined in YAML (not UI) for version control.
+#
+# Phase 1A: Migrated from jacuzzi_helpers.yaml
+#   Bug fix: jacuzzi_calendar_entity changed from input_text to input_select
+###############################################################################
+
+# =============================================================================
+# INPUT NUMBERS
+# =============================================================================
+input_number:
+  jacuzzi_target_temp:
+    name: "Jacuzzi Target Temperature"
+    min: 15
+    max: 40
+    step: 0.5
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer
+
+  jacuzzi_standby_temp:
+    name: "Jacuzzi Standby Temperature"
+    min: 10
+    max: 30
+    step: 0.5
+    initial: 15
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-low
+
+  jacuzzi_preheat_buffer:
+    name: "Jacuzzi Preheat Buffer Time"
+    min: 0
+    max: 120
+    step: 15
+    initial: 30
+    unit_of_measurement: "min"
+    icon: mdi:clock-fast
+
+  jacuzzi_heat_rate_summer:
+    name: "Jacuzzi Heating Rate (Summer)"
+    min: 1
+    max: 10
+    step: 0.5
+    initial: 5
+    unit_of_measurement: "°C/h"
+    icon: mdi:trending-up
+
+  jacuzzi_heat_rate_winter:
+    name: "Jacuzzi Heating Rate (Winter)"
+    min: 1
+    max: 10
+    step: 0.5
+    initial: 3
+    unit_of_measurement: "°C/h"
+    icon: mdi:trending-up
+
+  jacuzzi_heat_loss_rate:
+    name: "Jacuzzi Heat Loss Rate (Standby)"
+    min: 0.1
+    max: 5
+    step: 0.1
+    initial: 0.5
+    unit_of_measurement: "°C/h"
+    icon: mdi:trending-down
+
+# =============================================================================
+# INPUT BOOLEANS
+# =============================================================================
+input_boolean:
+  jacuzzi_automation_enabled:
+    name: "Jacuzzi Smart Heating Enabled"
+    icon: mdi:auto-mode
+
+  jacuzzi_manual_override:
+    name: "Jacuzzi Manual Override"
+    icon: mdi:hand-back-right
+
+  jacuzzi_solar_priority:
+    name: "Jacuzzi Prioritize Solar Heating"
+    initial: true
+    icon: mdi:solar-power
+
+  jacuzzi_maintenance_mode:
+    name: "Jacuzzi Maintenance Mode"
+    icon: mdi:wrench
+
+# =============================================================================
+# INPUT DATETIMES
+# =============================================================================
+input_datetime:
+  jacuzzi_override_until:
+    name: "Jacuzzi Override Until"
+    has_date: true
+    has_time: true
+    icon: mdi:clock-end
+
+# =============================================================================
+# INPUT SELECTS
+# Bug fix: was input_text (no validation). Changed to input_select.
+# =============================================================================
+input_select:
+  jacuzzi_calendar_entity:
+    name: "Jacuzzi Calendar Entity"
+    options:
+      - "calendar.jacuzzi_schedule"
+      - "calendar.family"
+    icon: mdi:calendar

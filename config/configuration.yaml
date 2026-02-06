@@ -1,0 +1,73 @@
+###############################################################################
+# CONFIGURATION.YAML – Main Home Assistant Configuration
+# Phase 1A – Restructured with packages and subdirectory includes
+###############################################################################
+
+default_config:
+
+frontend:
+  themes: !include_dir_merge_named themes
+
+# =============================================================================
+# PACKAGES (all helpers + related config per system)
+# =============================================================================
+homeassistant:
+  packages:
+    jacuzzi: !include packages/jacuzzi_system.yaml
+    ev_system: !include packages/ev_system.yaml
+    energy_orchestrator: !include packages/energy_orchestrator_system.yaml
+
+# =============================================================================
+# AUTOMATIONS (subdirectory per system, merged into one list)
+# =============================================================================
+automation: !include_dir_merge_list automations/
+
+# =============================================================================
+# TEMPLATES (subdirectory per system)
+# =============================================================================
+template: !include_dir_merge_list templates/
+
+# =============================================================================
+# SCRIPTS
+# =============================================================================
+script: !include_dir_merge_named scripts/
+
+# =============================================================================
+# SCENES
+# =============================================================================
+scene: !include_dir_merge_list scenes/
+
+# =============================================================================
+# SHELL COMMANDS
+# =============================================================================
+shell_command:
+  get_elevation: "python3 /config/python_scripts/get_elevation.py"
+  compute_elevation: "python3 /config/python_scripts/compute_elevation.py"
+  ev_text_set: "python3 /config/python_scripts/ev_text_store.py {{ key }} {{ value }}"
+
+# =============================================================================
+# REST COMMANDS
+# =============================================================================
+rest_command:
+  google_elevation:
+    url: "https://maps.googleapis.com/maps/api/elevation/json?locations={{ locations }}&key={{ key }}"
+    method: GET
+
+# =============================================================================
+# COMMAND LINE SENSORS
+# =============================================================================
+command_line:
+  - sensor:
+      name: "EV Text Store"
+      unique_id: ev_text_store
+      command: "cat /config/python_scripts/ev_text_store.json"
+      value_template: "ok"
+      json_attributes:
+        - fraser_stops
+        - fraser_legs
+        - heather_stops
+        - heather_legs
+        - last_planner_decision
+        - trip_digest_signature
+        - elevation_summary
+      scan_interval: 300

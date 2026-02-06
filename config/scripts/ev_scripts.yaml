@@ -1,0 +1,562 @@
+###############################################################################
+# EV SCRIPTS - Convenience actions
+# File: scripts/ev_scripts.yaml
+#
+# These scripts provide manual triggers for testing and debugging,
+# as well as convenience actions for common operations.
+###############################################################################
+
+
+###############################################################################
+# MANUAL TRIGGER SCRIPTS
+###############################################################################
+
+ev_force_calendar_sync:
+  alias: "EV Force Calendar Sync"
+  description: "Manually trigger calendar sync and trip calculation"
+  icon: mdi:calendar-refresh
+  sequence:
+    - action: automation.trigger
+      target:
+        entity_id: automation.auto_ev_010_calendar_sync_tomorrow_trips
+      data:
+        skip_condition: true
+    - action: logbook.log
+      data:
+        name: "EV Script"
+        message: "Manual calendar sync triggered"
+
+
+ev_force_planner:
+  alias: "EV Force Planner Run"
+  description: "Manually trigger planner recalculation"
+  icon: mdi:calculator-variant
+  sequence:
+    - action: automation.trigger
+      target:
+        entity_id: automation.auto_ev_030_planner_car_assignment_charging
+      data:
+        skip_condition: true
+    - action: logbook.log
+      data:
+        name: "EV Script"
+        message: "Manual planner run triggered"
+
+
+ev_force_soc_update:
+  alias: "EV Force SOC Update"
+  description: "Manually trigger SOC tracker"
+  icon: mdi:battery-sync
+  sequence:
+    - action: automation.trigger
+      target:
+        entity_id: automation.auto_ev_020_soc_tracker
+      data:
+        skip_condition: true
+    - action: logbook.log
+      data:
+        name: "EV Script"
+        message: "Manual SOC update triggered"
+
+
+ev_force_digest:
+  alias: "EV Force Evening Digest"
+  description: "Manually send the evening trip digest notification"
+  icon: mdi:email-newsletter
+  sequence:
+    - action: automation.trigger
+      target:
+        entity_id: automation.ev_060_evening_trip_digest
+      data:
+        skip_condition: true
+    - action: logbook.log
+      data:
+        name: "EV Script"
+        message: "Manual digest triggered"
+
+
+ev_force_morning_check:
+  alias: "EV Force Morning SOC Check"
+  description: "Manually run the morning SOC verification"
+  icon: mdi:weather-sunny-alert
+  sequence:
+    - action: automation.trigger
+      target:
+        entity_id: automation.ev_064_morning_soc_verification
+      data:
+        skip_condition: true
+    - action: logbook.log
+      data:
+        name: "EV Script"
+        message: "Manual morning SOC check triggered"
+
+
+###############################################################################
+# RESET SCRIPTS
+###############################################################################
+
+ev_reset_daily_counters:
+  alias: "EV Reset Daily Counters"
+  description: "Manually reset all daily counters (external charging, trip data)"
+  icon: mdi:restart
+  sequence:
+    - action: automation.trigger
+      target:
+        entity_id: automation.ev_002_daily_reset_midnight
+      data:
+        skip_condition: true
+    - action: logbook.log
+      data:
+        name: "EV Script"
+        message: "Manual daily reset triggered"
+
+
+ev_reset_all_notifications:
+  alias: "EV Reset All Notification Timestamps"
+  description: "Clear all anti-repeat guards (use if notifications seem stuck)"
+  icon: mdi:bell-cancel
+  sequence:
+    - variables:
+        reset_time: "2000-01-01 00:00:00"
+
+    - action: input_datetime.set_datetime
+      target:
+        entity_id:
+          - input_datetime.ev_last_plug_request
+          - input_datetime.ev_last_swap_request
+          - input_datetime.ev_last_digest_sent
+          - input_datetime.ev_last_fraser_departure_notify
+          - input_datetime.ev_last_heather_departure_notify
+          - input_datetime.ev_last_horace_defrost
+          - input_datetime.ev_last_horatio_defrost
+          - input_datetime.ev_last_horace_preheat
+          - input_datetime.ev_last_horatio_preheat
+          - input_datetime.ev_last_horace_climate_confirm
+          - input_datetime.ev_last_horatio_climate_confirm
+      data:
+        datetime: "{{ reset_time }}"
+
+    - action: logbook.log
+      data:
+        name: "EV Script"
+        message: "All notification timestamps reset"
+
+    - action: persistent_notification.create
+      data:
+        title: "EV System"
+        message: "All notification anti-repeat guards have been cleared."
+        notification_id: "ev_notification_reset"
+
+
+ev_reset_car_assignments:
+  alias: "EV Reset Car Assignments"
+  description: "Clear all car assignments and charging plans"
+  icon: mdi:car-off
+  sequence:
+    - action: input_select.select_option
+      target:
+        entity_id:
+          - input_select.ev_fraser_assigned_car
+          - input_select.ev_heather_assigned_car
+          - input_select.ev_long_trip_car
+          - input_select.ev_night_charge_car
+          - input_select.ev_requested_vehicle
+      data:
+        option: "None"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_night_charge_target_soc
+      data:
+        value: 0
+
+    - action: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.ev_external_charge_required
+
+    - action: logbook.log
+      data:
+        name: "EV Script"
+        message: "All car assignments and charging plans cleared"
+
+
+###############################################################################
+# CLIMATE TEST SCRIPTS
+###############################################################################
+
+ev_test_climate_horace:
+  alias: "EV Test Horace Climate"
+  description: "Test climate activation for Horace (preheat to 21°C)"
+  icon: mdi:fan
+  sequence:
+    - action: climate.set_temperature
+      target:
+        entity_id: climate.horace_climate
+      data:
+        temperature: 21
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        message: "🧪 Test: Horace climate activated to 21°C"
+
+    - action: logbook.log
+      data:
+        name: "EV Script"
+        message: "Test: Horace climate activated"
+
+
+ev_test_climate_horatio:
+  alias: "EV Test Horatio Climate"
+  description: "Test climate activation for Horatio (preheat to 21°C)"
+  icon: mdi:fan
+  sequence:
+    - action: climate.set_temperature
+      target:
+        entity_id: climate.horatio_climate
+      data:
+        temperature: 21
+
+    - action: notify.mobile_app_heather_s_iphone
+      data:
+        message: "🧪 Test: Horatio climate activated to 21°C"
+
+    - action: logbook.log
+      data:
+        name: "EV Script"
+        message: "Test: Horatio climate activated"
+
+
+ev_test_defrost_horace:
+  alias: "EV Test Horace Defrost"
+  description: "Test defrost activation for Horace"
+  icon: mdi:snowflake-melt
+  sequence:
+    - action: switch.turn_on
+      target:
+        entity_id: switch.horace_defrost
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        message: "🧪 Test: Horace defrost activated"
+
+    - action: logbook.log
+      data:
+        name: "EV Script"
+        message: "Test: Horace defrost activated"
+
+
+ev_test_defrost_horatio:
+  alias: "EV Test Horatio Defrost"
+  description: "Test defrost activation for Horatio"
+  icon: mdi:snowflake-melt
+  sequence:
+    - action: switch.turn_on
+      target:
+        entity_id: switch.horatio_defrost
+
+    - action: notify.mobile_app_heather_s_iphone
+      data:
+        message: "🧪 Test: Horatio defrost activated"
+
+    - action: logbook.log
+      data:
+        name: "EV Script"
+        message: "Test: Horatio defrost activated"
+
+
+###############################################################################
+# NOTIFICATION TEST SCRIPTS
+###############################################################################
+
+ev_test_notify_fraser:
+  alias: "EV Test Notify Fraser"
+  description: "Send a test notification to Fraser's phone"
+  icon: mdi:cellphone-message
+  sequence:
+    - variables:
+        horace_soc: "{{ states('sensor.horace_battery_level') | float(0) }}"
+        horatio_soc: "{{ states('sensor.horatio_battery_level') | float(0) }}"
+        plugged: "{{ states('sensor.ev_plugged_vehicle') }}"
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        message: >
+          🧪 EV Test Notification
+          Horace: {{ horace_soc | round(0) }}%
+          Horatio: {{ horatio_soc | round(0) }}%
+          Plugged: {{ plugged }}
+          Fraser → {{ states('input_select.ev_fraser_assigned_car') }}
+          Heather → {{ states('input_select.ev_heather_assigned_car') }}
+          Night charge: {{ states('input_select.ev_night_charge_car') }} to {{ states('input_number.ev_night_charge_target_soc') | round(0) }}%
+
+
+ev_test_notify_heather:
+  alias: "EV Test Notify Heather"
+  description: "Send a test notification to Heather's phone"
+  icon: mdi:cellphone-message
+  sequence:
+    - variables:
+        horace_soc: "{{ states('sensor.horace_battery_level') | float(0) }}"
+        horatio_soc: "{{ states('sensor.horatio_battery_level') | float(0) }}"
+        plugged: "{{ states('sensor.ev_plugged_vehicle') }}"
+
+    - action: notify.mobile_app_heather_s_iphone
+      data:
+        message: >
+          🧪 EV Test Notification
+          Horace: {{ horace_soc | round(0) }}%
+          Horatio: {{ horatio_soc | round(0) }}%
+          Plugged: {{ plugged }}
+          Fraser → {{ states('input_select.ev_fraser_assigned_car') }}
+          Heather → {{ states('input_select.ev_heather_assigned_car') }}
+          Night charge: {{ states('input_select.ev_night_charge_car') }} to {{ states('input_number.ev_night_charge_target_soc') | round(0) }}%
+
+
+###############################################################################
+# DIAGNOSTIC SCRIPTS
+###############################################################################
+
+ev_dump_state:
+  alias: "EV Dump System State"
+  description: "Logs current state of all EV helpers to persistent notification"
+  icon: mdi:bug-outline
+  sequence:
+    - variables:
+        horace_soc: "{{ states('sensor.horace_battery_level') | float(0) }}"
+        horatio_soc: "{{ states('sensor.horatio_battery_level') | float(0) }}"
+        horace_pred: "{{ states('input_number.ev_horace_predicted_soc_home') | float(0) }}"
+        horatio_pred: "{{ states('input_number.ev_horatio_predicted_soc_home') | float(0) }}"
+        plugged: "{{ states('sensor.ev_plugged_vehicle') }}"
+        fraser_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
+        heather_car: "{{ states('input_select.ev_heather_assigned_car') }}"
+        night_car: "{{ states('input_select.ev_night_charge_car') }}"
+        night_target: "{{ states('input_number.ev_night_charge_target_soc') | float(0) }}"
+        km_fraser: "{{ states('input_number.ev_trip_km_fraser_tomorrow') | float(0) }}"
+        km_heather: "{{ states('input_number.ev_trip_km_heather_tomorrow') | float(0) }}"
+        fr_depart: "{{ states('input_datetime.ev_fraser_departure_time') }}"
+        he_depart: "{{ states('input_datetime.ev_heather_departure_time') }}"
+        fr_dep_soc: "{{ states('input_number.ev_fraser_departure_soc') | float(0) }}"
+        he_dep_soc: "{{ states('input_number.ev_heather_departure_soc') | float(0) }}"
+        cheap_active: "{{ states('sensor.ev_cheap_tariff_active') }}"
+        solar_mode: "{{ states('input_boolean.ev_solar_mode_enabled') }}"
+        ext_required: "{{ states('input_boolean.ev_external_charge_required') }}"
+        ext_horace: "{{ states('input_number.ev_horace_external_kwh_today') | float(0) }}"
+        ext_horatio: "{{ states('input_number.ev_horatio_external_kwh_today') | float(0) }}"
+        last_decision: "{{ states('input_select.ev_last_planner_decision') }}"
+
+        report: >
+          ## EV System State Dump ({{ now().strftime('%Y-%m-%d %H:%M') }})
+
+          ### Vehicles
+          Horace SOC: {{ horace_soc | round(0) }}% (predicted home: {{ horace_pred | round(0) }}%)
+          Horatio SOC: {{ horatio_soc | round(0) }}% (predicted home: {{ horatio_pred | round(0) }}%)
+          Plugged: {{ plugged }}
+
+          ### Assignments
+          Fraser → {{ fraser_car }} (depart SOC: {{ fr_dep_soc | round(0) }}%)
+          Heather → {{ heather_car }} (depart SOC: {{ he_dep_soc | round(0) }}%)
+
+          ### Tomorrow Trips
+          Fraser: {{ km_fraser | round(0) }}km, depart {{ fr_depart }}
+          Heather: {{ km_heather | round(0) }}km, depart {{ he_depart }}
+
+          ### Charging
+          Night charge: {{ night_car }} → {{ night_target | round(0) }}%
+          Cheap tariff: {{ cheap_active }}
+          Solar mode: {{ solar_mode }}
+          External required: {{ ext_required }}
+          External today: Horace={{ ext_horace | round(1) }}kWh, Horatio={{ ext_horatio | round(1) }}kWh
+
+          ### Last Decision
+          {{ last_decision }}
+
+    - action: persistent_notification.create
+      data:
+        title: "EV System State"
+        message: "{{ report }}"
+        notification_id: "ev_state_dump"
+
+    - action: logbook.log
+      data:
+        name: "EV Diagnostic"
+        message: "State dump created"
+
+
+ev_check_automation_status:
+  alias: "EV Check Automation Health"
+  description: "Verify all EV automations are enabled and working"
+  icon: mdi:stethoscope
+  sequence:
+    - variables:
+        automations:
+          - automation.ev_001_bootstrap_default_values
+          - automation.ev_002_daily_reset_midnight
+          - automation.auto_ev_010_calendar_sync_tomorrow_trips
+          - automation.auto_ev_020_soc_tracker
+          - automation.auto_ev_030_planner_car_assignment_charging
+          - automation.ev_040_solar_surplus_charging
+          - automation.ev_041_cheap_tariff_charging
+          - automation.ev_050_climate_prep_defrost_preheat
+          - automation.ev_051_climate_activation_confirmation
+          - automation.ev_060_evening_trip_digest
+          - automation.ev_061_fraser_departure_reminder
+          - automation.ev_062_heather_departure_reminder
+          - automation.ev_063_plug_in_reminder
+          - automation.ev_064_morning_soc_verification
+          - automation.ev_070_horace_charge_limit_sync
+          - automation.ev_071_horatio_charge_limit_sync
+          - automation.ev_072_horace_allow_charging_bridge
+          - automation.ev_073_horatio_allow_charging_bridge
+          - automation.ev_074_horace_trip_mode_100_for_8h
+          - automation.ev_075_horatio_trip_mode_100_for_8h
+          - automation.ev_076_clear_plug_request_when_correct_car_plugged
+
+    - variables:
+        report: >
+          ## EV Automation Health Check
+
+          {% set ns = namespace(issues=0) %}
+          {% for auto in automations %}
+          {% set st = states(auto) %}
+          {% if st == 'on' %}✅{% elif st == 'off' %}⚠️ DISABLED{% set ns.issues = ns.issues + 1 %}{% else %}❌ MISSING{% set ns.issues = ns.issues + 1 %}{% endif %} {{ state_attr(auto, 'friendly_name') | default(auto) }} ({{ st }})
+          {% endfor %}
+
+          ---
+          {% if ns.issues == 0 %}
+          All {{ automations | length }} automations healthy ✅
+          {% else %}
+          ⚠️ {{ ns.issues }} issue(s) found
+          {% endif %}
+
+    - action: persistent_notification.create
+      data:
+        title: "EV Automation Health"
+        message: "{{ report }}"
+        notification_id: "ev_health_check"
+
+
+###############################################################################
+# QUICK ACTION SCRIPTS (for dashboard buttons)
+###############################################################################
+
+ev_quick_plug_horace:
+  alias: "EV Request: Plug Horace"
+  description: "Set the plug-in request to Horace and notify"
+  icon: mdi:ev-plug-type2
+  sequence:
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.ev_requested_vehicle
+      data:
+        option: "Horace"
+
+    - variables:
+        fraser_home: "{{ states('device_tracker.fraser_s_iphone') in ['home', 'Coming Home'] }}"
+        heather_home: "{{ states('device_tracker.heather_s_iphone') in ['home', 'Coming Home'] }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ fraser_home }}"
+          sequence:
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                message: "🔌 Please plug in Horace"
+        - conditions:
+            - condition: template
+              value_template: "{{ heather_home }}"
+          sequence:
+            - action: notify.mobile_app_heather_s_iphone
+              data:
+                message: "🔌 Please plug in Horace"
+
+
+ev_quick_plug_horatio:
+  alias: "EV Request: Plug Horatio"
+  description: "Set the plug-in request to Horatio and notify"
+  icon: mdi:ev-plug-type2
+  sequence:
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.ev_requested_vehicle
+      data:
+        option: "Horatio"
+
+    - variables:
+        fraser_home: "{{ states('device_tracker.fraser_s_iphone') in ['home', 'Coming Home'] }}"
+        heather_home: "{{ states('device_tracker.heather_s_iphone') in ['home', 'Coming Home'] }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ fraser_home }}"
+          sequence:
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                message: "🔌 Please plug in Horatio"
+        - conditions:
+            - condition: template
+              value_template: "{{ heather_home }}"
+          sequence:
+            - action: notify.mobile_app_heather_s_iphone
+              data:
+                message: "🔌 Please plug in Horatio"
+
+
+ev_emergency_charge_both:
+  alias: "EV Emergency: Charge Both Cars"
+  description: "Enable max charging on both cars (override all controls)"
+  icon: mdi:flash-alert
+  sequence:
+    - action: input_boolean.turn_on
+      target:
+        entity_id:
+          - input_boolean.ev_horace_allow_charging
+          - input_boolean.ev_horatio_allow_charging
+
+    - action: number.set_value
+      target:
+        entity_id: number.horace_charge_current
+      data:
+        value: 16
+
+    - action: number.set_value
+      target:
+        entity_id: number.horatio_charge_current
+      data:
+        value: 16
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        message: "⚡ Emergency charge mode: Both cars set to max (16A)"
+        data:
+          push:
+            interruption-level: time-sensitive
+
+    - action: logbook.log
+      data:
+        name: "EV Script"
+        message: "EMERGENCY: Both cars set to max charge rate"
+
+
+ev_stop_all_charging:
+  alias: "EV Stop All Charging"
+  description: "Immediately stop all charging on both cars"
+  icon: mdi:stop-circle
+  sequence:
+    - action: input_boolean.turn_off
+      target:
+        entity_id:
+          - input_boolean.ev_horace_allow_charging
+          - input_boolean.ev_horatio_allow_charging
+
+    - action: switch.turn_off
+      target:
+        entity_id:
+          - switch.horace_charge
+          - switch.horatio_charge
+
+    - action: logbook.log
+      data:
+        name: "EV Script"
+        message: "All charging stopped"

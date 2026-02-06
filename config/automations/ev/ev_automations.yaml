@@ -1,0 +1,2536 @@
+###############################################################################
+# EV AUTOMATIONS
+# File: automations/ev/ev_automations.yaml
+#
+# Phase 1A: IDs renumbered (auto_ev_0XX), 6 entity refs renamed,
+#           3-phase bug fixed in ev_043, trace config added
+#
+# Numbering scheme (3-digit, per-system):
+#   001-019: Core / lifecycle (bootstrap, daily reset, calendar, SOC, planner)
+#   020-039: Solar / energy (SOC tracker)
+#   040-059: Charging control (solar, cheap tariff, logger, corrections)
+#   050-059: Climate control
+#   060-079: Notifications / alerts
+#   070-079: Helper bridges (UI → Tesla)
+###############################################################################
+
+
+###############################################################################
+# 00: BOOTSTRAP & INITIALIZATION
+###############################################################################
+
+- id: auto_ev_001_bootstrap
+  alias: "EV 001 – Bootstrap Default Values"
+  description: "Initialize helpers with sensible defaults on HA startup"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: homeassistant
+      event: start
+
+  actions:
+    # Set defaults for any helpers that are unknown/unavailable
+    - variables:
+        defaults:
+          input_number.ev_solar_margin_w: 500
+          input_number.ev_charger_max_amps: 16
+          input_number.ev_min_amps: 5
+          input_number.ev_voltage: 230
+          input_number.ev_phases: 3
+          input_number.ev_plug_request_cooldown_min: 60
+          input_number.ev_swap_request_cooldown_min: 60
+          input_select.ev_requested_vehicle: "None"
+          input_select.ev_night_charge_car: "None"
+          input_select.ev_long_trip_car: "None"
+          input_select.ev_fraser_assigned_car: "None"
+          input_select.ev_heather_assigned_car: "None"
+
+    - repeat:
+        for_each: "{{ defaults | list }}"
+        sequence:
+          - variables:
+              entity: "{{ repeat.item }}"
+              default_val: "{{ defaults[entity] }}"
+              current: "{{ states(entity) }}"
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ current in ['unknown', 'unavailable', 'none', ''] }}"
+                sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ entity.startswith('input_number') }}"
+                        sequence:
+                          - action: input_number.set_value
+                            target:
+                              entity_id: "{{ entity }}"
+                            data:
+                              value: "{{ default_val }}"
+
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ entity.startswith('input_select') }}"
+                        sequence:
+                          - action: input_select.select_option
+                            target:
+                              entity_id: "{{ entity }}"
+                            data:
+                              option: "{{ default_val }}"
+
+    # Initialize SOC from Tesla sensors
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_horace_current_soc
+      data:
+        value: "{{ states('sensor.horace_battery_level') | float(50) }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_horatio_current_soc
+      data:
+        value: "{{ states('sensor.horatio_battery_level') | float(50) }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_horace_previous_soc
+      data:
+        value: "{{ states('sensor.horace_battery_level') | float(50) }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_horatio_previous_soc
+      data:
+        value: "{{ states('sensor.horatio_battery_level') | float(50) }}"
+
+    - action: logbook.log
+      data:
+        name: "EV System"
+        message: "Bootstrap complete. Defaults initialized."
+
+
+- id: auto_ev_002_daily_reset
+  alias: "EV 002 – Daily Reset (Midnight)"
+  description: "Reset daily counters and prepare for new day"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time
+      at: "00:00:00"
+
+  actions:
+    # Reset external charging counters
+    - action: input_boolean.turn_off
+      target:
+        entity_id:
+          - input_boolean.ev_horace_charged_externally_today
+          - input_boolean.ev_horatio_charged_externally_today
+          - input_boolean.ev_external_charge_required
+
+    - action: input_number.set_value
+      target:
+        entity_id:
+          - input_number.ev_horace_external_kwh_today
+          - input_number.ev_horatio_external_kwh_today
+          - input_number.ev_external_charge_kwh_fraser
+          - input_number.ev_external_charge_kwh_heather
+          - input_number.ev_horace_solar_kwh_today
+          - input_number.ev_horatio_solar_kwh_today
+          - input_number.ev_horace_grid_kwh_today
+          - input_number.ev_horatio_grid_kwh_today
+      data:
+        value: 0
+
+    # Clear trip data (will be recalculated)
+    - action: input_number.set_value
+      target:
+        entity_id:
+          - input_number.ev_trip_km_fraser_tomorrow
+          - input_number.ev_trip_km_heather_tomorrow
+          - input_number.ev_fraser_leg_count
+          - input_number.ev_heather_leg_count
+          - input_number.ev_fraser_leg_0_arrive_soc
+          - input_number.ev_fraser_leg_1_arrive_soc
+          - input_number.ev_fraser_leg_2_arrive_soc
+          - input_number.ev_fraser_leg_3_arrive_soc
+          - input_number.ev_fraser_leg_4_arrive_soc
+          - input_number.ev_fraser_leg_5_arrive_soc
+          - input_number.ev_heather_leg_0_arrive_soc
+          - input_number.ev_heather_leg_1_arrive_soc
+          - input_number.ev_heather_leg_2_arrive_soc
+          - input_number.ev_heather_leg_3_arrive_soc
+          - input_number.ev_heather_leg_4_arrive_soc
+          - input_number.ev_heather_leg_5_arrive_soc
+      data:
+        value: 0
+
+    - action: input_select.set_options
+      target:
+        entity_id:
+          - input_select.ev_fraser_stops_json
+          - input_select.ev_heather_stops_json
+          - input_select.ev_fraser_trip_legs_json
+          - input_select.ev_heather_trip_legs_json
+          - input_select.ev_trip_digest_signature
+      data:
+        options:
+          - "none"
+
+    - action: logbook.log
+      data:
+        name: "EV System"
+        message: "Daily reset complete."
+
+
+###############################################################################
+# 10-19: CALENDAR & TRIP COMPUTATION
+###############################################################################
+
+- id: auto_ev_010_calendar_sync
+  alias: "EV 010 – Calendar Sync (Tomorrow Trips)"
+  description: >
+    Fetches tomorrow's calendar events, computes trip chains via Waze,
+    and stores detailed trip leg data for notifications.
+  mode: single
+  max_exceeded: silent
+  trace:
+    stored_traces: 10
+
+  triggers:
+    # Scheduled runs
+    - trigger: time
+      at: "07:00:00"
+    - trigger: time
+      at: "14:00:00"
+    - trigger: time
+      at: "20:00:00"
+
+    # Calendar changes (debounced)
+    - trigger: state
+      entity_id:
+        - calendar.fraser
+        - calendar.heather
+      for:
+        seconds: 30
+
+  actions:
+    - variables:
+        tomorrow: "{{ (as_local(now()).date() + timedelta(days=1)) | string }}"
+        start_iso: "{{ tomorrow ~ 'T00:00:00' }}"
+        end_iso: "{{ tomorrow ~ 'T23:59:59' }}"
+        arrive_early_min: 15
+
+        # Battery specs
+        batt_horace_kwh: 70
+        batt_horatio_kwh: 90
+        whkm_horace: 180
+        whkm_horatio: 215
+
+    # =========================================================================
+    # FRASER CALENDAR
+    # =========================================================================
+    - action: calendar.get_events
+      target:
+        entity_id: calendar.fraser
+      data:
+        start_date_time: "{{ start_iso }}"
+        end_date_time: "{{ end_iso }}"
+      response_variable: fraser_resp
+
+    - variables:
+        fraser_events: "{{ (fraser_resp.get('calendar.fraser', {})).get('events', []) }}"
+
+        fraser_stops: >
+          {% set ns = namespace(items=[]) %}
+          {% for e in fraser_events %}
+            {% set loc = (e.location | default('') | replace('\n', ', ') | trim) %}
+            {% if loc | length > 0 %}
+              {% set st = as_timestamp(as_datetime(e.start)) %}
+              {% set en = as_timestamp(as_datetime(e.end)) %}
+              {% set ns.items = ns.items + [{
+                'start_ts': st | int,
+                'end_ts': en | int,
+                'loc': loc,
+                'title': (e.summary | default('Event'))
+              }] %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.items | sort(attribute='start_ts') }}
+
+    # Store compacted stops JSON (truncate to fit 255 chars)
+    - variables:
+        fraser_stops_compact: >
+          {% set ns = namespace(items=[]) %}
+          {% for s in fraser_stops %}
+            {% set ns.items = ns.items + [{
+              's': s.start_ts,
+              'e': s.end_ts,
+              'l': s.loc[:30],
+              't': s.title[:15]
+            }] %}
+          {% endfor %}
+          {{ ns.items | to_json }}
+
+    - action: input_select.set_options
+      target:
+        entity_id: input_select.ev_fraser_stops_json
+      data:
+        options:
+          - "{{ fraser_stops_compact[:255] }}"
+
+    # Compute Fraser trip legs with Waze
+    - variables:
+        fraser_total_km: 0
+        fraser_legs: []
+        fraser_first_departure_ts: 0
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ fraser_stops | length > 0 }}"
+          sequence:
+            - variables:
+                points: >
+                  {% set locs = fraser_stops | map(attribute='loc') | list %}
+                  {{ ['zone.home'] + locs + ['zone.home'] }}
+
+            # Build leg data
+            - repeat:
+                count: "{{ points | length - 1 }}"
+                sequence:
+                  - variables:
+                      leg_index: "{{ repeat.index - 1 }}"
+                      origin: "{{ points[leg_index] }}"
+                      destination: "{{ points[leg_index + 1] }}"
+
+                      # Get event info for this leg (if going to a stop)
+                      stop_index: "{{ leg_index }}"
+                      event_info: >
+                        {% if stop_index < fraser_stops | length %}
+                          {{ fraser_stops[stop_index] }}
+                        {% else %}
+                          {{ {'title': 'Return Home', 'start_ts': 0, 'end_ts': 0} }}
+                        {% endif %}
+
+                  - action: waze_travel_time.get_travel_times
+                    data:
+                      origin: "{{ origin }}"
+                      destination: "{{ destination }}"
+                      region: "eu"
+                      units: "metric"
+                      vehicle_type: "car"
+                      realtime: false
+                    response_variable: waze_result
+
+                  - variables:
+                      routes: "{{ waze_result.get('routes', []) }}"
+                      leg_km: "{{ (routes[0].get('distance', 0) | float(0)) if routes | length > 0 else 0 }}"
+                      leg_min: "{{ (routes[0].get('duration', 30) | float(30)) if routes | length > 0 else 30 }}"
+
+                      # Calculate departure time for this leg
+                      event_start_ts: "{{ event_info.start_ts | int if event_info.start_ts else 0 }}"
+                      event_end_ts: "{{ event_info.end_ts | int if event_info.end_ts else 0 }}"
+
+                      depart_ts: >
+                        {% if stop_index < fraser_stops | length %}
+                          {{ (event_start_ts - (arrive_early_min + leg_min) * 60) | int }}
+                        {% else %}
+                          {{ event_end_ts | int }}
+                        {% endif %}
+
+                      arrive_ts: >
+                        {% if stop_index < fraser_stops | length %}
+                          {{ (event_start_ts - arrive_early_min * 60) | int }}
+                        {% else %}
+                          {{ (event_end_ts + leg_min * 60) | int }}
+                        {% endif %}
+
+                      fraser_total_km: "{{ fraser_total_km | float + leg_km | float }}"
+
+                      leg_data: >
+                        {{
+                          {
+                            'leg': leg_index,
+                            'from': origin,
+                            'to': destination,
+                            'event_title': event_info.title | default(''),
+                            'distance_km': leg_km | float | round(1),
+                            'duration_min': leg_min | float | round(0),
+                            'depart_ts': depart_ts | int,
+                            'arrive_ts': arrive_ts | int
+                          }
+                        }}
+
+                      fraser_legs: "{{ fraser_legs + [leg_data] }}"
+
+            # Store first departure
+            - variables:
+                fraser_first_departure_ts: "{{ fraser_legs[0].depart_ts if fraser_legs | length > 0 else 0 }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_trip_km_fraser_tomorrow
+      data:
+        value: "{{ fraser_total_km | round(0) }}"
+
+    # Store compacted leg JSON (titles truncated to fit 255 chars)
+    - variables:
+        fraser_legs_compact: >
+          {% set ns = namespace(items=[]) %}
+          {% for leg in fraser_legs %}
+            {% set ns.items = ns.items + [{
+              'l': leg.leg,
+              't': (leg.event_title | default(''))[:12],
+              'km': leg.distance_km,
+              'mn': leg.duration_min | int,
+              'd': leg.depart_ts,
+              'a': leg.arrive_ts
+            }] %}
+          {% endfor %}
+          {{ ns.items | to_json }}
+
+    - action: input_select.set_options
+      target:
+        entity_id: input_select.ev_fraser_trip_legs_json
+      data:
+        options:
+          - "{{ fraser_legs_compact[:255] }}"
+
+    # Store leg count
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_fraser_leg_count
+      data:
+        value: "{{ [fraser_legs | length, 6] | min }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ fraser_first_departure_ts | int > 0 }}"
+          sequence:
+            - action: input_datetime.set_datetime
+              target:
+                entity_id: input_datetime.ev_fraser_departure_time
+              data:
+                datetime: "{{ fraser_first_departure_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}"
+
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.ev_fraser_travel_minutes
+              data:
+                value: "{{ fraser_legs[0].duration_min | int if fraser_legs | length > 0 else 0 }}"
+
+    # =========================================================================
+    # HEATHER CALENDAR (same pattern)
+    # =========================================================================
+    - action: calendar.get_events
+      target:
+        entity_id: calendar.heather
+      data:
+        start_date_time: "{{ start_iso }}"
+        end_date_time: "{{ end_iso }}"
+      response_variable: heather_resp
+
+    - variables:
+        heather_events: "{{ (heather_resp.get('calendar.heather', {})).get('events', []) }}"
+
+        heather_stops: >
+          {% set ns = namespace(items=[]) %}
+          {% for e in heather_events %}
+            {% set loc = (e.location | default('') | replace('\n', ', ') | trim) %}
+            {% if loc | length > 0 %}
+              {% set st = as_timestamp(as_datetime(e.start)) %}
+              {% set en = as_timestamp(as_datetime(e.end)) %}
+              {% set ns.items = ns.items + [{
+                'start_ts': st | int,
+                'end_ts': en | int,
+                'loc': loc,
+                'title': (e.summary | default('Event'))
+              }] %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.items | sort(attribute='start_ts') }}
+
+    # Store compacted stops JSON (truncate to fit 255 chars)
+    - variables:
+        heather_stops_compact: >
+          {% set ns = namespace(items=[]) %}
+          {% for s in heather_stops %}
+            {% set ns.items = ns.items + [{
+              's': s.start_ts,
+              'e': s.end_ts,
+              'l': s.loc[:30],
+              't': s.title[:15]
+            }] %}
+          {% endfor %}
+          {{ ns.items | to_json }}
+
+    - action: input_select.set_options
+      target:
+        entity_id: input_select.ev_heather_stops_json
+      data:
+        options:
+          - "{{ heather_stops_compact[:255] }}"
+
+    - variables:
+        heather_total_km: 0
+        heather_legs: []
+        heather_first_departure_ts: 0
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ heather_stops | length > 0 }}"
+          sequence:
+            - variables:
+                points_h: >
+                  {% set locs = heather_stops | map(attribute='loc') | list %}
+                  {{ ['zone.home'] + locs + ['zone.home'] }}
+
+            - repeat:
+                count: "{{ points_h | length - 1 }}"
+                sequence:
+                  - variables:
+                      leg_index: "{{ repeat.index - 1 }}"
+                      origin: "{{ points_h[leg_index] }}"
+                      destination: "{{ points_h[leg_index + 1] }}"
+                      stop_index: "{{ leg_index }}"
+                      event_info: >
+                        {% if stop_index < heather_stops | length %}
+                          {{ heather_stops[stop_index] }}
+                        {% else %}
+                          {{ {'title': 'Return Home', 'start_ts': 0, 'end_ts': 0} }}
+                        {% endif %}
+
+                  - action: waze_travel_time.get_travel_times
+                    data:
+                      origin: "{{ origin }}"
+                      destination: "{{ destination }}"
+                      region: "eu"
+                      units: "metric"
+                      vehicle_type: "car"
+                      realtime: false
+                    response_variable: waze_result_h
+
+                  - variables:
+                      routes_h: "{{ waze_result_h.get('routes', []) }}"
+                      leg_km: "{{ (routes_h[0].get('distance', 0) | float(0)) if routes_h | length > 0 else 0 }}"
+                      leg_min: "{{ (routes_h[0].get('duration', 30) | float(30)) if routes_h | length > 0 else 30 }}"
+                      event_start_ts: "{{ event_info.start_ts | int if event_info.start_ts else 0 }}"
+                      event_end_ts: "{{ event_info.end_ts | int if event_info.end_ts else 0 }}"
+
+                      depart_ts: >
+                        {% if stop_index < heather_stops | length %}
+                          {{ (event_start_ts - (arrive_early_min + leg_min) * 60) | int }}
+                        {% else %}
+                          {{ event_end_ts | int }}
+                        {% endif %}
+
+                      arrive_ts: >
+                        {% if stop_index < heather_stops | length %}
+                          {{ (event_start_ts - arrive_early_min * 60) | int }}
+                        {% else %}
+                          {{ (event_end_ts + leg_min * 60) | int }}
+                        {% endif %}
+
+                      heather_total_km: "{{ heather_total_km | float + leg_km | float }}"
+
+                      leg_data: >
+                        {{
+                          {
+                            'leg': leg_index,
+                            'from': origin,
+                            'to': destination,
+                            'event_title': event_info.title | default(''),
+                            'distance_km': leg_km | float | round(1),
+                            'duration_min': leg_min | float | round(0),
+                            'depart_ts': depart_ts | int,
+                            'arrive_ts': arrive_ts | int
+                          }
+                        }}
+
+                      heather_legs: "{{ heather_legs + [leg_data] }}"
+
+            - variables:
+                heather_first_departure_ts: "{{ heather_legs[0].depart_ts if heather_legs | length > 0 else 0 }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_trip_km_heather_tomorrow
+      data:
+        value: "{{ heather_total_km | round(0) }}"
+
+    # Store compacted leg JSON (titles truncated to fit 255 chars)
+    - variables:
+        heather_legs_compact: >
+          {% set ns = namespace(items=[]) %}
+          {% for leg in heather_legs %}
+            {% set ns.items = ns.items + [{
+              'l': leg.leg,
+              't': (leg.event_title | default(''))[:12],
+              'km': leg.distance_km,
+              'mn': leg.duration_min | int,
+              'd': leg.depart_ts,
+              'a': leg.arrive_ts
+            }] %}
+          {% endfor %}
+          {{ ns.items | to_json }}
+
+    - action: input_select.set_options
+      target:
+        entity_id: input_select.ev_heather_trip_legs_json
+      data:
+        options:
+          - "{{ heather_legs_compact[:255] }}"
+
+    # Store leg count
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_heather_leg_count
+      data:
+        value: "{{ [heather_legs | length, 6] | min }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ heather_first_departure_ts | int > 0 }}"
+          sequence:
+            - action: input_datetime.set_datetime
+              target:
+                entity_id: input_datetime.ev_heather_departure_time
+              data:
+                datetime: "{{ heather_first_departure_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}"
+
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.ev_heather_travel_minutes
+              data:
+                value: "{{ heather_legs[0].duration_min | int if heather_legs | length > 0 else 0 }}"
+
+    - action: logbook.log
+      data:
+        name: "EV Calendar"
+        message: >
+          Calendar sync complete. Fraser: {{ fraser_total_km | round(0) }}km ({{ fraser_stops | length }} stops).
+          Heather: {{ heather_total_km | round(0) }}km ({{ heather_stops | length }} stops).
+
+    # Compute elevation-adjusted consumption
+    - action: shell_command.compute_elevation
+
+
+###############################################################################
+# 20-29: SOC TRACKING
+###############################################################################
+
+- id: auto_ev_020_soc_tracker
+  alias: "EV 020 – SOC Tracker"
+  description: >
+    Tracks SOC throughout the day, predicts SOC at home,
+    and detects external charging.
+  mode: queued
+  max: 2
+  trace:
+    stored_traces: 10
+
+  triggers:
+    # Regular updates
+    - trigger: time_pattern
+      minutes: "/30"
+
+    # SOC changed
+    - trigger: state
+      entity_id: sensor.horace_battery_level
+      for:
+        seconds: 60
+
+    - trigger: state
+      entity_id: sensor.horatio_battery_level
+      for:
+        seconds: 60
+
+    # Car arrived/left home
+    - trigger: state
+      entity_id: device_tracker.horace_location
+
+    - trigger: state
+      entity_id: device_tracker.horatio_location
+
+  actions:
+    - variables:
+        batt_horace_kwh: 70
+        batt_horatio_kwh: 90
+        whkm_horace: 180
+        whkm_horatio: 215
+
+    # Only wake on scheduled runs, not state-change triggers
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ trigger.platform == 'time_pattern' }}"
+          sequence:
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ states('sensor.horace_battery_level') in ['unknown', 'unavailable'] }}"
+                  sequence:
+                    - action: button.press
+                      target:
+                        entity_id: button.horace_wake
+                    - delay:
+                        seconds: 30
+                    - action: homeassistant.update_entity
+                      target:
+                        entity_id: sensor.horace_battery_level
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ states('sensor.horatio_battery_level') in ['unknown', 'unavailable'] }}"
+                  sequence:
+                    - action: button.press
+                      target:
+                        entity_id: button.horatio_wake
+                    - delay:
+                        seconds: 30
+                    - action: homeassistant.update_entity
+                      target:
+                        entity_id: sensor.horatio_battery_level
+
+    # =========================================================================
+    # HORACE SOC TRACKING
+    # =========================================================================
+    - variables:
+        horace_soc_now: "{{ states('sensor.horace_battery_level') | float(0) }}"
+        horace_soc_prev: "{{ states('input_number.ev_horace_previous_soc') | float(0) }}"
+        horace_home: "{{ is_state('device_tracker.horace_location', 'home') }}"
+        horace_plugged_home: "{{ is_state('binary_sensor.horace_charge_cable', 'on') and horace_home }}"
+        horace_soc_delta: "{{ horace_soc_now - horace_soc_prev }}"
+        horace_kwh_delta: "{{ horace_soc_delta * batt_horace_kwh / 100 }}"
+        horace_external_charge: "{{ horace_soc_delta > 2 and not horace_plugged_home and horace_soc_prev > 0 }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_horace_current_soc
+      data:
+        value: "{{ horace_soc_now | round(0) }}"
+
+    - choose:
+        # Car is home - SOC at home = current SOC
+        - conditions:
+            - condition: template
+              value_template: "{{ horace_home }}"
+          sequence:
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.ev_horace_predicted_soc_home
+              data:
+                value: "{{ horace_soc_now | round(0) }}"
+
+            - action: input_datetime.set_datetime
+              target:
+                entity_id: input_datetime.ev_horace_expected_return
+              data:
+                datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+      # Car is away - estimate SOC when it returns
+      default:
+        - variables:
+            horace_lat: "{{ state_attr('device_tracker.horace_location', 'latitude') }}"
+            horace_lon: "{{ state_attr('device_tracker.horace_location', 'longitude') }}"
+
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ horace_lat is not none and horace_lon is not none }}"
+              sequence:
+                - action: waze_travel_time.get_travel_times
+                  data:
+                    origin: "{{ horace_lat }},{{ horace_lon }}"
+                    destination: "zone.home"
+                    region: "eu"
+                    units: "metric"
+                    vehicle_type: "car"
+                    realtime: true
+                  response_variable: horace_waze
+
+                - variables:
+                    routes: "{{ horace_waze.get('routes', []) }}"
+                    dist_km: "{{ (routes[0].get('distance', 0) | float) if routes | length > 0 else 0 }}"
+                    dur_min: "{{ (routes[0].get('duration', 0) | float) if routes | length > 0 else 0 }}"
+                    soc_drop: "{{ (dist_km * whkm_horace / 1000) / batt_horace_kwh * 100 }}"
+                    soc_at_home: "{{ [0, horace_soc_now - soc_drop] | max }}"
+
+                - action: input_number.set_value
+                  target:
+                    entity_id: input_number.ev_horace_predicted_soc_home
+                  data:
+                    value: "{{ soc_at_home | round(0) }}"
+
+                - action: input_datetime.set_datetime
+                  target:
+                    entity_id: input_datetime.ev_horace_expected_return
+                  data:
+                    datetime: "{{ (now() + timedelta(minutes=dur_min)).strftime('%Y-%m-%d %H:%M:%S') }}"
+
+    # Detect external charging
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ horace_external_charge }}"
+          sequence:
+            - action: input_boolean.turn_on
+              target:
+                entity_id: input_boolean.ev_horace_charged_externally_today
+
+            - variables:
+                current_external: "{{ states('input_number.ev_horace_external_kwh_today') | float(0) }}"
+
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.ev_horace_external_kwh_today
+              data:
+                value: "{{ (current_external + horace_kwh_delta) | round(1) }}"
+
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                message: "🔋 Horace charged externally: +{{ horace_soc_delta | round(0) }}%"
+
+            - action: logbook.log
+              data:
+                name: "EV SOC"
+                message: "Horace external charge detected: +{{ horace_soc_delta | round(0) }}% (+{{ horace_kwh_delta | round(1) }} kWh)"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_horace_previous_soc
+      data:
+        value: "{{ horace_soc_now | round(0) }}"
+
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.ev_horace_soc_last_updated
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+    # =========================================================================
+    # HORATIO SOC TRACKING (same pattern)
+    # =========================================================================
+    - variables:
+        horatio_soc_now: "{{ states('sensor.horatio_battery_level') | float(0) }}"
+        horatio_soc_prev: "{{ states('input_number.ev_horatio_previous_soc') | float(0) }}"
+        horatio_home: "{{ is_state('device_tracker.horatio_location', 'home') }}"
+        horatio_plugged_home: "{{ is_state('binary_sensor.horatio_charge_cable', 'on') and horatio_home }}"
+        horatio_soc_delta: "{{ horatio_soc_now - horatio_soc_prev }}"
+        horatio_kwh_delta: "{{ horatio_soc_delta * batt_horatio_kwh / 100 }}"
+        horatio_external_charge: "{{ horatio_soc_delta > 2 and not horatio_plugged_home and horatio_soc_prev > 0 }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_horatio_current_soc
+      data:
+        value: "{{ horatio_soc_now | round(0) }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ horatio_home }}"
+          sequence:
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.ev_horatio_predicted_soc_home
+              data:
+                value: "{{ horatio_soc_now | round(0) }}"
+
+            - action: input_datetime.set_datetime
+              target:
+                entity_id: input_datetime.ev_horatio_expected_return
+              data:
+                datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+      default:
+        - variables:
+            horatio_lat: "{{ state_attr('device_tracker.horatio_location', 'latitude') }}"
+            horatio_lon: "{{ state_attr('device_tracker.horatio_location', 'longitude') }}"
+
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ horatio_lat is not none and horatio_lon is not none }}"
+              sequence:
+                - action: waze_travel_time.get_travel_times
+                  data:
+                    origin: "{{ horatio_lat }},{{ horatio_lon }}"
+                    destination: "zone.home"
+                    region: "eu"
+                    units: "metric"
+                    vehicle_type: "car"
+                    realtime: true
+                  response_variable: horatio_waze
+
+                - variables:
+                    routes: "{{ horatio_waze.get('routes', []) }}"
+                    dist_km: "{{ (routes[0].get('distance', 0) | float) if routes | length > 0 else 0 }}"
+                    dur_min: "{{ (routes[0].get('duration', 0) | float) if routes | length > 0 else 0 }}"
+                    soc_drop: "{{ (dist_km * whkm_horatio / 1000) / batt_horatio_kwh * 100 }}"
+                    soc_at_home: "{{ [0, horatio_soc_now - soc_drop] | max }}"
+
+                - action: input_number.set_value
+                  target:
+                    entity_id: input_number.ev_horatio_predicted_soc_home
+                  data:
+                    value: "{{ soc_at_home | round(0) }}"
+
+                - action: input_datetime.set_datetime
+                  target:
+                    entity_id: input_datetime.ev_horatio_expected_return
+                  data:
+                    datetime: "{{ (now() + timedelta(minutes=dur_min)).strftime('%Y-%m-%d %H:%M:%S') }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ horatio_external_charge }}"
+          sequence:
+            - action: input_boolean.turn_on
+              target:
+                entity_id: input_boolean.ev_horatio_charged_externally_today
+
+            - variables:
+                current_external: "{{ states('input_number.ev_horatio_external_kwh_today') | float(0) }}"
+
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.ev_horatio_external_kwh_today
+              data:
+                value: "{{ (current_external + horatio_kwh_delta) | round(1) }}"
+
+            - action: notify.mobile_app_heather_s_iphone
+              data:
+                message: "🔋 Horatio charged externally: +{{ horatio_soc_delta | round(0) }}%"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_horatio_previous_soc
+      data:
+        value: "{{ horatio_soc_now | round(0) }}"
+
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.ev_horatio_soc_last_updated
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+
+###############################################################################
+# 30-39: PLANNER
+###############################################################################
+
+- id: auto_ev_030_planner
+  alias: "EV 030 – Planner (Car Assignment & Charging)"
+  description: >
+    Assigns cars to drivers and determines overnight charging needs.
+    Includes external charging warnings.
+  mode: restart
+  trace:
+    stored_traces: 10
+
+  triggers:
+    # Trip data changed
+    - trigger: state
+      entity_id:
+        - input_number.ev_trip_km_fraser_tomorrow
+        - input_number.ev_trip_km_heather_tomorrow
+      for:
+        seconds: 5
+
+    # Elevation data updated
+    - trigger: state
+      entity_id:
+        - input_number.ev_fraser_soc_drop_horace
+        - input_number.ev_heather_soc_drop_horace
+      for:
+        seconds: 5
+
+    # SOC predictions changed significantly
+    - trigger: state
+      entity_id:
+        - input_number.ev_horace_predicted_soc_home
+        - input_number.ev_horatio_predicted_soc_home
+      for:
+        seconds: 10
+
+    # External charging detected
+    - trigger: state
+      entity_id:
+        - input_boolean.ev_horace_charged_externally_today
+        - input_boolean.ev_horatio_charged_externally_today
+      to: "on"
+
+    # Scheduled planning times
+    - trigger: time
+      at: "06:00:00"
+    - trigger: time
+      at: "14:00:00"
+    - trigger: time
+      at: "20:30:00"
+
+  actions:
+    - variables:
+        # Trip distances
+        km_fraser: "{{ states('input_number.ev_trip_km_fraser_tomorrow') | float(0) }}"
+        km_heather: "{{ states('input_number.ev_trip_km_heather_tomorrow') | float(0) }}"
+        km_long: "{{ [km_fraser, km_heather] | max }}"
+        km_short: "{{ [km_fraser, km_heather] | min }}"
+        fraser_has_long: "{{ km_fraser >= km_heather }}"
+
+        # Current/predicted SOC
+        soc_horace: "{{ states('input_number.ev_horace_predicted_soc_home') | float(0) }}"
+        soc_horatio: "{{ states('input_number.ev_horatio_predicted_soc_home') | float(0) }}"
+
+        # Battery specs
+        batt_horace_kwh: 70
+        batt_horatio_kwh: 90
+        whkm_horace: 180
+        whkm_horatio: 215
+
+        # Policy
+        hard_floor_soc: 10
+        soft_goal_soc: 20
+
+        # SOC drops
+        # Driver assignments (who has longer trip)
+        driver_long: "{{ 'fraser' if fraser_has_long else 'heather' }}"
+        driver_short: "{{ 'heather' if fraser_has_long else 'fraser' }}"
+
+        # SOC drops (elevation-adjusted)
+        drop_horace_long: "{{ states('input_number.ev_' ~ driver_long ~ '_soc_drop_horace') | float(0) }}"
+        drop_horace_short: "{{ states('input_number.ev_' ~ driver_short ~ '_soc_drop_horace') | float(0) }}"
+        drop_horatio_long: "{{ states('input_number.ev_' ~ driver_long ~ '_soc_drop_horatio') | float(0) }}"
+        drop_horatio_short: "{{ states('input_number.ev_' ~ driver_short ~ '_soc_drop_horatio') | float(0) }}"
+
+        # Required starting SOC (to end at hard floor)
+        req_horace_long: "{{ drop_horace_long + hard_floor_soc }}"
+        req_horace_short: "{{ drop_horace_short + hard_floor_soc }}"
+        req_horatio_long: "{{ drop_horatio_long + hard_floor_soc }}"
+        req_horatio_short: "{{ drop_horatio_short + hard_floor_soc }}"
+
+        # Target SOC (to end at soft goal)
+        target_horace_long: "{{ drop_horace_long + soft_goal_soc }}"
+        target_horace_short: "{{ drop_horace_short + soft_goal_soc }}"
+        target_horatio_long: "{{ drop_horatio_long + soft_goal_soc }}"
+        target_horatio_short: "{{ drop_horatio_short + soft_goal_soc }}"
+
+        # Scenario A: Horace=long, Horatio=short
+        deficit_a_horace: "{{ [0, req_horace_long - soc_horace] | max }}"
+        deficit_a_horatio: "{{ [0, req_horatio_short - soc_horatio] | max }}"
+        needs_charge_a: "{{ (deficit_a_horace > 0) or (deficit_a_horatio > 0) }}"
+
+        # Scenario B: Horace=short, Horatio=long
+        deficit_b_horace: "{{ [0, req_horace_short - soc_horace] | max }}"
+        deficit_b_horatio: "{{ [0, req_horatio_long - soc_horatio] | max }}"
+        needs_charge_b: "{{ (deficit_b_horace > 0) or (deficit_b_horatio > 0) }}"
+
+        # End-of-day SOC for scoring
+        end_soc_a_horace: "{{ soc_horace - drop_horace_long }}"
+        end_soc_a_horatio: "{{ soc_horatio - drop_horatio_short }}"
+        end_soc_b_horace: "{{ soc_horace - drop_horace_short }}"
+        end_soc_b_horatio: "{{ soc_horatio - drop_horatio_long }}"
+
+        # Penalty (how far below soft goal)
+        penalty_a: "{{ [0, soft_goal_soc - end_soc_a_horace] | max + [0, soft_goal_soc - end_soc_a_horatio] | max }}"
+        penalty_b: "{{ [0, soft_goal_soc - end_soc_b_horace] | max + [0, soft_goal_soc - end_soc_b_horatio] | max }}"
+
+        # Decision
+        choose_a: >
+          {% if (not needs_charge_a) and needs_charge_b %}true
+          {% elif needs_charge_a and (not needs_charge_b) %}false
+          {% else %}{{ penalty_a <= penalty_b }}{% endif %}
+
+        # Final assignments
+        long_trip_car: "{{ 'Horace' if choose_a else 'Horatio' }}"
+        short_trip_car: "{{ 'Horatio' if choose_a else 'Horace' }}"
+        fraser_car: "{{ long_trip_car if fraser_has_long else short_trip_car }}"
+        heather_car: "{{ short_trip_car if fraser_has_long else long_trip_car }}"
+
+        # Charging decision
+        night_charge_car: >
+          {% if choose_a %}
+            {% if deficit_a_horace > 0 and deficit_a_horatio == 0 %}Horace
+            {% elif deficit_a_horatio > 0 and deficit_a_horace == 0 %}Horatio
+            {% elif deficit_a_horace > 0 and deficit_a_horatio > 0 %}
+              {{ 'Horace' if deficit_a_horace >= deficit_a_horatio else 'Horatio' }}
+            {% else %}None{% endif %}
+          {% else %}
+            {% if deficit_b_horace > 0 and deficit_b_horatio == 0 %}Horace
+            {% elif deficit_b_horatio > 0 and deficit_b_horace == 0 %}Horatio
+            {% elif deficit_b_horace > 0 and deficit_b_horatio > 0 %}
+              {{ 'Horace' if deficit_b_horace >= deficit_b_horatio else 'Horatio' }}
+            {% else %}None{% endif %}
+          {% endif %}
+
+        # Target SOC
+        night_target_soc: >
+          {% if night_charge_car == 'Horace' %}
+            {{ (target_horace_long if choose_a else target_horace_short) | round(0) }}
+          {% elif night_charge_car == 'Horatio' %}
+            {{ (target_horatio_short if choose_a else target_horatio_long) | round(0) }}
+          {% else %}0{% endif %}
+
+        # External charging calculation
+        max_overnight_kwh: 88  # 11kW * 8 hours
+
+        fraser_batt: "{{ batt_horace_kwh if fraser_car == 'Horace' else batt_horatio_kwh }}"
+        fraser_current_soc: "{{ soc_horace if fraser_car == 'Horace' else soc_horatio }}"
+        fraser_target_soc: "{{ target_horace_long if (fraser_car == 'Horace' and fraser_has_long) else target_horace_short if fraser_car == 'Horace' else target_horatio_long if (fraser_car == 'Horatio' and fraser_has_long) else target_horatio_short }}"
+        fraser_deficit_soc: "{{ [0, fraser_target_soc - fraser_current_soc] | max }}"
+        fraser_deficit_kwh: "{{ fraser_deficit_soc * fraser_batt / 100 }}"
+
+        heather_batt: "{{ batt_horace_kwh if heather_car == 'Horace' else batt_horatio_kwh }}"
+        heather_current_soc: "{{ soc_horace if heather_car == 'Horace' else soc_horatio }}"
+        heather_target_soc: "{{ target_horace_long if (heather_car == 'Horace' and (not fraser_has_long)) else target_horace_short if heather_car == 'Horace' else target_horatio_long if (heather_car == 'Horatio' and (not fraser_has_long)) else target_horatio_short }}"
+        heather_deficit_soc: "{{ [0, heather_target_soc - heather_current_soc] | max }}"
+        heather_deficit_kwh: "{{ heather_deficit_soc * heather_batt / 100 }}"
+
+        total_deficit_kwh: "{{ fraser_deficit_kwh + heather_deficit_kwh }}"
+        external_needed_kwh: "{{ [0, total_deficit_kwh - max_overnight_kwh] | max }}"
+        external_required: "{{ external_needed_kwh > 0 }}"
+
+        # Departure SOC (after overnight charge)
+        fraser_departure_soc: >
+          {% if night_charge_car == fraser_car %}
+            {{ [100, fraser_target_soc] | min }}
+          {% else %}
+            {{ fraser_current_soc }}
+          {% endif %}
+
+        heather_departure_soc: >
+          {% if night_charge_car == heather_car %}
+            {{ [100, heather_target_soc] | min }}
+          {% else %}
+            {{ heather_current_soc }}
+          {% endif %}
+
+        decision_summary: >
+          Long={{ long_trip_car }}, Fraser={{ fraser_car }}, Heather={{ heather_car }}.
+          Night charge: {{ night_charge_car }} to {{ night_target_soc }}%.
+          External: {{ 'Yes (' ~ (external_needed_kwh | round(1)) ~ ' kWh)' if external_required else 'No' }}.
+
+    # Store decisions
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ km_fraser | float(0) > 0 }}"
+          sequence:
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.ev_fraser_assigned_car
+              data:
+                option: "{{ fraser_car }}"
+      default:
+        - action: input_select.select_option
+          target:
+            entity_id: input_select.ev_fraser_assigned_car
+          data:
+            option: "None"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ km_heather | float(0) > 0 }}"
+          sequence:
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.ev_heather_assigned_car
+              data:
+                option: "{{ heather_car }}"
+      default:
+        - action: input_select.select_option
+          target:
+            entity_id: input_select.ev_heather_assigned_car
+          data:
+            option: "None"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ night_charge_car is not none and night_charge_car | trim | length > 0 and night_charge_car | trim not in ['None', 'none'] }}"
+          sequence:
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.ev_night_charge_car
+              data:
+                option: "{{ night_charge_car | trim }}"
+      default:
+        - action: input_select.select_option
+          target:
+            entity_id: input_select.ev_night_charge_car
+          data:
+            option: "None"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_night_charge_target_soc
+      data:
+        value: "{{ [[0, night_target_soc | float] | max, 100] | min }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_fraser_departure_soc
+      data:
+        value: "{{ fraser_departure_soc | round(0) }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_heather_departure_soc
+      data:
+        value: "{{ heather_departure_soc | round(0) }}"
+
+    # External charging
+    - action: "input_boolean.turn_{{ 'on' if external_required else 'off' }}"
+      target:
+        entity_id: input_boolean.ev_external_charge_required
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_external_charge_kwh_fraser
+      data:
+        value: "{{ [0, (external_needed_kwh / 2)] | max | round(1) }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_external_charge_kwh_heather
+      data:
+        value: "{{ [0, (external_needed_kwh / 2)] | max | round(1) }}"
+
+    - action: input_select.set_options
+      target:
+        entity_id: input_select.ev_last_planner_decision
+      data:
+        options:
+          - "{{ decision_summary[:255] }}"
+
+    - action: logbook.log
+      data:
+        name: "EV Planner"
+        message: "{{ decision_summary }}"
+
+
+###############################################################################
+# 40-49: CHARGING CONTROL
+###############################################################################
+
+- id: auto_ev_040_solar_charging
+  alias: "EV 040 – Solar Surplus Charging"
+  description: "Adjusts charging current to match solar surplus"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id:
+        - sensor.solaredge_current_power
+        - sensor.solaredge_power_consumption
+      for:
+        seconds: 30
+
+    - trigger: state
+      entity_id: sensor.ev_plugged_vehicle
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.ev_solar_mode_enabled
+      state: "on"
+    - condition: state
+      entity_id: sun.sun
+      state: "above_horizon"
+    - condition: template
+      value_template: "{{ states('sensor.ev_plugged_vehicle') in ['Horace', 'Horatio'] }}"
+    # Orchestrator gate: legacy mode (off) OR orchestrator grants permission
+    - condition: or
+      conditions:
+        - condition: state
+          entity_id: input_boolean.energy_orchestrator_enabled
+          state: "off"
+        - condition: state
+          entity_id: input_boolean.energy_ev_solar_charge_allowed
+          state: "on"
+
+  actions:
+    - variables:
+        plugged_car: "{{ states('sensor.ev_plugged_vehicle') }}"
+        available_amps: "{{ states('sensor.ev_solar_available_amps') | int(0) }}"
+        min_amps: "{{ states('input_number.ev_min_amps') | int(5) }}"
+        # When orchestrator enabled, cap amps to its calculated maximum
+        max_amps: >
+          {% if is_state('input_boolean.energy_orchestrator_enabled', 'on') %}
+            {{ states('input_number.energy_ev_max_solar_amps') | int(16) }}
+          {% else %}
+            16
+          {% endif %}
+        can_charge: "{{ available_amps >= min_amps }}"
+        target_amps: "{{ [[available_amps, min_amps] | max, max_amps | int] | min }}"
+
+        charge_current_entity: "{{ 'number.horace_charge_current' if plugged_car == 'Horace' else 'number.horatio_charge_current' }}"
+        allow_charging_entity: "{{ 'input_boolean.ev_horace_allow_charging' if plugged_car == 'Horace' else 'input_boolean.ev_horatio_allow_charging' }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ can_charge }}"
+          sequence:
+            - action: number.set_value
+              target:
+                entity_id: "{{ charge_current_entity }}"
+              data:
+                value: "{{ target_amps }}"
+
+            - action: input_boolean.turn_on
+              target:
+                entity_id: "{{ allow_charging_entity }}"
+
+            - action: logbook.log
+              data:
+                name: "EV Solar"
+                message: "{{ plugged_car }} solar charging @ {{ target_amps }}A"
+
+      default:
+        - action: input_boolean.turn_off
+          target:
+            entity_id: "{{ allow_charging_entity }}"
+
+        - action: logbook.log
+          data:
+            name: "EV Solar"
+            message: "{{ plugged_car }} solar charging OFF ({{ available_amps }}A available < {{ min_amps }}A min)"
+
+
+- id: auto_ev_041_cheap_tariff
+  alias: "EV 041 – Cheap Tariff Charging"
+  description: "Charges planned car during cheap tariff windows"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/10"
+
+    - trigger: state
+      entity_id:
+        - sensor.horace_battery_level
+        - sensor.horatio_battery_level
+
+  actions:
+    - variables:
+        plan_car: "{{ states('input_select.ev_night_charge_car') }}"
+        target_soc: "{{ states('input_number.ev_night_charge_target_soc') | float(0) }}"
+        cheap_active: "{{ states('sensor.ev_cheap_tariff_active') == 'on' }}"
+
+        soc_horace: "{{ states('sensor.horace_battery_level') | float(0) }}"
+        soc_horatio: "{{ states('sensor.horatio_battery_level') | float(0) }}"
+        current_soc: "{{ soc_horace if plan_car == 'Horace' else soc_horatio }}"
+
+        plugged_horace: "{{ is_state('binary_sensor.horace_plugged', 'on') }}"
+        plugged_horatio: "{{ is_state('binary_sensor.horatio_plugged', 'on') }}"
+        plan_car_plugged: "{{ plugged_horace if plan_car == 'Horace' else plugged_horatio }}"
+
+        should_charge: "{{ plan_car in ['Horace', 'Horatio'] and cheap_active and plan_car_plugged and current_soc < target_soc }}"
+
+    - choose:
+        # No planned charge
+        - conditions:
+            - condition: template
+              value_template: "{{ plan_car == 'None' }}"
+          sequence:
+            - stop: "No car planned for night charge"
+
+        # Outside cheap window
+        - conditions:
+            - condition: template
+              value_template: "{{ not cheap_active }}"
+          sequence:
+            - condition: state
+              entity_id: sun.sun
+              state: "below_horizon"
+            - action: switch.turn_off
+              target:
+                entity_id:
+                  - switch.horace_charge
+                  - switch.horatio_charge
+
+        # Should charge
+        - conditions:
+            - condition: template
+              value_template: "{{ should_charge }}"
+            # Orchestrator gate: legacy mode (off) OR orchestrator grants permission
+            - condition: or
+              conditions:
+                - condition: state
+                  entity_id: input_boolean.energy_orchestrator_enabled
+                  state: "off"
+                - condition: state
+                  entity_id: input_boolean.energy_ev_tariff_charge_allowed
+                  state: "on"
+          sequence:
+            - action: switch.turn_on
+              target:
+                entity_id: "{{ 'switch.horace_charge' if plan_car == 'Horace' else 'switch.horatio_charge' }}"
+            - action: switch.turn_off
+              target:
+                entity_id: "{{ 'switch.horatio_charge' if plan_car == 'Horace' else 'switch.horace_charge' }}"
+
+        # Target reached
+        - conditions:
+            - condition: template
+              value_template: "{{ plan_car in ['Horace', 'Horatio'] and current_soc >= target_soc }}"
+          sequence:
+            - action: switch.turn_off
+              target:
+                entity_id:
+                  - switch.horace_charge
+                  - switch.horatio_charge
+            - action: logbook.log
+              data:
+                name: "EV Charging"
+                message: "{{ plan_car }} reached target SOC {{ target_soc }}%"
+
+- id: auto_ev_042_solar_surplus_alert
+  alias: "EV 042 – Solar Surplus Plug-In Alert"
+  description: "Notifies when solar surplus is available but no car is plugged in"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: numeric_state
+      entity_id: sensor.ev_solar_available_amps
+      above: 5
+      for:
+        minutes: 10
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.ev_solar_mode_enabled
+      state: "on"
+    - condition: template
+      value_template: "{{ states('sensor.ev_plugged_vehicle') not in ['Horace', 'Horatio'] }}"
+    - condition: state
+      entity_id: sun.sun
+      state: "above_horizon"
+
+  actions:
+    - variables:
+        available_amps: "{{ states('sensor.ev_solar_available_amps') | int(0) }}"
+        surplus_kw: "{{ (available_amps * 230 / 1000) | round(1) }}"
+        soc_horace: "{{ states('input_number.ev_horace_current_soc') | float(0) }}"
+        soc_horatio: "{{ states('input_number.ev_horatio_current_soc') | float(0) }}"
+        recommend: "{{ 'Horace' if soc_horace < soc_horatio else 'Horatio' }}"
+        recommend_soc: "{{ soc_horace if soc_horace < soc_horatio else soc_horatio }}"
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "☀️ Solar Surplus Available"
+        message: >
+          {{ surplus_kw }}kW surplus ({{ available_amps }}A).
+          Plug in {{ recommend }} ({{ recommend_soc | round(0) }}%).
+        data:
+          tag: "ev_solar_surplus"
+          group: "ev_charging"
+
+    - action: logbook.log
+      data:
+        name: "EV Solar"
+        message: "Surplus alert: {{ surplus_kw }}kW available, no car plugged in. Recommend {{ recommend }}."
+
+    - delay:
+        minutes: 60
+
+- id: auto_ev_043_charging_logger
+  alias: "EV 043 – Charging Energy Logger"
+  description: "Logs energy consumed by each car every 5 minutes while charging"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/5"
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ is_state('switch.horace_charge', 'on') or
+           is_state('switch.horatio_charge', 'on') }}
+
+  actions:
+    - variables:
+        solar_production: "{{ states('sensor.solaredge_current_power') | float(0) }}"
+        home_consumption: "{{ states('sensor.solaredge_power_consumption') | float(0) }}"
+        is_solar: "{{ solar_production > home_consumption * 0.5 and is_state('sun.sun', 'above_horizon') }}"
+
+        horace_charging: "{{ is_state('switch.horace_charge', 'on') }}"
+        horatio_charging: "{{ is_state('switch.horatio_charge', 'on') }}"
+
+        horace_amps: "{{ states('sensor.horace_charge_amps') | float(0) }}"
+        horatio_amps: "{{ states('sensor.horatio_charge_amps') | float(0) }}"
+        phases: "{{ states('input_number.ev_phases') | int(3) }}"
+
+        # Bug fix: added * phases for 3-phase charging
+        # Energy in 5 min: amps * voltage * phases * (5/60)h / 1000 = kWh
+        horace_kwh: "{{ (horace_amps * 230 * phases * 5 / 60 / 1000) | round(2) if horace_charging else 0 }}"
+        horatio_kwh: "{{ (horatio_amps * 230 * phases * 5 / 60 / 1000) | round(2) if horatio_charging else 0 }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ horace_charging and horace_kwh > 0 }}"
+          sequence:
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ is_solar }}"
+                  sequence:
+                    - action: input_number.set_value
+                      target:
+                        entity_id: input_number.ev_horace_solar_kwh_today
+                      data:
+                        value: "{{ (states('input_number.ev_horace_solar_kwh_today') | float(0) + horace_kwh) | round(1) }}"
+              default:
+                - action: input_number.set_value
+                  target:
+                    entity_id: input_number.ev_horace_grid_kwh_today
+                  data:
+                    value: "{{ (states('input_number.ev_horace_grid_kwh_today') | float(0) + horace_kwh) | round(1) }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ horatio_charging and horatio_kwh > 0 }}"
+          sequence:
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ is_solar }}"
+                  sequence:
+                    - action: input_number.set_value
+                      target:
+                        entity_id: input_number.ev_horatio_solar_kwh_today
+                      data:
+                        value: "{{ (states('input_number.ev_horatio_solar_kwh_today') | float(0) + horatio_kwh) | round(1) }}"
+              default:
+                - action: input_number.set_value
+                  target:
+                    entity_id: input_number.ev_horatio_grid_kwh_today
+                  data:
+                    value: "{{ (states('input_number.ev_horatio_grid_kwh_today') | float(0) + horatio_kwh) | round(1) }}"
+
+    - action: logbook.log
+      data:
+        name: "EV Charging"
+        message: >
+          {% if horace_charging %}Horace: +{{ horace_kwh }}kWh ({{ 'solar' if is_solar else 'grid' }}){% endif %}
+          {% if horatio_charging %}Horatio: +{{ horatio_kwh }}kWh ({{ 'solar' if is_solar else 'grid' }}){% endif %}
+
+- id: auto_ev_044_record_departure_soc
+  alias: "EV 044 – Record SOC at Departure"
+  description: "Records battery level when a car leaves home for correction factor calculation"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: device_tracker.horace_location
+      from: "home"
+    - trigger: state
+      entity_id: device_tracker.horatio_location
+      from: "home"
+
+  actions:
+    - variables:
+        car: "{{ 'Horace' if trigger.entity_id == 'device_tracker.horace_location' else 'Horatio' }}"
+        soc_entity: "{{ 'sensor.horace_battery_level' if car == 'Horace' else 'sensor.horatio_battery_level' }}"
+        departure_entity: "{{ 'input_number.ev_horace_soc_at_departure' if car == 'Horace' else 'input_number.ev_horatio_soc_at_departure' }}"
+        current_soc: "{{ states(soc_entity) | float(0) }}"
+
+    - condition: template
+      value_template: "{{ current_soc > 0 }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: "{{ departure_entity }}"
+      data:
+        value: "{{ current_soc }}"
+
+    - action: logbook.log
+      data:
+        name: "EV Trip"
+        message: "{{ car }} departed home at {{ current_soc }}% SOC"
+
+
+- id: auto_ev_045_correction_factor
+  alias: "EV 045 – Update Consumption Correction Factor"
+  description: "Compares predicted vs actual SOC drop and adjusts correction factor"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: device_tracker.horace_location
+      to: "home"
+      for:
+        minutes: 5
+    - trigger: state
+      entity_id: device_tracker.horatio_location
+      to: "home"
+      for:
+        minutes: 5
+
+  actions:
+    - variables:
+        car: "{{ 'Horace' if trigger.entity_id == 'device_tracker.horace_location' else 'Horatio' }}"
+        car_lower: "{{ car | lower }}"
+
+        soc_entity: "{{ 'sensor.horace_battery_level' if car == 'Horace' else 'sensor.horatio_battery_level' }}"
+        departure_entity: "{{ 'input_number.ev_horace_soc_at_departure' if car == 'Horace' else 'input_number.ev_horatio_soc_at_departure' }}"
+        factor_entity: "{{ 'input_number.ev_horace_consumption_factor' if car == 'Horace' else 'input_number.ev_horatio_consumption_factor' }}"
+
+        soc_now: "{{ states(soc_entity) | float(0) }}"
+        soc_departure: "{{ states(departure_entity) | float(0) }}"
+        current_factor: "{{ states(factor_entity) | float(1.0) }}"
+
+        actual_drop: "{{ soc_departure - soc_now }}"
+
+        # Find which driver used this car
+        fraser_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
+        heather_car: "{{ states('input_select.ev_heather_assigned_car') }}"
+        driver: "{{ 'fraser' if fraser_car == car else ('heather' if heather_car == car else 'unknown') }}"
+
+        # Get predicted drop for this driver+car combo
+        predicted_drop: "{{ states('input_number.ev_' ~ driver ~ '_soc_drop_' ~ car_lower) | float(0) }}"
+
+        # Only update if we have valid data
+        valid: "{{ soc_departure > 0 and actual_drop > 2 and predicted_drop > 2 and driver != 'unknown' }}"
+
+        # Calculate new factor: nudge 10% towards reality
+        raw_ratio: "{{ actual_drop / predicted_drop if predicted_drop > 0 else 1.0 }}"
+        nudge: "{{ current_factor + (raw_ratio - current_factor) * 0.1 }}"
+        new_factor: "{{ [[nudge, 0.5] | max, 2.0] | min }}"
+
+    - condition: template
+      value_template: "{{ valid }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: "{{ factor_entity }}"
+      data:
+        value: "{{ new_factor | round(3) }}"
+
+    - action: logbook.log
+      data:
+        name: "EV Correction"
+        message: >
+          {{ car }} ({{ driver }}): Predicted {{ predicted_drop | round(1) }}% vs
+          Actual {{ actual_drop | round(1) }}%.
+          Ratio: {{ raw_ratio | round(3) }}.
+          Factor: {{ current_factor | round(3) }} → {{ new_factor | round(3) }}.
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "🔋 Trip Accuracy Report"
+        message: >
+          {{ car }}: {{ soc_departure | round(0) }}% → {{ soc_now | round(0) }}% ({{ actual_drop | round(1) }}% used).
+          Predicted: {{ predicted_drop | round(1) }}%.
+          Accuracy: {{ (100 - (actual_drop - predicted_drop) | abs / actual_drop * 100) | round(0) }}%.
+        data:
+          tag: "ev_trip_accuracy"
+          group: "ev_system"
+
+###############################################################################
+# 50-59: CLIMATE CONTROL
+###############################################################################
+
+- id: auto_ev_050_climate_prep
+  alias: "EV 050 – Climate Prep (Defrost & Preheat)"
+  description: >
+    Defrost: 30 min before if temp < 0°C
+    Preheat: 15 min before departure
+    Phase 1D: replaced 1-min poll with departure proximity trigger (45 min
+    window) to reduce unnecessary Tesla API wake-ups.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    # Fires when either driver's departure enters the 45-minute window
+    - trigger: template
+      value_template: >
+        {% set now_ts = as_timestamp(now()) %}
+        {% set fr_ts = as_timestamp(states('input_datetime.ev_fraser_departure_time')) | float(0) %}
+        {% set he_ts = as_timestamp(states('input_datetime.ev_heather_departure_time')) | float(0) %}
+        {% set window = 2700 %}
+        {{ (fr_ts > now_ts and (fr_ts - now_ts) <= window)
+           or (he_ts > now_ts and (he_ts - now_ts) <= window) }}
+    # Re-evaluate every 5 minutes while in window
+    - trigger: time_pattern
+      minutes: "/5"
+
+  conditions:
+    - condition: template
+      value_template: >
+        {% set now_ts = as_timestamp(now()) %}
+        {% set fr_ts = as_timestamp(states('input_datetime.ev_fraser_departure_time')) | float(0) %}
+        {% set he_ts = as_timestamp(states('input_datetime.ev_heather_departure_time')) | float(0) %}
+        {% set window = 2700 %}
+        {{ (fr_ts > now_ts and (fr_ts - now_ts) <= window)
+           or (he_ts > now_ts and (he_ts - now_ts) <= window) }}
+
+  actions:
+    - variables:
+        now_ts: "{{ as_timestamp(now()) }}"
+        defrost_lead: 1800  # 30 min
+        preheat_lead: 900   # 15 min
+
+        # Fraser
+        fr_depart_ts: "{{ as_timestamp(states('input_datetime.ev_fraser_departure_time')) | float(0) }}"
+        fr_travel: "{{ states('input_number.ev_fraser_travel_minutes') | float(0) }}"
+        fr_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
+
+        # Heather
+        he_depart_ts: "{{ as_timestamp(states('input_datetime.ev_heather_departure_time')) | float(0) }}"
+        he_travel: "{{ states('input_number.ev_heather_travel_minutes') | float(0) }}"
+        he_car: "{{ states('input_select.ev_heather_assigned_car') }}"
+
+        # Temperatures
+        temp_horace: "{{ states('sensor.horace_outside_temperature') | float(99) }}"
+        temp_horatio: "{{ states('sensor.horatio_outside_temperature') | float(99) }}"
+
+        # Home status
+        horace_home: "{{ is_state('device_tracker.horace_location', 'home') }}"
+        horatio_home: "{{ is_state('device_tracker.horatio_location', 'home') }}"
+
+    # === FRASER'S CAR ===
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ fr_travel > 0 and fr_car in ['Horace', 'Horatio'] }}"
+          sequence:
+            - variables:
+                fr_car_home: "{{ horace_home if fr_car == 'Horace' else horatio_home }}"
+                fr_temp: "{{ temp_horace if fr_car == 'Horace' else temp_horatio }}"
+                fr_defrost_ts: "{{ fr_depart_ts - defrost_lead }}"
+                fr_preheat_ts: "{{ fr_depart_ts - preheat_lead }}"
+
+                last_defrost_entity: "{{ 'input_datetime.ev_last_horace_defrost' if fr_car == 'Horace' else 'input_datetime.ev_last_horatio_defrost' }}"
+                last_preheat_entity: "{{ 'input_datetime.ev_last_horace_preheat' if fr_car == 'Horace' else 'input_datetime.ev_last_horatio_preheat' }}"
+
+                last_defrost_ts: "{{ as_timestamp(states(last_defrost_entity)) | float(0) }}"
+                last_preheat_ts: "{{ as_timestamp(states(last_preheat_entity)) | float(0) }}"
+
+                fire_defrost: >
+                  {{ fr_car_home and fr_temp < 0 and fr_depart_ts > now_ts
+                     and now_ts >= fr_defrost_ts and now_ts < (fr_defrost_ts + 300)
+                     and last_defrost_ts < fr_defrost_ts }}
+
+                fire_preheat: >
+                  {{ fr_car_home and fr_depart_ts > now_ts
+                     and now_ts >= fr_preheat_ts and now_ts < (fr_preheat_ts + 300)
+                     and last_preheat_ts < fr_preheat_ts }}
+
+                defrost_switch: "{{ 'switch.horace_defrost' if fr_car == 'Horace' else 'switch.horatio_defrost' }}"
+                climate_entity: "{{ 'climate.horace_climate' if fr_car == 'Horace' else 'climate.horatio_climate' }}"
+
+            # Defrost
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ fire_defrost }}"
+                  sequence:
+                    - action: switch.turn_on
+                      target:
+                        entity_id: "{{ defrost_switch }}"
+
+                    - action: input_datetime.set_datetime
+                      target:
+                        entity_id: "{{ last_defrost_entity }}"
+                      data:
+                        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+                    - action: logbook.log
+                      data:
+                        name: "EV Climate"
+                        message: "{{ fr_car }} defrost activated for Fraser (temp={{ fr_temp | round(0) }}°C)"
+
+            # Preheat
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ fire_preheat }}"
+                  sequence:
+                    - action: climate.set_temperature
+                      target:
+                        entity_id: "{{ climate_entity }}"
+                      data:
+                        temperature: 21
+
+                    - action: input_datetime.set_datetime
+                      target:
+                        entity_id: "{{ last_preheat_entity }}"
+                      data:
+                        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+                    - action: logbook.log
+                      data:
+                        name: "EV Climate"
+                        message: "{{ fr_car }} preheat to 21°C for Fraser"
+
+    # === HEATHER'S CAR ===
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ he_travel > 0 and he_car in ['Horace', 'Horatio'] }}"
+          sequence:
+            - variables:
+                he_car_home: "{{ horace_home if he_car == 'Horace' else horatio_home }}"
+                he_temp: "{{ temp_horace if he_car == 'Horace' else temp_horatio }}"
+                he_defrost_ts: "{{ he_depart_ts - defrost_lead }}"
+                he_preheat_ts: "{{ he_depart_ts - preheat_lead }}"
+
+                last_defrost_entity: "{{ 'input_datetime.ev_last_horace_defrost' if he_car == 'Horace' else 'input_datetime.ev_last_horatio_defrost' }}"
+                last_preheat_entity: "{{ 'input_datetime.ev_last_horace_preheat' if he_car == 'Horace' else 'input_datetime.ev_last_horatio_preheat' }}"
+
+                last_defrost_ts: "{{ as_timestamp(states(last_defrost_entity)) | float(0) }}"
+                last_preheat_ts: "{{ as_timestamp(states(last_preheat_entity)) | float(0) }}"
+
+                fire_defrost: >
+                  {{ he_car_home and he_temp < 0 and he_depart_ts > now_ts
+                     and now_ts >= he_defrost_ts and now_ts < (he_defrost_ts + 300)
+                     and last_defrost_ts < he_defrost_ts }}
+
+                fire_preheat: >
+                  {{ he_car_home and he_depart_ts > now_ts
+                     and now_ts >= he_preheat_ts and now_ts < (he_preheat_ts + 300)
+                     and last_preheat_ts < he_preheat_ts }}
+
+                defrost_switch: "{{ 'switch.horace_defrost' if he_car == 'Horace' else 'switch.horatio_defrost' }}"
+                climate_entity: "{{ 'climate.horace_climate' if he_car == 'Horace' else 'climate.horatio_climate' }}"
+
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ fire_defrost }}"
+                  sequence:
+                    - action: switch.turn_on
+                      target:
+                        entity_id: "{{ defrost_switch }}"
+                    - action: input_datetime.set_datetime
+                      target:
+                        entity_id: "{{ last_defrost_entity }}"
+                      data:
+                        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+                    - action: logbook.log
+                      data:
+                        name: "EV Climate"
+                        message: "{{ he_car }} defrost activated for Heather (temp={{ he_temp | round(0) }}°C)"
+
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ fire_preheat }}"
+                  sequence:
+                    - action: climate.set_temperature
+                      target:
+                        entity_id: "{{ climate_entity }}"
+                      data:
+                        temperature: 21
+                    - action: input_datetime.set_datetime
+                      target:
+                        entity_id: "{{ last_preheat_entity }}"
+                      data:
+                        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+                    - action: logbook.log
+                      data:
+                        name: "EV Climate"
+                        message: "{{ he_car }} preheat to 21°C for Heather"
+
+
+- id: auto_ev_051_climate_confirmation
+  alias: "EV 051 – Climate Activation Confirmation"
+  description: "Notifies driver when climate is confirmed running"
+  mode: queued
+  max: 4
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: binary_sensor.ev_horace_climate_running
+      to: "on"
+      for:
+        seconds: 30
+
+    - trigger: state
+      entity_id: binary_sensor.ev_horatio_climate_running
+      to: "on"
+      for:
+        seconds: 30
+
+  actions:
+    - variables:
+        car: "{{ 'Horace' if 'horace' in trigger.entity_id else 'Horatio' }}"
+
+        # Determine which driver to notify
+        fraser_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
+        heather_car: "{{ states('input_select.ev_heather_assigned_car') }}"
+
+        notify_fraser: "{{ fraser_car == car }}"
+        notify_heather: "{{ heather_car == car }}"
+
+        # Anti-repeat check
+        last_confirm_entity: "{{ 'input_datetime.ev_last_horace_climate_confirm' if car == 'Horace' else 'input_datetime.ev_last_horatio_climate_confirm' }}"
+        last_confirm_ts: "{{ as_timestamp(states(last_confirm_entity)) | float(0) }}"
+        now_ts: "{{ as_timestamp(now()) }}"
+        cooldown_ok: "{{ (now_ts - last_confirm_ts) > 1800 }}"  # 30 min cooldown
+
+        temp_inside: "{{ states('sensor.' ~ (car | lower) ~ '_inside_temperature') | float(0) }}"
+        temp_outside: "{{ states('sensor.' ~ (car | lower) ~ '_outside_temperature') | float(0) }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ cooldown_ok }}"
+          sequence:
+            - action: input_datetime.set_datetime
+              target:
+                entity_id: "{{ last_confirm_entity }}"
+              data:
+                datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ notify_fraser }}"
+                  sequence:
+                    - action: notify.mobile_app_fraser_s_iphone
+                      data:
+                        message: "🌡️ {{ car }} climate is now running (inside: {{ temp_inside | round(0) }}°C, outside: {{ temp_outside | round(0) }}°C)"
+
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ notify_heather }}"
+                  sequence:
+                    - action: notify.mobile_app_heather_s_iphone
+                      data:
+                        message: "🌡️ {{ car }} climate is now running (inside: {{ temp_inside | round(0) }}°C, outside: {{ temp_outside | round(0) }}°C)"
+
+
+###############################################################################
+# 60-69: NOTIFICATIONS
+###############################################################################
+
+- id: auto_ev_060_evening_digest
+  alias: "EV 060 – Evening Trip Digest"
+  description: "Sends tomorrow's trip summary with per-leg SOC estimates"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time
+      at: "20:00:00"
+
+  actions:
+    - variables:
+        tomorrow: "{{ (as_local(now()).date() + timedelta(days=1)) | string }}"
+
+        km_fraser: "{{ states('input_number.ev_trip_km_fraser_tomorrow') | float(0) }}"
+        km_heather: "{{ states('input_number.ev_trip_km_heather_tomorrow') | float(0) }}"
+
+        fraser_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
+        heather_car: "{{ states('input_select.ev_heather_assigned_car') }}"
+        night_charge: "{{ states('input_select.ev_night_charge_car') }}"
+        target_soc: "{{ states('input_number.ev_night_charge_target_soc') | float(0) }}"
+
+        fraser_depart_soc: "{{ states('input_number.ev_fraser_departure_soc') | float(0) }}"
+        heather_depart_soc: "{{ states('input_number.ev_heather_departure_soc') | float(0) }}"
+
+        external_required: "{{ is_state('input_boolean.ev_external_charge_required', 'on') }}"
+        external_kwh: "{{ states('input_number.ev_external_charge_kwh_fraser') | float(0) + states('input_number.ev_external_charge_kwh_heather') | float(0) }}"
+
+        fraser_legs_json: "{{ states('input_select.ev_fraser_trip_legs_json') }}"
+        heather_legs_json: "{{ states('input_select.ev_heather_trip_legs_json') }}"
+
+        # Build signature for change detection
+        new_sig: "{{ tomorrow }}|{{ km_fraser | round(0) }}|{{ km_heather | round(0) }}|{{ fraser_car }}|{{ heather_car }}|{{ night_charge }}|{{ external_required }}"
+        old_sig: "{{ states('input_select.ev_trip_digest_signature') }}"
+        changed: "{{ new_sig != old_sig }}"
+
+        has_trips: "{{ km_fraser > 0 or km_heather > 0 }}"
+
+        # Battery specs for SOC calculation
+        batt_horace: 70
+        batt_horatio: 90
+        whkm_horace: 180
+        whkm_horatio: 215
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ not has_trips }}"
+          sequence:
+            - stop: "No trips tomorrow"
+
+    - action: input_select.set_options
+      target:
+        entity_id: input_select.ev_trip_digest_signature
+      data:
+        options:
+          - "{{ new_sig }}"
+
+    # Build detailed message with per-leg SOC
+    - variables:
+        fraser_batt: "{{ batt_horace if fraser_car == 'Horace' else batt_horatio }}"
+        fraser_whkm: "{{ whkm_horace if fraser_car == 'Horace' else whkm_horatio }}"
+        heather_batt: "{{ batt_horace if heather_car == 'Horace' else batt_horatio }}"
+        heather_whkm: "{{ whkm_horace if heather_car == 'Horace' else whkm_horatio }}"
+
+        # Parse compacted leg data (short keys: l=leg, t=title, km=dist, mn=min, d=depart_ts, a=arrive_ts)
+        fraser_legs: "{{ fraser_legs_json | from_json if fraser_legs_json and fraser_legs_json not in ['', 'unknown', 'unavailable'] else [] }}"
+        heather_legs: "{{ heather_legs_json | from_json if heather_legs_json and heather_legs_json not in ['', 'unknown', 'unavailable'] else [] }}"
+
+        # Build Fraser itinerary
+        fraser_itinerary: >
+          {% set ns = namespace(soc=fraser_depart_soc, lines=[]) %}
+          {% for leg in fraser_legs %}
+            {% set drop = (leg.km * fraser_whkm / 1000) / fraser_batt * 100 %}
+            {% set arrive_soc = ns.soc - drop %}
+            {% set depart_time = leg.d | timestamp_custom('%H:%M', true) %}
+            {% set arrive_time = leg.a | timestamp_custom('%H:%M', true) %}
+            {% set line = '• ' ~ depart_time ~ ' → ' ~ arrive_time ~ ': ' ~ leg.t ~ ' (' ~ leg.km ~ 'km, ' ~ leg.mn ~ 'min) — SOC: ' ~ (ns.soc | round(0)) ~ '% → ' ~ (arrive_soc | round(0)) ~ '%' %}
+            {% set ns.lines = ns.lines + [line] %}
+            {% set ns.soc = arrive_soc %}
+          {% endfor %}
+          {{ ns.lines | join('\n') if ns.lines | length > 0 else 'No trips' }}
+
+        # Build Heather itinerary
+        heather_itinerary: >
+          {% set ns = namespace(soc=heather_depart_soc, lines=[]) %}
+          {% for leg in heather_legs %}
+            {% set drop = (leg.km * heather_whkm / 1000) / heather_batt * 100 %}
+            {% set arrive_soc = ns.soc - drop %}
+            {% set depart_time = leg.d | timestamp_custom('%H:%M', true) %}
+            {% set arrive_time = leg.a | timestamp_custom('%H:%M', true) %}
+            {% set line = '• ' ~ depart_time ~ ' → ' ~ arrive_time ~ ': ' ~ leg.t ~ ' (' ~ leg.km ~ 'km, ' ~ leg.mn ~ 'min) — SOC: ' ~ (ns.soc | round(0)) ~ '% → ' ~ (arrive_soc | round(0)) ~ '%' %}
+            {% set ns.lines = ns.lines + [line] %}
+            {% set ns.soc = arrive_soc %}
+          {% endfor %}
+          {{ ns.lines | join('\n') if ns.lines | length > 0 else 'No trips' }}
+
+        msg_short: >
+          Tomorrow: Fraser→{{ fraser_car }} ({{ km_fraser | round(0) }}km), Heather→{{ heather_car }} ({{ km_heather | round(0) }}km).
+          {% if night_charge != 'None' %}🔌 Plug in {{ night_charge }} tonight.{% endif %}
+          {% if external_required %}⚠️ External charging needed!{% endif %}
+
+        msg_full: >
+          ## 🚗 EV Tomorrow Digest ({{ tomorrow }})
+
+          ---
+          ### Fraser → {{ fraser_car }}
+          **Starting SOC: {{ fraser_depart_soc | round(0) }}%**
+          {{ fraser_itinerary }}
+
+          ---
+          ### Heather → {{ heather_car }}
+          **Starting SOC: {{ heather_depart_soc | round(0) }}%**
+          {{ heather_itinerary }}
+
+          ---
+          ### 🔋 Charging Plan
+          {% if night_charge != 'None' %}
+          **Plug in {{ night_charge }}** tonight → target {{ target_soc | round(0) }}%
+          {% else %}
+          No overnight charging required ✓
+          {% endif %}
+
+          {% if external_required %}
+          ---
+          ### ⚠️ EXTERNAL CHARGING REQUIRED
+          Total needed: ~{{ external_kwh | round(1) }} kWh
+          Plan to charge at a public station or destination.
+          {% endif %}
+
+    # Send notifications
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        message: "{{ msg_short }}"
+        data:
+          push:
+            sound: default
+
+    - action: notify.mobile_app_heather_s_iphone
+      data:
+        message: "{{ msg_short }}"
+        data:
+          push:
+            sound: default
+
+    - action: persistent_notification.create
+      data:
+        title: "EV Tomorrow Digest"
+        message: "{{ msg_full }}"
+        notification_id: "ev_tomorrow_digest"
+
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.ev_last_digest_sent
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+
+- id: auto_ev_061_departure_fraser
+  alias: "EV 061 – Fraser Departure Reminder"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/1"
+
+  actions:
+    - variables:
+        now_ts: "{{ as_timestamp(now()) }}"
+        depart_ts: "{{ as_timestamp(states('input_datetime.ev_fraser_departure_time')) | float(0) }}"
+        last_notify_ts: "{{ as_timestamp(states('input_datetime.ev_last_fraser_departure_notify')) | float(0) }}"
+
+        lead_sec: 1800  # 30 min
+        fire_window_start: "{{ depart_ts - lead_sec }}"
+        fire_window_end: "{{ depart_ts - lead_sec + 60 }}"
+
+        travel_min: "{{ states('input_number.ev_fraser_travel_minutes') | float(0) }}"
+        should_fire: >
+          {{ travel_min > 0 and depart_ts > now_ts
+             and now_ts >= fire_window_start and now_ts < fire_window_end
+             and last_notify_ts < fire_window_start }}
+
+        assigned_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
+        depart_soc: "{{ states('input_number.ev_fraser_departure_soc') | float(0) }}"
+        depart_time: "{{ depart_ts | timestamp_custom('%H:%M', true) }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ should_fire }}"
+          sequence:
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                message: "🚗 Leaving in ~30 min. Take **{{ assigned_car }}** ({{ depart_soc | round(0) }}%). Depart {{ depart_time }}."
+                data:
+                  push:
+                    sound: default
+
+            - action: input_datetime.set_datetime
+              target:
+                entity_id: input_datetime.ev_last_fraser_departure_notify
+              data:
+                datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+
+- id: auto_ev_062_departure_heather
+  alias: "EV 062 – Heather Departure Reminder"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/1"
+
+  actions:
+    - variables:
+        now_ts: "{{ as_timestamp(now()) }}"
+        depart_ts: "{{ as_timestamp(states('input_datetime.ev_heather_departure_time')) | float(0) }}"
+        last_notify_ts: "{{ as_timestamp(states('input_datetime.ev_last_heather_departure_notify')) | float(0) }}"
+
+        lead_sec: 1800
+        fire_window_start: "{{ depart_ts - lead_sec }}"
+        fire_window_end: "{{ depart_ts - lead_sec + 60 }}"
+
+        travel_min: "{{ states('input_number.ev_heather_travel_minutes') | float(0) }}"
+        should_fire: >
+          {{ travel_min > 0 and depart_ts > now_ts
+             and now_ts >= fire_window_start and now_ts < fire_window_end
+             and last_notify_ts < fire_window_start }}
+
+        assigned_car: "{{ states('input_select.ev_heather_assigned_car') }}"
+        depart_soc: "{{ states('input_number.ev_heather_departure_soc') | float(0) }}"
+        depart_time: "{{ depart_ts | timestamp_custom('%H:%M', true) }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ should_fire }}"
+          sequence:
+            - action: notify.mobile_app_heather_s_iphone
+              data:
+                message: "🚗 Leaving in ~30 min. Take **{{ assigned_car }}** ({{ depart_soc | round(0) }}%). Depart {{ depart_time }}."
+                data:
+                  push:
+                    sound: default
+
+            - action: input_datetime.set_datetime
+              target:
+                entity_id: input_datetime.ev_last_heather_departure_notify
+              data:
+                datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+
+- id: auto_ev_063_plug_reminder
+  alias: "EV 063 – Plug-In Reminder"
+  description: "Reminds to plug in the planned car during cheap tariff"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/15"
+
+    - trigger: state
+      entity_id:
+        - device_tracker.fraser_s_iphone
+        - device_tracker.heather_s_iphone
+      to: "home"
+
+  actions:
+    - variables:
+        plan_car: "{{ states('input_select.ev_night_charge_car') }}"
+        plugged: "{{ states('sensor.ev_plugged_vehicle') }}"
+        target_soc: "{{ states('input_number.ev_night_charge_target_soc') | float(0) }}"
+
+        horace_home: "{{ is_state('device_tracker.horace_location', 'home') }}"
+        horatio_home: "{{ is_state('device_tracker.horatio_location', 'home') }}"
+        plan_car_home: "{{ (plan_car == 'Horace' and horace_home) or (plan_car == 'Horatio' and horatio_home) }}"
+        wrong_or_none_plugged: "{{ plugged != plan_car }}"
+
+        fraser_home: "{{ states('device_tracker.fraser_s_iphone') in ['home', 'Coming Home'] }}"
+        heather_home: "{{ states('device_tracker.heather_s_iphone') in ['home', 'Coming Home'] }}"
+
+        cooldown_min: "{{ states('input_number.ev_plug_request_cooldown_min') | int(60) }}"
+        last_req_ts: "{{ as_timestamp(states('input_datetime.ev_last_plug_request')) | float(0) }}"
+        now_ts: "{{ as_timestamp(now()) }}"
+        cooldown_ok: "{{ (now_ts - last_req_ts) >= (cooldown_min * 60) }}"
+
+        cheap_active: "{{ states('sensor.ev_cheap_tariff_active') == 'on' }}"
+
+        should_notify: >
+          {{ plan_car in ['Horace', 'Horatio']
+             and plan_car_home
+             and wrong_or_none_plugged
+             and cooldown_ok
+             and cheap_active
+             and (fraser_home or heather_home) }}
+
+        msg: "🔌 Cheap tariff active. Please plug in **{{ plan_car }}** (target {{ target_soc | round(0) }}%)"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ should_notify }}"
+          sequence:
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ fraser_home }}"
+                  sequence:
+                    - action: notify.mobile_app_fraser_s_iphone
+                      data:
+                        message: "{{ msg }}"
+              default:
+                - action: notify.mobile_app_heather_s_iphone
+                  data:
+                    message: "{{ msg }}"
+
+            - action: input_datetime.set_datetime
+              target:
+                entity_id: input_datetime.ev_last_plug_request
+              data:
+                datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+
+- id: auto_ev_064_morning_soc_check
+  alias: "EV 064 – Morning SOC Verification"
+  description: "Verifies SOC matches predictions and warns if issues"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time
+      at: "06:30:00"
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ states('input_number.ev_trip_km_fraser_tomorrow') | float(0) > 0
+           or states('input_number.ev_trip_km_heather_tomorrow') | float(0) > 0 }}
+
+  actions:
+    - variables:
+        horace_actual: "{{ states('sensor.horace_battery_level') | float(0) }}"
+        horatio_actual: "{{ states('sensor.horatio_battery_level') | float(0) }}"
+
+        fraser_expected: "{{ states('input_number.ev_fraser_departure_soc') | float(0) }}"
+        heather_expected: "{{ states('input_number.ev_heather_departure_soc') | float(0) }}"
+
+        fraser_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
+        heather_car: "{{ states('input_select.ev_heather_assigned_car') }}"
+
+        fraser_actual: "{{ horace_actual if fraser_car == 'Horace' else horatio_actual }}"
+        heather_actual: "{{ horace_actual if heather_car == 'Horace' else horatio_actual }}"
+
+        fraser_diff: "{{ fraser_actual - fraser_expected }}"
+        heather_diff: "{{ heather_actual - heather_expected }}"
+
+        fraser_short: "{{ fraser_diff < -5 }}"
+        heather_short: "{{ heather_diff < -5 }}"
+
+        external_still_needed: "{{ is_state('input_boolean.ev_external_charge_required', 'on') }}"
+
+        has_problem: "{{ fraser_short or heather_short or external_still_needed }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ has_problem }}"
+          sequence:
+            - variables:
+                alert_msg: >
+                  ⚠️ EV Morning Check:
+                  {% if fraser_short %}
+                  Fraser's {{ fraser_car }}: {{ fraser_actual | round(0) }}% (expected {{ fraser_expected | round(0) }}%)
+                  {% endif %}
+                  {% if heather_short %}
+                  Heather's {{ heather_car }}: {{ heather_actual | round(0) }}% (expected {{ heather_expected | round(0) }}%)
+                  {% endif %}
+                  {% if external_still_needed %}
+                  External charging still required!
+                  {% endif %}
+
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                message: "{{ alert_msg }}"
+                data:
+                  push:
+                    interruption-level: time-sensitive
+
+            - action: notify.mobile_app_heather_s_iphone
+              data:
+                message: "{{ alert_msg }}"
+                data:
+                  push:
+                    interruption-level: time-sensitive
+
+      default:
+        - action: logbook.log
+          data:
+            name: "EV Morning"
+            message: "Morning SOC check passed. Fraser={{ fraser_actual | round(0) }}%, Heather={{ heather_actual | round(0) }}%"
+
+
+###############################################################################
+# 70-79: HELPER BRIDGES
+###############################################################################
+
+- id: auto_ev_070_horace_charge_limit_sync
+  alias: "EV 070 – Horace Charge Limit Sync"
+  description: "Syncs UI helper to Tesla charge limit"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: input_number.ev_horace_charge_limit
+
+  actions:
+    - action: number.set_value
+      target:
+        entity_id: number.horace_charge_limit
+      data:
+        value: "{{ states('input_number.ev_horace_charge_limit') | int(80) }}"
+
+
+- id: auto_ev_071_horatio_charge_limit_sync
+  alias: "EV 071 – Horatio Charge Limit Sync"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: input_number.ev_horatio_charge_limit
+
+  actions:
+    - action: number.set_value
+      target:
+        entity_id: number.horatio_charge_limit
+      data:
+        value: "{{ states('input_number.ev_horatio_charge_limit') | int(80) }}"
+
+
+- id: auto_ev_072_horace_charge_bridge
+  alias: "EV 072 – Horace Allow Charging Bridge"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: input_boolean.ev_horace_allow_charging
+
+  actions:
+    - choose:
+        - conditions:
+            - condition: state
+              entity_id: input_boolean.ev_horace_allow_charging
+              state: "on"
+          sequence:
+            - action: switch.turn_on
+              target:
+                entity_id: switch.horace_charge
+      default:
+        - action: switch.turn_off
+          target:
+            entity_id: switch.horace_charge
+
+
+- id: auto_ev_073_horatio_charge_bridge
+  alias: "EV 073 – Horatio Allow Charging Bridge"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: input_boolean.ev_horatio_allow_charging
+
+  actions:
+    - choose:
+        - conditions:
+            - condition: state
+              entity_id: input_boolean.ev_horatio_allow_charging
+              state: "on"
+          sequence:
+            - action: switch.turn_on
+              target:
+                entity_id: switch.horatio_charge
+      default:
+        - action: switch.turn_off
+          target:
+            entity_id: switch.horatio_charge
+
+
+- id: auto_ev_074_horace_trip_mode
+  alias: "EV 074 – Horace Trip Mode (100% for 8h)"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: input_boolean.ev_horace_trip_mode
+      to: "on"
+
+  actions:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_horace_charge_limit
+      data:
+        value: 100
+
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.ev_horace_allow_charging
+
+    - delay: "08:00:00"
+
+    - action: input_boolean.turn_off
+      target:
+        entity_id:
+          - input_boolean.ev_horace_trip_mode
+          - input_boolean.ev_horace_allow_charging
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_horace_charge_limit
+      data:
+        value: 80
+
+
+- id: auto_ev_075_horatio_trip_mode
+  alias: "EV 075 – Horatio Trip Mode (100% for 8h)"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: input_boolean.ev_horatio_trip_mode
+      to: "on"
+
+  actions:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_horatio_charge_limit
+      data:
+        value: 100
+
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.ev_horatio_allow_charging
+
+    - delay: "08:00:00"
+
+    - action: input_boolean.turn_off
+      target:
+        entity_id:
+          - input_boolean.ev_horatio_trip_mode
+          - input_boolean.ev_horatio_allow_charging
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_horatio_charge_limit
+      data:
+        value: 80
+
+
+- id: auto_ev_076_clear_plug_request
+  alias: "EV 076 – Clear Plug Request When Correct Car Plugged"
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: sensor.ev_plugged_vehicle
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ states('input_select.ev_requested_vehicle') in ['Horace', 'Horatio']
+           and states('sensor.ev_plugged_vehicle') == states('input_select.ev_requested_vehicle') }}
+
+  actions:
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.ev_requested_vehicle
+      data:
+        option: "None"

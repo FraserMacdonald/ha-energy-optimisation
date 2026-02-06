@@ -1,0 +1,128 @@
+# Jacuzzi Helper Scripts
+# Add these to your scripts.yaml
+
+# Quick 4-hour override
+jacuzzi_quick_override:
+  alias: "Jacuzzi: Quick 4-Hour Override"
+  sequence:
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.jacuzzi_manual_override
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.jacuzzi_override_until
+      data:
+        datetime: "{{ (now() + timedelta(hours=4)).strftime('%Y-%m-%d %H:%M:%S') }}"
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_target_temp
+      data:
+        value: 40
+    - action: notify.notify
+      data:
+        title: "Jacuzzi Override"
+        message: "Manual override activated for 4 hours. Heating to 40°C."
+
+# Emergency heat (bypasses all scheduling)
+jacuzzi_emergency_heat:
+  alias: "Jacuzzi: Emergency Heat Now"
+  sequence:
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.jacuzzi_manual_override
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.jacuzzi_override_until
+      data:
+        datetime: "{{ (now() + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M:%S') }}"
+    - action: climate.set_temperature
+      target:
+        entity_id: climate.jacuzzi
+      data:
+        temperature: 40
+    - action: climate.set_hvac_mode
+      target:
+        entity_id: climate.jacuzzi
+      data:
+        hvac_mode: heat
+    - action: notify.notify
+      data:
+        title: "Jacuzzi Emergency Heat"
+        message: "Emergency heating activated. Jacuzzi heating to 40°C immediately."
+
+# Reset to standby
+jacuzzi_reset_to_standby:
+  alias: "Jacuzzi: Reset to Standby"
+  sequence:
+    - action: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.jacuzzi_manual_override
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_target_temp
+      data:
+        value: "{{ states('input_number.jacuzzi_standby_temp') }}"
+    - action: notify.notify
+      data:
+        title: "Jacuzzi Standby"
+        message: "Jacuzzi reset to standby mode at {{ states('input_number.jacuzzi_standby_temp') }}°C"
+
+# Calibrate heating rate (run this manually after observing actual heat-up times)
+jacuzzi_calibrate_heating:
+  alias: "Jacuzzi: Calibrate Heating Rate"
+  fields:
+    start_temp:
+      description: "Starting temperature (°C)"
+      example: "20"
+    end_temp:
+      description: "Ending temperature (°C)"
+      example: "40"
+    hours_taken:
+      description: "Hours taken to heat"
+      example: "6.5"
+    season:
+      description: "Season (summer/winter)"
+      example: "winter"
+  sequence:
+    - action: input_number.set_value
+      target:
+        entity_id: >
+          {% if season == 'summer' %}
+            input_number.jacuzzi_heat_rate_summer
+          {% else %}
+            input_number.jacuzzi_heat_rate_winter
+          {% endif %}
+      data:
+        value: "{{ ((end_temp - start_temp) / hours_taken) | round(1) }}"
+    - action: notify.notify
+      data:
+        title: "Jacuzzi Calibration"
+        message: >
+          Heating rate updated: {{ ((end_temp - start_temp) / hours_taken) | round(1) }}°C/h for {{ season }}
+
+# Pre-heat for immediate use (3 hour rush)
+jacuzzi_preheat_rush:
+  alias: "Jacuzzi: Pre-heat Rush (3h)"
+  sequence:
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.jacuzzi_manual_override
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.jacuzzi_override_until
+      data:
+        datetime: "{{ (now() + timedelta(hours=3)).strftime('%Y-%m-%d %H:%M:%S') }}"
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_target_temp
+      data:
+        value: 40
+    - action: climate.set_hvac_mode
+      target:
+        entity_id: climate.jacuzzi
+      data:
+        hvac_mode: heat
+    - action: notify.notify
+      data:
+        title: "Jacuzzi Rush Preheat"
+        message: "Rush preheat activated. Jacuzzi will be ready in approximately {{ states('sensor.jacuzzi_heat_up_time_required') }} hours (target: 3h max)."

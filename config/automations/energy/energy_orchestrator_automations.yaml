@@ -1,0 +1,316 @@
+###############################################################################
+# ENERGY ORCHESTRATOR – AUTOMATIONS
+# File: automations/energy/energy_orchestrator_automations.yaml
+#
+# Phase 1C Stage 1 (Shadow Mode): The orchestrator evaluates scenario sensors,
+# applies the priority queue algorithm (arch review section 5.2), sets output
+# helpers, and logs decisions. No existing automations are modified.
+#
+# Format: YAML list for automation: !include_dir_merge_list automations/
+#
+# Automations:
+#   001 – Evaluate Scenario     (core loop, every 30 s)
+#   060 – Decision Logger       (logbook audit trail)
+#   061 – Conflict Alert        (solar contention notification)
+###############################################################################
+
+
+# =============================================================================
+# 001 – EVALUATE SCENARIO
+# Main orchestrator loop. Reads the three scenario sensors (production 1/2/3,
+# jacuzzi A–E, EV X/Y/idle), applies the generalised priority queue, sets the
+# output helpers, and logs the decision.
+#
+# Priority queue algorithm (from architectural review section 5.2):
+#   1. Build load list from demand sensor attributes (tier, power, grid/tariff)
+#   2. Sort by priority tier (lower = higher priority)
+#   3. Allocate solar surplus from highest priority down
+#   4. Unmet Tier 1 loads get grid allocation
+#   5. Tier 2 loads get grid if low tariff active
+#   6. Tier 3+ loads wait for solar
+# =============================================================================
+- id: auto_energy_001_evaluate_scenario
+  alias: "Energy 001 – Evaluate Scenario"
+  description: >
+    Main orchestrator evaluation loop. Reads scenario sensors every 30 seconds,
+    applies the priority queue algorithm, sets output helpers, and logs the
+    decision. Shadow mode — sets helpers only, does not control subsystems.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      seconds: "/30"
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ states('sensor.energy_production_scenario') not in ['unknown', 'unavailable']
+           and states('sensor.energy_jacuzzi_demand_scenario') not in ['unknown', 'unavailable']
+           and states('sensor.energy_ev_demand_scenario') not in ['unknown', 'unavailable'] }}
+
+  actions:
+    # -----------------------------------------------------------------
+    # Phase 1: Read inputs and compute priority queue decisions
+    # Each decision template is self-contained, reading directly from
+    # sensors to avoid type-coercion issues between variable blocks.
+    # -----------------------------------------------------------------
+    - variables:
+        prod: "{{ states('sensor.energy_production_scenario') }}"
+        jac: "{{ states('sensor.energy_jacuzzi_demand_scenario') }}"
+        ev: "{{ states('sensor.energy_ev_demand_scenario') }}"
+        surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) }}"
+        low_tariff: "{{ is_state('binary_sensor.energy_low_tariff_active', 'on') }}"
+        scenario_code: >
+          {{ states('sensor.energy_production_scenario') }}-{{ states('sensor.energy_jacuzzi_demand_scenario') }}-{{ states('sensor.energy_ev_demand_scenario') }}
+
+        # --- Priority queue: Jacuzzi heating decision ---
+        # Tier 1 (A): always allow — grid fallback
+        # Tier 2 (D): solar preferred, low-tariff grid fallback
+        # Tier 3 (B/C): solar only
+        # If surplus covers both loads, allow regardless of priority
+        # If surplus covers one load, higher priority wins
+        jacuzzi_allowed: >
+          {% set jac = states('sensor.energy_jacuzzi_demand_scenario') %}
+          {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
+          {% set low_tariff = is_state('binary_sensor.energy_low_tariff_active', 'on') %}
+          {% set jac_tier = state_attr('sensor.energy_jacuzzi_demand_scenario', 'priority_tier') | int(99) %}
+          {% set ev_tier = state_attr('sensor.energy_ev_demand_scenario', 'priority_tier') | int(99) %}
+          {% set jac_w = 3500 %}
+          {% set ev_min_w = (states('input_number.ev_min_amps') | int(5))
+                            * (states('input_number.ev_voltage') | float(230))
+                            * (states('input_number.ev_phases') | int(3)) %}
+          {% if jac == 'E' %}
+            {{ false }}
+          {% elif jac == 'A' %}
+            {{ true }}
+          {% elif surplus >= (jac_w + ev_min_w) %}
+            {{ true }}
+          {% elif surplus >= jac_w and jac_tier <= ev_tier %}
+            {{ true }}
+          {% elif jac == 'D' and low_tariff %}
+            {{ true }}
+          {% else %}
+            {{ false }}
+          {% endif %}
+
+        # --- Priority queue: EV solar charging decision ---
+        # Deduct jacuzzi from surplus if jacuzzi has equal/higher priority
+        # and is using solar. Then check if remaining covers minimum EV.
+        ev_solar_allowed: >
+          {% set ev = states('sensor.energy_ev_demand_scenario') %}
+          {% set jac = states('sensor.energy_jacuzzi_demand_scenario') %}
+          {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
+          {% set jac_tier = state_attr('sensor.energy_jacuzzi_demand_scenario', 'priority_tier') | int(99) %}
+          {% set ev_tier = state_attr('sensor.energy_ev_demand_scenario', 'priority_tier') | int(99) %}
+          {% set jac_w = 3500 %}
+          {% set ev_min_w = (states('input_number.ev_min_amps') | int(5))
+                            * (states('input_number.ev_voltage') | float(230))
+                            * (states('input_number.ev_phases') | int(3)) %}
+          {% set jac_solar = jac not in ['E', 'unknown', 'unavailable']
+                             and jac_tier <= ev_tier
+                             and surplus >= jac_w %}
+          {% set ev_surplus = (surplus - jac_w) if jac_solar else surplus %}
+          {{ ev in ['X', 'Y'] and ev_surplus >= ev_min_w }}
+
+        # --- Priority queue: EV tariff charging decision ---
+        # Trip-critical (state X) always gets low-tariff/grid permission
+        ev_tariff_allowed: >
+          {{ states('sensor.energy_ev_demand_scenario') == 'X' }}
+
+        # --- EV max solar amps ---
+        # Calculate from surplus available to EV (after jacuzzi allocation).
+        # Clamp between min_amps and charger_max_amps.
+        ev_solar_amps: >
+          {% set ev = states('sensor.energy_ev_demand_scenario') %}
+          {% set jac = states('sensor.energy_jacuzzi_demand_scenario') %}
+          {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
+          {% set jac_tier = state_attr('sensor.energy_jacuzzi_demand_scenario', 'priority_tier') | int(99) %}
+          {% set ev_tier = state_attr('sensor.energy_ev_demand_scenario', 'priority_tier') | int(99) %}
+          {% set jac_w = 3500 %}
+          {% set voltage = states('input_number.ev_voltage') | float(230) %}
+          {% set phases = states('input_number.ev_phases') | int(3) %}
+          {% set min_amps = states('input_number.ev_min_amps') | int(5) %}
+          {% set max_amps = states('input_number.ev_charger_max_amps') | int(16) %}
+          {% set ev_min_w = min_amps * voltage * phases %}
+          {% set jac_solar = jac not in ['E', 'unknown', 'unavailable']
+                             and jac_tier <= ev_tier
+                             and surplus >= jac_w %}
+          {% set ev_surplus = (surplus - jac_w) if jac_solar else surplus %}
+          {% if ev in ['X', 'Y'] and ev_surplus >= ev_min_w %}
+            {% set raw = (ev_surplus / (voltage * phases)) | int %}
+            {{ [[raw, min_amps] | max, max_amps] | min }}
+          {% else %}
+            0
+          {% endif %}
+
+    # -----------------------------------------------------------------
+    # Phase 2: Build decision log string
+    # -----------------------------------------------------------------
+    - variables:
+        decision_summary: >
+          {% set jac_text = '' %}
+          {% set ev_text = '' %}
+          {% if jacuzzi_allowed | bool and jac != 'E' %}
+            {% if surplus | float >= 3500 %}
+              {% set jac_text = 'Jacuzzi:solar' %}
+            {% elif low_tariff | bool %}
+              {% set jac_text = 'Jacuzzi:low-tariff' %}
+            {% else %}
+              {% set jac_text = 'Jacuzzi:grid' %}
+            {% endif %}
+          {% endif %}
+          {% if ev_solar_allowed | bool %}
+            {% set ev_text = 'EV:solar@' ~ (ev_solar_amps | int) ~ 'A' %}
+          {% elif ev_tariff_allowed | bool %}
+            {% set ev_text = 'EV:low-tariff' %}
+          {% endif %}
+          {% set parts = [jac_text, ev_text] | reject('eq', '') | list %}
+          {{ parts | join(', ') if parts else 'No action' }}
+        decision_log: >
+          {{ scenario_code }}: {{ decision_summary }} @ {{ now().strftime('%H:%M:%S') }}
+
+    # -----------------------------------------------------------------
+    # Phase 3: Set output helpers
+    # -----------------------------------------------------------------
+    - if:
+        - condition: template
+          value_template: "{{ jacuzzi_allowed | bool }}"
+      then:
+        - action: input_boolean.turn_on
+          target:
+            entity_id: input_boolean.energy_jacuzzi_heat_allowed
+      else:
+        - action: input_boolean.turn_off
+          target:
+            entity_id: input_boolean.energy_jacuzzi_heat_allowed
+
+    - if:
+        - condition: template
+          value_template: "{{ ev_solar_allowed | bool }}"
+      then:
+        - action: input_boolean.turn_on
+          target:
+            entity_id: input_boolean.energy_ev_solar_charge_allowed
+      else:
+        - action: input_boolean.turn_off
+          target:
+            entity_id: input_boolean.energy_ev_solar_charge_allowed
+
+    - if:
+        - condition: template
+          value_template: "{{ ev_tariff_allowed | bool }}"
+      then:
+        - action: input_boolean.turn_on
+          target:
+            entity_id: input_boolean.energy_ev_tariff_charge_allowed
+      else:
+        - action: input_boolean.turn_off
+          target:
+            entity_id: input_boolean.energy_ev_tariff_charge_allowed
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.energy_ev_max_solar_amps
+      data:
+        value: "{{ ev_solar_amps | int }}"
+
+    - action: input_select.set_options
+      target:
+        entity_id: input_select.energy_last_decision
+      data:
+        options:
+          - "{{ decision_log[:255] }}"
+
+
+# =============================================================================
+# 060 – DECISION LOGGER
+# Logs orchestrator decisions to the HA logbook for audit trail.
+# Triggers when the decision sensor state changes (new scenario or action).
+# =============================================================================
+- id: auto_energy_060_decision_log
+  alias: "Energy 060 – Decision Logger"
+  description: >
+    Logs orchestrator decisions to the HA logbook whenever the evaluated
+    scenario or recommended action changes. Provides an audit trail for
+    shadow mode validation.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: sensor.energy_orchestrator_decision
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ trigger.from_state is not none
+           and trigger.from_state.state != trigger.to_state.state
+           and trigger.to_state.state not in ['unknown', 'unavailable'] }}
+
+  actions:
+    - action: logbook.log
+      data:
+        name: "Energy Orchestrator"
+        message: "{{ states('sensor.energy_orchestrator_decision') }}"
+        entity_id: sensor.energy_orchestrator_decision
+
+
+# =============================================================================
+# 061 – CONFLICT ALERT
+# Notifies when the orchestrator detects competing demands that cannot both
+# be fully served by available solar. This is informational in shadow mode.
+#
+# Conflict definition: both jacuzzi and EV have active demand, but the
+# production scenario is 1 or 2 (insufficient for both loads).
+# =============================================================================
+- id: auto_energy_061_conflict_alert
+  alias: "Energy 061 – Conflict Alert"
+  description: >
+    Sends a persistent notification when the orchestrator detects competing
+    energy demands that cannot be fully resolved with available solar surplus.
+    Uses persistent_notification so repeated fires replace rather than stack.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id:
+        - sensor.energy_production_scenario
+        - sensor.energy_jacuzzi_demand_scenario
+        - sensor.energy_ev_demand_scenario
+
+  conditions:
+    - condition: template
+      value_template: >
+        {% set jac = states('sensor.energy_jacuzzi_demand_scenario') %}
+        {% set ev = states('sensor.energy_ev_demand_scenario') %}
+        {% set prod = states('sensor.energy_production_scenario') %}
+        {% set jac_active = jac not in ['E', 'unknown', 'unavailable'] %}
+        {% set ev_active = ev not in ['idle', 'unknown', 'unavailable'] %}
+        {% set insufficient = prod in ['1', '2'] %}
+        {{ jac_active and ev_active and insufficient }}
+
+  actions:
+    - action: persistent_notification.create
+      data:
+        notification_id: energy_orchestrator_conflict
+        title: "Energy Orchestrator – Solar Contention"
+        message: >
+          Competing demands detected with insufficient solar.
+
+          Production scenario: {{ states('sensor.energy_production_scenario') }}
+          ({{ state_attr('sensor.energy_production_scenario', 'description') | default('') | trim }})
+
+          Jacuzzi: {{ states('sensor.energy_jacuzzi_demand_scenario') }}
+          ({{ state_attr('sensor.energy_jacuzzi_demand_scenario', 'description') | default('') | trim }})
+
+          EV: {{ states('sensor.energy_ev_demand_scenario') }}
+          ({{ state_attr('sensor.energy_ev_demand_scenario', 'description') | default('') | trim }})
+
+          Surplus: {{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }} W
+
+          Decision: {{ states('sensor.energy_orchestrator_decision') }}

@@ -1,0 +1,298 @@
+###############################################################################
+# EV TEMPLATE SENSORS
+# File: templates/ev/ev_templates.yaml
+#
+# Format: YAML list for template: !include_dir_merge_list templates/
+# Phase 1A: Entity renames applied (ev_ prefix on helpers)
+###############################################################################
+
+# =============================================================================
+# ENERGY TRACKING SENSORS
+# =============================================================================
+
+# --- Imported Energy Interval (kWh) ---
+- trigger:
+    - platform: state
+      entity_id: sensor.solaredge_imported_energy
+  sensor:
+    - name: "EV Imported kWh Interval"
+      unique_id: ev_imported_kwh_interval
+      unit_of_measurement: "kWh"
+      state: >
+        {% set u = state_attr('sensor.solaredge_imported_energy', 'unit_of_measurement') %}
+        {% set prev_raw = trigger.from_state.state | float(0) %}
+        {% set curr_raw = trigger.to_state.state | float(0) %}
+        {% set prev = (prev_raw / 1000) if u == 'Wh' else prev_raw %}
+        {% set curr = (curr_raw / 1000) if u == 'Wh' else curr_raw %}
+        {% if curr >= prev %}
+          {{ (curr - prev) | round(4) }}
+        {% else %}
+          {{ curr | round(4) }}
+        {% endif %}
+
+# --- Exported Energy Interval (kWh) ---
+- trigger:
+    - platform: state
+      entity_id: sensor.solaredge_exported_energy
+  sensor:
+    - name: "EV Exported kWh Interval"
+      unique_id: ev_exported_kwh_interval
+      unit_of_measurement: "kWh"
+      state: >
+        {% set u = state_attr('sensor.solaredge_exported_energy', 'unit_of_measurement') %}
+        {% set prev_raw = trigger.from_state.state | float(0) %}
+        {% set curr_raw = trigger.to_state.state | float(0) %}
+        {% set prev = (prev_raw / 1000) if u == 'Wh' else prev_raw %}
+        {% set curr = (curr_raw / 1000) if u == 'Wh' else curr_raw %}
+        {% if curr >= prev %}
+          {{ (curr - prev) | round(4) }}
+        {% else %}
+          {{ curr | round(4) }}
+        {% endif %}
+
+
+# =============================================================================
+# VEHICLE STATUS SENSORS
+# =============================================================================
+
+# --- Normalized Plug Sensors ---
+- binary_sensor:
+    - name: "Horace Plugged"
+      unique_id: horace_plugged
+      device_class: plug
+      state: "{{ is_state('binary_sensor.horace_charge_cable', 'on') }}"
+
+    - name: "Horatio Plugged"
+      unique_id: horatio_plugged
+      device_class: plug
+      state: "{{ is_state('binary_sensor.horatio_charge_cable', 'on') }}"
+
+# --- Which Vehicle is Plugged ---
+- sensor:
+    - name: "EV Plugged Vehicle"
+      unique_id: ev_plugged_vehicle
+      icon: mdi:ev-plug-type2
+      state: >
+        {% set h = is_state('binary_sensor.horace_plugged', 'on') %}
+        {% set t = is_state('binary_sensor.horatio_plugged', 'on') %}
+        {% if h and not t %}Horace
+        {% elif t and not h %}Horatio
+        {% elif not h and not t %}None
+        {% else %}Ambiguous{% endif %}
+
+# --- SOC Freshness ---
+- sensor:
+    - name: "Horace SOC Age Minutes"
+      unique_id: ev_horace_soc_age_minutes
+      unit_of_measurement: "min"
+      icon: mdi:clock-alert-outline
+      state: >
+        {% set last = states('input_datetime.ev_horace_soc_last_updated') %}
+        {% if last in ['unknown', 'unavailable', ''] %}
+          999
+        {% else %}
+          {{ ((as_timestamp(now()) - as_timestamp(last)) / 60) | round(0) }}
+        {% endif %}
+      attributes:
+        stale: >
+          {% set last = states('input_datetime.ev_horace_soc_last_updated') %}
+          {% if last in ['unknown', 'unavailable', ''] %}
+            true
+          {% else %}
+            {{ ((as_timestamp(now()) - as_timestamp(last)) / 60) > 60 }}
+          {% endif %}
+
+    - name: "Horatio SOC Age Minutes"
+      unique_id: ev_horatio_soc_age_minutes
+      unit_of_measurement: "min"
+      icon: mdi:clock-alert-outline
+      state: >
+        {% set last = states('input_datetime.ev_horatio_soc_last_updated') %}
+        {% if last in ['unknown', 'unavailable', ''] %}
+          999
+        {% else %}
+          {{ ((as_timestamp(now()) - as_timestamp(last)) / 60) | round(0) }}
+        {% endif %}
+      attributes:
+        stale: >
+          {% set last = states('input_datetime.ev_horatio_soc_last_updated') %}
+          {% if last in ['unknown', 'unavailable', ''] %}
+            true
+          {% else %}
+            {{ ((as_timestamp(now()) - as_timestamp(last)) / 60) > 60 }}
+          {% endif %}
+
+
+# =============================================================================
+# CHARGING WINDOW SENSORS
+# =============================================================================
+
+- sensor:
+    - name: "EV Cheap Tariff Active"
+      unique_id: ev_cheap_tariff_active
+      icon: mdi:currency-usd-off
+      state: >
+        {% set dow = now().weekday() %}
+        {% set hour = now().hour %}
+        {% if dow == 4 %}{{ 'on' if hour >= 22 else 'off' }}
+        {% elif dow in [5, 6] %}on
+        {% elif dow == 0 %}{{ 'on' if hour < 6 else 'off' }}
+        {% elif dow in [1, 2, 3] %}{{ 'on' if (hour >= 22 or hour < 6) else 'off' }}
+        {% else %}off{% endif %}
+      attributes:
+        window_type: >
+          {% set dow = now().weekday() %}
+          {% if dow in [4, 5, 6, 0] %}weekend
+          {% else %}weekday{% endif %}
+        next_window_start: >
+          {% set dow = now().weekday() %}
+          {% set hour = now().hour %}
+          {% if dow == 4 and hour < 22 %}
+            {{ (now().replace(hour=22, minute=0, second=0)).isoformat() }}
+          {% elif dow in [1, 2, 3] and hour >= 6 and hour < 22 %}
+            {{ (now().replace(hour=22, minute=0, second=0)).isoformat() }}
+          {% else %}
+            Currently active
+          {% endif %}
+
+
+# =============================================================================
+# SOLAR CHARGING SENSORS
+# =============================================================================
+
+- binary_sensor:
+    - name: "EV Solar Charge Intent Active"
+      unique_id: ev_solar_charge_intent_active
+      device_class: running
+      state: >
+        {% set solar_mode = is_state('input_boolean.ev_solar_mode_enabled', 'on') %}
+        {% set day = is_state('sun.sun', 'above_horizon') %}
+        {% set plugged = states('sensor.ev_plugged_vehicle') %}
+        {% set allow = (plugged == 'Horace' and is_state('input_boolean.ev_horace_allow_charging', 'on')) or
+                       (plugged == 'Horatio' and is_state('input_boolean.ev_horatio_allow_charging', 'on')) %}
+        {{ solar_mode and day and (plugged in ['Horace', 'Horatio']) and allow }}
+
+- sensor:
+    - name: "EV Solar Surplus kW"
+      unique_id: ev_solar_surplus_kw
+      unit_of_measurement: "kW"
+      device_class: power
+      state: >
+        {% set prod = states('sensor.solaredge_current_power') | float(0) %}
+        {% set prod_w = prod * 1000 if state_attr('sensor.solaredge_current_power', 'unit_of_measurement') == 'kW' else prod %}
+        {% set cons = states('sensor.solaredge_power_consumption') | float(0) %}
+        {% set cons_w = cons * 1000 if state_attr('sensor.solaredge_power_consumption', 'unit_of_measurement') == 'kW' else cons %}
+        {% set margin_w = states('input_number.ev_solar_margin_w') | float(500) %}
+        {{ [0, (prod_w - cons_w - margin_w) / 1000] | max | round(2) }}
+
+    - name: "EV Solar Available Amps"
+      unique_id: ev_solar_available_amps
+      unit_of_measurement: "A"
+      icon: mdi:current-ac
+      state: >
+        {% set surplus_kw = states('sensor.ev_solar_surplus_kw') | float(0) %}
+        {% set voltage = states('input_number.ev_voltage') | float(230) %}
+        {% set phases = states('input_number.ev_phases') | int(3) %}
+        {% set max_amps = states('input_number.ev_charger_max_amps') | int(16) %}
+        {% set raw = (surplus_kw * 1000 / (voltage * phases)) | int %}
+        {{ [[raw, 0] | max, max_amps] | min }}
+
+
+# =============================================================================
+# TRIP SUMMARY SENSORS
+# =============================================================================
+
+- sensor:
+    - name: "EV Tomorrow Trip Summary"
+      unique_id: ev_tomorrow_trip_summary
+      icon: mdi:car-multiple
+      state: >
+        {% set km_f = states('input_number.ev_trip_km_fraser_tomorrow') | float(0) %}
+        {% set km_h = states('input_number.ev_trip_km_heather_tomorrow') | float(0) %}
+        {% if km_f == 0 and km_h == 0 %}
+          No trips
+        {% else %}
+          F:{{ km_f | round(0) }}km H:{{ km_h | round(0) }}km
+        {% endif %}
+      attributes:
+        fraser_km: "{{ states('input_number.ev_trip_km_fraser_tomorrow') | float(0) }}"
+        heather_km: "{{ states('input_number.ev_trip_km_heather_tomorrow') | float(0) }}"
+        fraser_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
+        heather_car: "{{ states('input_select.ev_heather_assigned_car') }}"
+        night_charge_car: "{{ states('input_select.ev_night_charge_car') }}"
+        external_required: "{{ is_state('input_boolean.ev_external_charge_required', 'on') }}"
+
+    - name: "EV External Charging Today"
+      unique_id: ev_external_charging_today_summary
+      icon: mdi:battery-plus-outline
+      state: >
+        {% set h_kwh = states('input_number.ev_horace_external_kwh_today') | float(0) %}
+        {% set t_kwh = states('input_number.ev_horatio_external_kwh_today') | float(0) %}
+        {% if h_kwh == 0 and t_kwh == 0 %}
+          None
+        {% elif h_kwh > 0 and t_kwh > 0 %}
+          Both ({{ (h_kwh + t_kwh) | round(1) }} kWh)
+        {% elif h_kwh > 0 %}
+          Horace ({{ h_kwh | round(1) }} kWh)
+        {% else %}
+          Horatio ({{ t_kwh | round(1) }} kWh)
+        {% endif %}
+
+
+# =============================================================================
+# LOST OPPORTUNITY TRACKING (for cost analysis)
+# =============================================================================
+
+- sensor:
+    - name: "EV Lost Opportunity While Plugged (kWh interval)"
+      unique_id: ev_lost_opp_plugged_kwh_interval
+      unit_of_measurement: "kWh"
+      state: >
+        {% set solar_mode = is_state('input_boolean.ev_solar_mode_enabled', 'on') %}
+        {% set day = is_state('sun.sun', 'above_horizon') %}
+        {% set plugged = states('sensor.ev_plugged_vehicle') %}
+        {% set exp_kwh = states('sensor.ev_exported_kwh_interval') | float(0) %}
+        {% set soc_h = states('sensor.horace_battery_level') | int(100) %}
+        {% set soc_t = states('sensor.horatio_battery_level') | int(100) %}
+        {% set tgt_h = 100 if is_state('input_boolean.ev_horace_trip_mode', 'on') else 80 %}
+        {% set tgt_t = 100 if is_state('input_boolean.ev_horatio_trip_mode', 'on') else 80 %}
+        {% set amps_h = states('number.horace_charge_current') | int(0) %}
+        {% set amps_t = states('number.horatio_charge_current') | int(0) %}
+        {% set charger_max = states('input_number.ev_charger_max_amps') | int(16) %}
+        {% set needs = (plugged == 'Horace' and soc_h < tgt_h) or (plugged == 'Horatio' and soc_t < tgt_t) %}
+        {% set at_max = (plugged == 'Horace' and amps_h >= charger_max) or (plugged == 'Horatio' and amps_t >= charger_max) %}
+        {% if solar_mode and day and plugged in ['Horace', 'Horatio'] and needs and not at_max %}
+          {{ exp_kwh | round(4) }}
+        {% else %}
+          0
+        {% endif %}
+
+    - name: "EV Import Error (Solar) kWh interval"
+      unique_id: ev_import_error_solar_kwh_interval
+      unit_of_measurement: "kWh"
+      state: >
+        {% set active = is_state('binary_sensor.ev_solar_charge_intent_active', 'on') %}
+        {% set imp = states('sensor.ev_imported_kwh_interval') | float(0) %}
+        {{ (imp if active else 0) | round(4) }}
+
+
+# =============================================================================
+# CLIMATE STATUS SENSORS
+# =============================================================================
+
+- binary_sensor:
+    - name: "Horace Climate Running"
+      unique_id: ev_horace_climate_running
+      device_class: running
+      state: >
+        {% set climate_state = states('climate.horace_climate') %}
+        {% set defrost = is_state('switch.horace_defrost', 'on') %}
+        {{ climate_state not in ['off', 'unknown', 'unavailable'] or defrost }}
+
+    - name: "Horatio Climate Running"
+      unique_id: ev_horatio_climate_running
+      device_class: running
+      state: >
+        {% set climate_state = states('climate.horatio_climate') %}
+        {% set defrost = is_state('switch.horatio_defrost', 'on') %}
+        {{ climate_state not in ['off', 'unknown', 'unavailable'] or defrost }}

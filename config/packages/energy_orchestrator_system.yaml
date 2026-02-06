@@ -1,0 +1,58 @@
+###############################################################################
+# ENERGY ORCHESTRATOR – SYSTEM PACKAGE
+# File: packages/energy_orchestrator_system.yaml
+#
+# Phase 1C: Output helpers for the energy orchestrator.
+# The orchestrator sets grant/deny helpers based on its priority queue algorithm.
+# Stage 2 wires these into subsystem automations via the master enable switch.
+#
+# Note: energy_last_decision uses input_select (not input_text) because
+# input_text was removed in HA 2026. The set_options service stores
+# arbitrary text as a single option — same pattern as ev_last_planner_decision.
+###############################################################################
+
+
+# =============================================================================
+# INPUT BOOLEANS – Master switch and grant/deny flags
+# =============================================================================
+input_boolean:
+  energy_orchestrator_enabled:
+    name: "Energy Orchestrator Enabled"
+    icon: mdi:toggle-switch
+
+  energy_jacuzzi_heat_allowed:
+    name: "Energy Jacuzzi Heat Allowed"
+    icon: mdi:hot-tub
+
+  energy_ev_solar_charge_allowed:
+    name: "Energy EV Solar Charge Allowed"
+    icon: mdi:solar-power
+
+  energy_ev_tariff_charge_allowed:
+    name: "Energy EV Tariff Charge Allowed"
+    icon: mdi:currency-usd
+
+
+# =============================================================================
+# INPUT NUMBERS – Orchestrator output values
+# =============================================================================
+input_number:
+  energy_ev_max_solar_amps:
+    name: "Energy EV Max Solar Amps"
+    min: 0
+    max: 32
+    step: 1
+    unit_of_measurement: "A"
+    icon: mdi:current-ac
+    mode: box
+
+
+# =============================================================================
+# INPUT SELECTS – Text storage (HA 2026 input_text workaround)
+# =============================================================================
+input_select:
+  energy_last_decision:
+    name: "Energy Last Decision"
+    icon: mdi:clipboard-text-clock
+    options:
+      - "none"
