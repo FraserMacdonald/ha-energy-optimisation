@@ -327,7 +327,7 @@
             {% set equilibrium = t_ambient + p_net / k %}
             {% if is_heating %}
               {# Currently heating — project to event using exponential approach #}
-              {% set predicted = equilibrium - (equilibrium - t_current) * ((-k / c) * hours_to_event) | exp %}
+              {% set predicted = equilibrium - (equilibrium - t_current) * (2.718281828 ** ((-k / c) * hours_to_event)) %}
               {{ [predicted, 40] | min | round(1) }}
             {% elif smart_start not in ['unavailable', 'unknown', ''] %}
               {# Not yet heating — cool until smart_start, then heat until event #}
@@ -335,13 +335,13 @@
               {% set cool_hours = [(smart_ts - now_ts) / 3600, 0] | max %}
               {% set heat_hours = [hours_to_event - cool_hours, 0] | max %}
               {# Cooling phase: T decays toward ambient #}
-              {% set t_after_cool = t_ambient + (t_current - t_ambient) * ((-k / c) * cool_hours) | exp %}
+              {% set t_after_cool = t_ambient + (t_current - t_ambient) * (2.718281828 ** ((-k / c) * cool_hours)) %}
               {# Heating phase: T approaches equilibrium #}
-              {% set predicted = equilibrium - (equilibrium - t_after_cool) * ((-k / c) * heat_hours) | exp %}
+              {% set predicted = equilibrium - (equilibrium - t_after_cool) * (2.718281828 ** ((-k / c) * heat_hours)) %}
               {{ [predicted, 40] | min | round(1) }}
             {% else %}
               {# No smart start — assume cooling only #}
-              {% set predicted = t_ambient + (t_current - t_ambient) * ((-k / c) * hours_to_event) | exp %}
+              {% set predicted = t_ambient + (t_current - t_ambient) * (2.718281828 ** ((-k / c) * hours_to_event)) %}
               {{ predicted | round(1) }}
             {% endif %}
           {% endif %}
