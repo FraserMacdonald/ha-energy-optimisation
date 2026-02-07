@@ -1,0 +1,177 @@
+views:
+  - title: EVs
+    path: ev
+    icon: mdi:car-electric
+    cards:
+      # ── CAR STATUS ──
+      - type: custom:mushroom-template-card
+        primary: "Horace"
+        secondary: >
+          {{ states('input_number.ev_horace_current_soc') | int }}%
+          · {{ states('device_tracker.horace') | title }}
+          {% if is_state('binary_sensor.horace_plugged', 'on') %}· 🔌 Plugged{% endif %}
+        icon: mdi:car-electric
+        icon_color: |-
+          {% if states('input_number.ev_horace_current_soc') | int > 50 %}green
+          {% elif states('input_number.ev_horace_current_soc') | int > 20 %}orange
+          {% else %}red{% endif %}
+
+      - type: gauge
+        entity: input_number.ev_horace_current_soc
+        name: Horace SOC
+        unit: "%"
+        min: 0
+        max: 100
+        needle: true
+        segments:
+          - from: 0
+            color: "#F44336"
+          - from: 20
+            color: "#FF9800"
+          - from: 50
+            color: "#4CAF50"
+
+      - type: custom:mushroom-template-card
+        primary: "Horatio"
+        secondary: >
+          {{ states('input_number.ev_horatio_current_soc') | int }}%
+          · {{ states('device_tracker.horatio') | title }}
+          {% if is_state('binary_sensor.horatio_plugged', 'on') %}· 🔌 Plugged{% endif %}
+        icon: mdi:car-electric
+        icon_color: |-
+          {% if states('input_number.ev_horatio_current_soc') | int > 50 %}green
+          {% elif states('input_number.ev_horatio_current_soc') | int > 20 %}orange
+          {% else %}red{% endif %}
+
+      - type: gauge
+        entity: input_number.ev_horatio_current_soc
+        name: Horatio SOC
+        unit: "%"
+        min: 0
+        max: 100
+        needle: true
+        segments:
+          - from: 0
+            color: "#F44336"
+          - from: 20
+            color: "#FF9800"
+          - from: 50
+            color: "#4CAF50"
+
+      # ── TODAY'S TRIPS ──
+      - type: conditional
+        conditions:
+          - condition: numeric_state
+            entity: input_number.ev_trip_km_fraser_today
+            above: 0
+        card:
+          type: custom:mushroom-template-card
+          primary: "Fraser's Trip Today"
+          secondary: >
+            {{ states('input_number.ev_trip_km_fraser_today') | int }}km
+            · Take {{ states('input_select.ev_fraser_assigned_car') }}
+            · Depart {{ states('input_datetime.ev_fraser_departure_time').split(' ')[1][:5] if states('input_datetime.ev_fraser_departure_time') not in ['unknown','unavailable'] else '—' }}
+            · SOC at departure: {{ states('input_number.ev_fraser_departure_soc') | int }}%
+          icon: mdi:account-arrow-right
+          icon_color: blue
+
+      - type: conditional
+        conditions:
+          - condition: numeric_state
+            entity: input_number.ev_trip_km_heather_today
+            above: 0
+        card:
+          type: custom:mushroom-template-card
+          primary: "Heather's Trip Today"
+          secondary: >
+            {{ states('input_number.ev_trip_km_heather_today') | int }}km
+            · Take {{ states('input_select.ev_heather_assigned_car') }}
+            · Depart {{ states('input_datetime.ev_heather_departure_time').split(' ')[1][:5] if states('input_datetime.ev_heather_departure_time') not in ['unknown','unavailable'] else '—' }}
+            · SOC at departure: {{ states('input_number.ev_heather_departure_soc') | int }}%
+          icon: mdi:account-arrow-right
+          icon_color: pink
+
+      # ── TOMORROW'S TRIPS ──
+      - type: conditional
+        conditions:
+          - condition: numeric_state
+            entity: input_number.ev_trip_km_fraser_tomorrow
+            above: 0
+        card:
+          type: custom:mushroom-template-card
+          primary: "Fraser Tomorrow"
+          secondary: >
+            {{ states('input_number.ev_trip_km_fraser_tomorrow') | int }}km
+            · Assigned: {{ states('input_select.ev_fraser_assigned_car') }}
+          icon: mdi:calendar-arrow-right
+          icon_color: light-blue
+
+      - type: conditional
+        conditions:
+          - condition: numeric_state
+            entity: input_number.ev_trip_km_heather_tomorrow
+            above: 0
+        card:
+          type: custom:mushroom-template-card
+          primary: "Heather Tomorrow"
+          secondary: >
+            {{ states('input_number.ev_trip_km_heather_tomorrow') | int }}km
+            · Assigned: {{ states('input_select.ev_heather_assigned_car') }}
+          icon: mdi:calendar-arrow-right
+          icon_color: light-blue
+
+      # ── CHARGING PLAN ──
+      - type: entities
+        title: Charging Plan
+        entities:
+          - entity: input_select.ev_night_charge_car
+            name: Night Charge Car
+            icon: mdi:car-electric
+          - entity: input_number.ev_night_charge_target_soc
+            name: Target SOC
+            icon: mdi:battery-charging-high
+          - entity: input_boolean.ev_external_charge_required
+            name: External Charge Needed
+            icon: mdi:alert-circle
+          - entity: input_boolean.ev_solar_mode_enabled
+            name: Solar Charging Mode
+            icon: mdi:solar-power
+
+      # ── TODAY'S ENERGY ──
+      - type: custom:mushroom-template-card
+        primary: "Today's Charging"
+        secondary: >
+          Horace: ☀️{{ states('input_number.ev_horace_solar_kwh_today') | round(1) }}kWh
+          · ⚡{{ states('input_number.ev_horace_grid_kwh_today') | round(1) }}kWh
+          — Horatio: ☀️{{ states('input_number.ev_horatio_solar_kwh_today') | round(1) }}kWh
+          · ⚡{{ states('input_number.ev_horatio_grid_kwh_today') | round(1) }}kWh
+        icon: mdi:ev-station
+        icon_color: green
+
+      # ── PLANNER DETAILS (Fraser only) ──
+      - type: custom:mushroom-template-card
+        primary: "Planner"
+        secondary: >
+          {{ states('input_select.ev_last_planner_decision') }}
+        icon: mdi:robot
+        icon_color: teal
+
+      # ── SETTINGS ──
+      - type: entities
+        title: Settings
+        entities:
+          - entity: input_boolean.ev_horace_allow_charging
+            name: Horace Allow Charging
+          - entity: input_boolean.ev_horatio_allow_charging
+            name: Horatio Allow Charging
+          - entity: input_boolean.ev_horace_trip_mode
+            name: Horace Trip Mode (100%)
+          - entity: input_boolean.ev_horatio_trip_mode
+            name: Horatio Trip Mode (100%)
+          - type: divider
+          - entity: input_number.ev_charger_max_amps
+            name: Max Charger Amps
+          - entity: input_number.ev_horace_charge_limit
+            name: Horace Charge Limit
+          - entity: input_number.ev_horatio_charge_limit
+            name: Horatio Charge Limit

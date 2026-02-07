@@ -9,13 +9,41 @@ frontend:
   themes: !include_dir_merge_named themes
 
 # =============================================================================
+# DASHBOARDS (YAML-defined, version-controlled)
+# =============================================================================
+lovelace:
+  mode: storage
+  dashboards:
+    lovelace-jacuzzi:
+      mode: yaml
+      filename: dashboards/jacuzzi.yaml
+      title: Jacuzzi
+      icon: mdi:hot-tub
+      require_admin: false
+      show_in_sidebar: true
+    lovelace-ev:
+      mode: yaml
+      filename: dashboards/ev.yaml
+      title: EVs
+      icon: mdi:car-electric
+      require_admin: false
+      show_in_sidebar: true
+    lovelace-energy:
+      mode: yaml
+      filename: dashboards/energy.yaml
+      title: Energy
+      icon: mdi:flash
+      require_admin: false
+      show_in_sidebar: true
+
+# =============================================================================
 # PACKAGES (all helpers + related config per system)
 # =============================================================================
 homeassistant:
   packages:
     jacuzzi: !include packages/jacuzzi_system.yaml
     ev_system: !include packages/ev_system.yaml
-    energy_orchestrator: !include packages/energy_orchestrator_system.yaml
+    # energy_orchestrator: !include packages/energy_orchestrator_system.yaml  # Phase 1C
 
 # =============================================================================
 # AUTOMATIONS (subdirectory per system, merged into one list)

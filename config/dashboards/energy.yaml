@@ -1,0 +1,121 @@
+views:
+  - title: Energy
+    path: energy
+    icon: mdi:flash
+    cards:
+      # ── ORCHESTRATOR STATUS ──
+      - type: custom:mushroom-template-card
+        primary: >
+          Orchestrator: {{ 'Active' if is_state('input_boolean.energy_orchestrator_enabled', 'on') else 'Off' }}
+        secondary: >
+          Decision: {{ states('input_select.energy_last_decision') }}
+        icon: mdi:robot
+        icon_color: |-
+          {% if is_state('input_boolean.energy_orchestrator_enabled', 'on') %}green
+          {% else %}grey{% endif %}
+
+      # ── TARIFF + SURPLUS ──
+      - type: custom:mushroom-template-card
+        primary: >
+          {{ states('sensor.electricity_tariff') | title }} Tariff
+        secondary: >
+          {% set surplus = states('sensor.energy_solar_surplus_w') | int(0) %}
+          {% if surplus > 0 %}☀️ {{ surplus }}W surplus — exporting
+          {% elif surplus == 0 %}Balanced
+          {% else %}⚡ Importing {{ surplus | abs }}W from grid{% endif %}
+        icon: |-
+          {% if states('sensor.electricity_tariff') == 'low' %}mdi:cash-check
+          {% else %}mdi:cash{% endif %}
+        icon_color: |-
+          {% if states('sensor.electricity_tariff') == 'low' %}green
+          {% else %}orange{% endif %}
+
+      # ── SOLAR PRODUCTION ──
+      - type: custom:mini-graph-card
+        name: Solar Production
+        entities:
+          - entity: sensor.solaredge_current_power
+            name: Production
+            color: "#FFB300"
+        hours_to_show: 12
+        points_per_hour: 6
+        line_width: 2
+        hour24: true
+        show:
+          labels: true
+          points: false
+          fill: true
+
+      # ── SYSTEM STATUS AT A GLANCE ──
+      - type: custom:mushroom-template-card
+        primary: "Jacuzzi"
+        secondary: >
+          {{ state_attr('climate.jacuzzi', 'current_temperature') }}°C
+          · {{ states('sensor.jacuzzi_current_mode') | title }}
+          {% if states('sensor.jacuzzi_current_mode') == 'heating' %}
+          · Rate: {{ states('sensor.jacuzzi_net_heating_rate') }}°C/h
+          {% endif %}
+        icon: mdi:hot-tub
+        icon_color: |-
+          {% if states('sensor.jacuzzi_current_mode') == 'heating' %}orange
+          {% else %}blue{% endif %}
+        tap_action:
+          action: navigate
+          navigation_path: /lovelace-jacuzzi/jacuzzi
+
+      - type: custom:mushroom-template-card
+        primary: "Horace — {{ states('input_number.ev_horace_current_soc') | int }}%"
+        secondary: >
+          {{ states('device_tracker.horace') | title }}
+          {% if is_state('binary_sensor.horace_plugged', 'on') %}· 🔌 Plugged{% endif %}
+        icon: mdi:car-electric
+        icon_color: |-
+          {% if states('input_number.ev_horace_current_soc') | int > 50 %}green
+          {% elif states('input_number.ev_horace_current_soc') | int > 20 %}orange
+          {% else %}red{% endif %}
+        tap_action:
+          action: navigate
+          navigation_path: /lovelace-ev/ev
+
+      - type: custom:mushroom-template-card
+        primary: "Horatio — {{ states('input_number.ev_horatio_current_soc') | int }}%"
+        secondary: >
+          {{ states('device_tracker.horatio') | title }}
+          {% if is_state('binary_sensor.horatio_plugged', 'on') %}· 🔌 Plugged{% endif %}
+        icon: mdi:car-electric
+        icon_color: |-
+          {% if states('input_number.ev_horatio_current_soc') | int > 50 %}green
+          {% elif states('input_number.ev_horatio_current_soc') | int > 20 %}orange
+          {% else %}red{% endif %}
+        tap_action:
+          action: navigate
+          navigation_path: /lovelace-ev/ev
+
+      # ── TODAY'S SUMMARY ──
+      - type: custom:mushroom-template-card
+        primary: "Today's Savings"
+        secondary: >
+          Jacuzzi: {{ states('sensor.jacuzzi_daily_savings') }} CHF
+        icon: mdi:piggy-bank
+        icon_color: green
+
+      # ── NEXT LOW TARIFF ──
+      - type: custom:mushroom-template-card
+        primary: "Next Low Tariff"
+        secondary: >
+          {{ states('sensor.next_low_tariff_start') }}
+        icon: mdi:clock-outline
+        icon_color: teal
+
+      # ── ORCHESTRATOR CONTROLS ──
+      - type: entities
+        title: Controls
+        entities:
+          - entity: input_boolean.energy_orchestrator_enabled
+            name: Orchestrator
+          - entity: input_boolean.energy_jacuzzi_heat_allowed
+            name: Jacuzzi Heat Allowed
+          - entity: input_boolean.energy_ev_solar_charge_allowed
+            name: EV Solar Charge Allowed
+          - entity: input_boolean.energy_ev_tariff_charge_allowed
+            name: EV Tariff Charge Allowed
