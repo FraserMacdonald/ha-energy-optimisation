@@ -1,0 +1,371 @@
+###############################################################################
+# ENERGY ORCHESTRATOR NOTIFICATION AUTOMATIONS
+# File: automations/energy/energy_notification_automations.yaml
+#
+# Numbering: 062-079 (notification sub-range, avoiding existing 060-061)
+# Note: energy_060 (decision log) and energy_061 (conflict alert) remain
+# in energy_orchestrator_automations.yaml — not moved.
+#
+# Phase 1D notifications: P4, A8, A9, X7, X8, S1, S2
+#
+# Notification targets:
+#   Fraser: notify.mobile_app_fraser_s_iphone
+#   Heather: notify.mobile_app_heather_s_iphone
+#   Dashboard: persistent_notification.create
+###############################################################################
+
+
+# ==============================================================================
+# P4 — 062 – MORNING SUMMARY
+# Sends a daily morning briefing at 07:00.
+# ==============================================================================
+- id: auto_energy_062_morning_summary
+  alias: "Energy 062 – Morning Summary"
+  description: >
+    Sends Fraser a morning summary of today's energy plan including
+    jacuzzi events, EV trips, and orchestrator status.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time
+      at: "07:00:00"
+
+  actions:
+    - variables:
+        # Jacuzzi plan
+        cal: "{{ states.calendar.jacuzzi_schedule }}"
+        has_jacuzzi_event: >
+          {% set cal = states.calendar.jacuzzi_schedule %}
+          {% if cal is not none and cal.attributes.start_time is defined %}
+            {% set event_ts = as_timestamp(cal.attributes.start_time) %}
+            {% set now_ts = as_timestamp(now()) %}
+            {{ event_ts > now_ts and (event_ts - now_ts) < 86400 }}
+          {% else %}
+            false
+          {% endif %}
+        jacuzzi_plan: >
+          {% if has_jacuzzi_event %}
+            Jacuzzi event at {{ state_attr('calendar.jacuzzi_schedule', 'start_time') }}.
+            Current: {{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1) }}°C.
+            Start heating: {{ states('sensor.jacuzzi_smart_start_time') }}.
+          {% else %}
+            No jacuzzi event today.
+          {% endif %}
+
+        # EV plan
+        fraser_km: "{{ states('input_number.ev_trip_km_fraser_today') | float(0) }}"
+        heather_km: "{{ states('input_number.ev_trip_km_heather_today') | float(0) }}"
+        fraser_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
+        heather_car: "{{ states('input_select.ev_heather_assigned_car') }}"
+        ev_plan: >
+          {% if fraser_km | float > 0 or heather_km | float > 0 %}
+            {% if fraser_km | float > 0 %}Fraser: {{ fraser_car }} ({{ fraser_km }}km). {% endif %}
+            {% if heather_km | float > 0 %}Heather: {{ heather_car }} ({{ heather_km }}km). {% endif %}
+          {% else %}
+            No EV trips planned.
+          {% endif %}
+
+        # Orchestrator status
+        orch_mode: "{{ 'ON' if is_state('input_boolean.energy_orchestrator_enabled', 'on') else 'OFF' }}"
+
+        msg: >
+          Today: {{ jacuzzi_plan }}
+          EV: {{ ev_plan }}
+          Orchestrator: {{ orch_mode }}.
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Morning Energy Summary"
+        message: "{{ msg }}"
+
+
+# ==============================================================================
+# A8 — 063 – DECISION CHANGE
+# Notifies Fraser when the orchestrator decision changes (with cooldown).
+# ==============================================================================
+- id: auto_energy_063_decision_change
+  alias: "Energy 063 – Decision Change"
+  description: >
+    Notifies Fraser when the orchestrator decision changes. Uses mode single
+    with a 5-minute delay to avoid notification spam during rapid transitions.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: sensor.energy_orchestrator_decision
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.energy_orchestrator_enabled
+      state: "on"
+    - condition: template
+      value_template: >
+        {{ trigger.from_state is not none
+           and trigger.from_state.state not in ['unknown', 'unavailable']
+           and trigger.to_state.state not in ['unknown', 'unavailable']
+           and trigger.from_state.state != trigger.to_state.state }}
+
+  actions:
+    - variables:
+        old_state: "{{ trigger.from_state.state }}"
+        new_state: "{{ trigger.to_state.state }}"
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Orchestrator Decision"
+        message: "Orchestrator: {{ old_state }} → {{ new_state }}"
+
+    # 5-minute cooldown — mode single means subsequent triggers queue then drop
+    - delay:
+        minutes: 5
+
+
+# ==============================================================================
+# A9 — 064 – MODE CHANGED
+# Notifies both users when the orchestrator is enabled/disabled.
+# ==============================================================================
+- id: auto_energy_064_mode_changed
+  alias: "Energy 064 – Mode Changed"
+  description: >
+    Notifies both users when the energy orchestrator master switch is toggled.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: input_boolean.energy_orchestrator_enabled
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ trigger.from_state is not none
+           and trigger.from_state.state != trigger.to_state.state }}
+
+  actions:
+    - variables:
+        new_mode: "{{ 'ON' if is_state('input_boolean.energy_orchestrator_enabled', 'on') else 'OFF' }}"
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Energy Orchestrator"
+        message: "Energy orchestrator turned {{ new_mode }}."
+
+    - action: notify.mobile_app_heather_s_iphone
+      data:
+        title: "Energy Orchestrator"
+        message: "Energy orchestrator turned {{ new_mode }}."
+
+
+# ==============================================================================
+# X7 — 065 – CONFLICT DETAIL
+# Detailed conflict notification when both loads compete for solar.
+# ==============================================================================
+- id: auto_energy_065_conflict_detail
+  alias: "Energy 065 – Conflict Detail"
+  description: >
+    Sends a detailed conflict notification when both jacuzzi and EV
+    have active demand but insufficient solar for both.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id:
+        - sensor.energy_jacuzzi_demand_scenario
+        - sensor.energy_ev_demand_scenario
+        - sensor.energy_production_scenario
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.energy_orchestrator_enabled
+      state: "on"
+    - condition: template
+      value_template: >
+        {% set jac = states('sensor.energy_jacuzzi_demand_scenario') %}
+        {% set ev = states('sensor.energy_ev_demand_scenario') %}
+        {% set prod = states('sensor.energy_production_scenario') %}
+        {{ jac in ['A', 'B', 'C', 'D']
+           and ev in ['X', 'Y']
+           and prod in ['1', '2'] }}
+
+  actions:
+    - variables:
+        surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
+        jac_w: 3500
+        ev_w: >
+          {{ (states('input_number.ev_min_amps') | int(5)
+              * states('input_number.ev_voltage') | float(230)
+              * states('input_number.ev_phases') | int(3)) | round(0) }}
+        jac_tier: "{{ state_attr('sensor.energy_jacuzzi_demand_scenario', 'priority_tier') | int(99) }}"
+        ev_tier: "{{ state_attr('sensor.energy_ev_demand_scenario', 'priority_tier') | int(99) }}"
+        winner: "{{ 'Jacuzzi' if jac_tier | int <= ev_tier | int else 'EV' }}"
+        loser: "{{ 'EV' if winner == 'Jacuzzi' else 'Jacuzzi' }}"
+        msg: >
+          Energy conflict: Jacuzzi needs {{ jac_w }}W + EV needs {{ ev_w }}W
+          but only {{ surplus }}W surplus. Priority: {{ winner }}.
+          {{ loser }} queued for low tariff.
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Energy Conflict"
+        message: "{{ msg }}"
+
+    - delay:
+        minutes: 15
+
+
+# ==============================================================================
+# X8 — 066 – SURPLUS WASTED
+# Alerts Fraser when solar surplus goes unused for extended period.
+# ==============================================================================
+- id: auto_energy_066_surplus_wasted
+  alias: "Energy 066 – Surplus Wasted"
+  description: >
+    Alerts Fraser when solar surplus exceeds 3000W for 30+ minutes with
+    no car charging and jacuzzi at target.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: numeric_state
+      entity_id: sensor.energy_solar_surplus_w
+      above: 3000
+      for:
+        minutes: 30
+
+  conditions:
+    # No car is currently charging
+    - condition: template
+      value_template: >
+        {{ not is_state('switch.horace_charge', 'on')
+           and not is_state('switch.horatio_charge', 'on') }}
+    # Jacuzzi is satisfied (at or above target)
+    - condition: template
+      value_template: >
+        {% set current = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+        {% set target = states('input_number.jacuzzi_target_temp') | float(15) %}
+        {{ current >= target - 0.5 }}
+
+  actions:
+    - variables:
+        surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Solar Surplus Unused"
+        message: >
+          {{ surplus }}W surplus going to grid for 30+ min.
+          No car plugged, jacuzzi satisfied. Plug in a car?
+
+    # Cooldown — don't re-alert for 2 hours
+    - delay:
+        hours: 2
+
+
+# ==============================================================================
+# S1 — 067 – DAILY SUMMARY
+# Sends a daily energy summary at 21:00.
+# ==============================================================================
+- id: auto_energy_067_daily_summary
+  alias: "Energy 067 – Daily Summary"
+  description: >
+    Sends Fraser a daily energy summary at 21:00 and creates a
+    persistent notification on the dashboard.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time
+      at: "21:00:00"
+
+  actions:
+    - variables:
+        surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
+        # Jacuzzi
+        jac_heated: "{{ states('input_number.jacuzzi_target_temp') | float(15) >= 40 }}"
+        jac_source: >
+          {% if is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
+            solar priority
+          {% elif is_state('binary_sensor.energy_low_tariff_active', 'on') %}
+            low tariff
+          {% else %}
+            grid
+          {% endif %}
+        # EV
+        horace_solar_kwh: "{{ states('input_number.ev_horace_solar_kwh_today') | float(0) | round(1) }}"
+        horace_grid_kwh: "{{ states('input_number.ev_horace_grid_kwh_today') | float(0) | round(1) }}"
+        horatio_solar_kwh: "{{ states('input_number.ev_horatio_solar_kwh_today') | float(0) | round(1) }}"
+        horatio_grid_kwh: "{{ states('input_number.ev_horatio_grid_kwh_today') | float(0) | round(1) }}"
+        total_ev_kwh: "{{ (horace_solar_kwh | float + horace_grid_kwh | float + horatio_solar_kwh | float + horatio_grid_kwh | float) | round(1) }}"
+        ev_charged: "{{ total_ev_kwh | float > 0 }}"
+        # Orchestrator
+        orch_mode: "{{ 'ON' if is_state('input_boolean.energy_orchestrator_enabled', 'on') else 'OFF' }}"
+        decision: "{{ states('sensor.energy_orchestrator_decision') }}"
+
+        msg: >
+          Today: Jacuzzi heated: {{ 'yes' if jac_heated else 'no' }}{{ ', used ' ~ jac_source if jac_heated else '' }}.
+          EV charged: {{ 'yes' if ev_charged else 'no' }}{{ ' (' ~ total_ev_kwh ~ 'kWh)' if ev_charged else '' }}.
+          Orchestrator: {{ orch_mode }}. Current surplus: {{ surplus }}W.
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Daily Energy Summary"
+        message: "{{ msg }}"
+
+    - action: persistent_notification.create
+      data:
+        notification_id: energy_daily_summary
+        title: "Daily Energy Summary"
+        message: "{{ msg }}"
+
+
+# ==============================================================================
+# S2 — 068 – WEEKLY SUMMARY
+# Sends a weekly energy summary on Sunday at 20:00.
+# ==============================================================================
+- id: auto_energy_068_weekly_summary
+  alias: "Energy 068 – Weekly Summary"
+  description: >
+    Sends Fraser a weekly energy summary on Sunday at 20:00 and creates
+    a persistent notification on the dashboard.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time
+      at: "20:00:00"
+
+  conditions:
+    - condition: template
+      value_template: "{{ now().weekday() == 6 }}"
+
+  actions:
+    - variables:
+        orch_mode: "{{ 'ON' if is_state('input_boolean.energy_orchestrator_enabled', 'on') else 'OFF' }}"
+        jac_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1) }}"
+        horace_soc: "{{ states('sensor.horace_battery_level') | float(0) | round(0) }}"
+        horatio_soc: "{{ states('sensor.horatio_battery_level') | float(0) | round(0) }}"
+        msg: >
+          This week: Orchestrator: {{ orch_mode }}.
+          Jacuzzi current: {{ jac_temp }}°C.
+          Horace SOC: {{ horace_soc }}%. Horatio SOC: {{ horatio_soc }}%.
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Weekly Energy Summary"
+        message: "{{ msg }}"
+
+    - action: persistent_notification.create
+      data:
+        notification_id: energy_weekly_summary
+        title: "Weekly Energy Summary"
+        message: "{{ msg }}"

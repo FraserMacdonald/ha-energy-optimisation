@@ -66,6 +66,103 @@ input_number:
     unit_of_measurement: "°C/h"
     icon: mdi:trending-down
 
+  # --- Thermal Model (Physics-Based) ---
+  jacuzzi_volume_litres:
+    name: "Jacuzzi Volume (litres)"
+    min: 500
+    max: 5000
+    step: 50
+    initial: 3200
+    unit_of_measurement: "L"
+    icon: mdi:cup-water
+
+  jacuzzi_heater_power_rated_kw:
+    name: "Jacuzzi Rated Heater Power"
+    min: 1
+    max: 12
+    step: 0.1
+    initial: 3.0
+    unit_of_measurement: "kW"
+    icon: mdi:lightning-bolt
+
+  jacuzzi_effective_power_kw:
+    name: "Jacuzzi Effective Heater Power (learned)"
+    min: 0.5
+    max: 12
+    step: 0.01
+    initial: 3.7
+    unit_of_measurement: "kW"
+    icon: mdi:lightning-bolt-circle
+
+  jacuzzi_k_cold:
+    name: "Heat Loss Coefficient - Cold (<5°C outdoor)"
+    min: 0.005
+    max: 0.2
+    step: 0.001
+    initial: 0.040
+    unit_of_measurement: "kW/°C"
+    icon: mdi:snowflake-thermometer
+
+  jacuzzi_k_mild:
+    name: "Heat Loss Coefficient - Mild (5-15°C outdoor)"
+    min: 0.005
+    max: 0.2
+    step: 0.001
+    initial: 0.035
+    unit_of_measurement: "kW/°C"
+    icon: mdi:thermometer
+
+  jacuzzi_k_warm:
+    name: "Heat Loss Coefficient - Warm (>15°C outdoor)"
+    min: 0.005
+    max: 0.2
+    step: 0.001
+    initial: 0.025
+    unit_of_measurement: "kW/°C"
+    icon: mdi:weather-sunny
+
+  jacuzzi_last_sample_temp:
+    name: "Thermal Model Last Sample Temp"
+    min: 0
+    max: 50
+    step: 0.1
+    initial: 20
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-check
+
+  jacuzzi_last_sample_ambient:
+    name: "Thermal Model Last Sample Ambient"
+    min: -20
+    max: 45
+    step: 0.1
+    initial: 10
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-check
+
+  jacuzzi_model_observation_count:
+    name: "Thermal Model Observation Count"
+    min: 0
+    max: 100000
+    step: 1
+    initial: 0
+    icon: mdi:counter
+
+  jacuzzi_model_heating_observations:
+    name: "Thermal Model Heating Observations"
+    min: 0
+    max: 100000
+    step: 1
+    initial: 0
+    icon: mdi:counter
+
+  jacuzzi_model_cooling_observations:
+    name: "Thermal Model Cooling Observations"
+    min: 0
+    max: 100000
+    step: 1
+    initial: 0
+    icon: mdi:counter
+
 # =============================================================================
 # INPUT BOOLEANS
 # =============================================================================
@@ -97,11 +194,26 @@ input_datetime:
     has_time: true
     icon: mdi:clock-end
 
+  jacuzzi_last_sample_time:
+    name: "Thermal Model Last Sample Time"
+    has_date: true
+    has_time: true
+    icon: mdi:clock-check
+
 # =============================================================================
 # INPUT SELECTS
 # Bug fix: was input_text (no validation). Changed to input_select.
 # =============================================================================
 input_select:
+  jacuzzi_last_sample_heater_state:
+    name: "Thermal Model Last Heater State"
+    options:
+      - "heating"
+      - "idle"
+      - "unknown"
+    initial: "unknown"
+    icon: mdi:fire-alert
+
   jacuzzi_calendar_entity:
     name: "Jacuzzi Calendar Entity"
     options:

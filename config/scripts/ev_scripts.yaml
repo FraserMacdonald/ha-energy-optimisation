@@ -331,8 +331,10 @@ ev_dump_state:
         heather_car: "{{ states('input_select.ev_heather_assigned_car') }}"
         night_car: "{{ states('input_select.ev_night_charge_car') }}"
         night_target: "{{ states('input_number.ev_night_charge_target_soc') | float(0) }}"
-        km_fraser: "{{ states('input_number.ev_trip_km_fraser_tomorrow') | float(0) }}"
-        km_heather: "{{ states('input_number.ev_trip_km_heather_tomorrow') | float(0) }}"
+        km_fraser_today: "{{ states('input_number.ev_trip_km_fraser_today') | float(0) }}"
+        km_heather_today: "{{ states('input_number.ev_trip_km_heather_today') | float(0) }}"
+        km_fraser_tomorrow: "{{ states('input_number.ev_trip_km_fraser_tomorrow') | float(0) }}"
+        km_heather_tomorrow: "{{ states('input_number.ev_trip_km_heather_tomorrow') | float(0) }}"
         fr_depart: "{{ states('input_datetime.ev_fraser_departure_time') }}"
         he_depart: "{{ states('input_datetime.ev_heather_departure_time') }}"
         fr_dep_soc: "{{ states('input_number.ev_fraser_departure_soc') | float(0) }}"
@@ -356,9 +358,10 @@ ev_dump_state:
           Fraser → {{ fraser_car }} (depart SOC: {{ fr_dep_soc | round(0) }}%)
           Heather → {{ heather_car }} (depart SOC: {{ he_dep_soc | round(0) }}%)
 
-          ### Tomorrow Trips
-          Fraser: {{ km_fraser | round(0) }}km, depart {{ fr_depart }}
-          Heather: {{ km_heather | round(0) }}km, depart {{ he_depart }}
+          ### Trips
+          Today – Fraser: {{ km_fraser_today | round(0) }}km, Heather: {{ km_heather_today | round(0) }}km
+          Tomorrow – Fraser: {{ km_fraser_tomorrow | round(0) }}km, Heather: {{ km_heather_tomorrow | round(0) }}km
+          Departures – Fraser: {{ fr_depart }}, Heather: {{ he_depart }}
 
           ### Charging
           Night charge: {{ night_car }} → {{ night_target | round(0) }}%

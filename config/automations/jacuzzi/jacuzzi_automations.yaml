@@ -395,12 +395,40 @@
         {{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) >= 38 }}
 
   actions:
-    - action: notify.notify
+    - variables:
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1) }}"
+        event_time: "{{ state_attr('calendar.jacuzzi_schedule', 'start_time') }}"
+        start_temp: "{{ states('input_number.energy_jacuzzi_heating_start_temp') | float(0) | round(1) }}"
+        heat_hours: >
+          {% set last_time = states('input_datetime.energy_jacuzzi_last_progress_time') %}
+          {% if last_time not in ['unknown', 'unavailable', ''] %}
+            {{ ((as_timestamp(now()) - as_timestamp(last_time)) / 3600) | round(1) }}
+          {% else %}
+            unknown
+          {% endif %}
+        surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
+        source: >
+          {% if surplus | float > 3500 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
+            solar
+          {% elif is_state('binary_sensor.energy_low_tariff_active', 'on') %}
+            low tariff
+          {% else %}
+            grid
+          {% endif %}
+
+    - action: notify.mobile_app_fraser_s_iphone
       data:
-        title: "Jacuzzi Ready 🛁"
+        title: "Jacuzzi Ready"
         message: >
-          Your jacuzzi is at {{ state_attr('climate.jacuzzi', 'current_temperature') }}°C
-          and ready for your session!
+          Jacuzzi at {{ current_temp }}°C and ready for your {{ event_time }} session!
+          Heated from {{ start_temp }}°C using {{ source }}.
+
+    - action: notify.mobile_app_heather_s_iphone
+      data:
+        title: "Jacuzzi Ready"
+        message: >
+          Jacuzzi at {{ current_temp }}°C and ready for your {{ event_time }} session!
+          Heated from {{ start_temp }}°C using {{ source }}.
 
 
 # ==============================================================================
@@ -437,15 +465,46 @@
 
   actions:
     - variables:
-        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) }}"
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1) }}"
         heat_hours: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(3) }}"
-        heat_mins: "{{ (heat_hours | float * 60) | round(0) }}"
-    - action: notify.notify
+        outdoor_temp: "{{ states('sensor.la_dole_temperature') | float(10) }}"
+        rate: >
+          {% if outdoor_temp | float > 15 %}
+            {{ states('input_number.jacuzzi_heat_rate_summer') | float(5) }}
+          {% else %}
+            {{ states('input_number.jacuzzi_heat_rate_winter') | float(3) }}
+          {% endif %}
+        eta: >
+          {% set hrs = heat_hours | float %}
+          {% if hrs > 0 %}
+            {{ (as_timestamp(now()) + hrs * 3600) | timestamp_custom('%H:%M') }}
+          {% else %}
+            now
+          {% endif %}
+        event_time: "{{ state_attr('calendar.jacuzzi_schedule', 'start_time') }}"
+        event_ts: "{{ as_timestamp(state_attr('calendar.jacuzzi_schedule', 'start_time')) }}"
+        eta_ts: "{{ as_timestamp(now()) + heat_hours | float * 3600 }}"
+        late_mins: "{{ ((eta_ts | float - event_ts | float) / 60) | round(0) }}"
+
+    - action: notify.mobile_app_fraser_s_iphone
       data:
         title: "Jacuzzi Not Ready"
         message: >
-          Jacuzzi is {{ current_temp }}°C (target 40°C) with ~{{ heat_mins }} min
-          estimated to heat. Event starts in 30 minutes.
+          Jacuzzi at {{ current_temp }}°C. Event in 30 min.
+          At current rate ({{ rate }}°C/h), ready at {{ eta }} ({{ late_mins }} min late).
+        data:
+          push:
+            interruption-level: time-sensitive
+
+    - action: notify.mobile_app_heather_s_iphone
+      data:
+        title: "Jacuzzi Not Ready"
+        message: >
+          Jacuzzi at {{ current_temp }}°C. Event in 30 min.
+          At current rate ({{ rate }}°C/h), ready at {{ eta }} ({{ late_mins }} min late).
+        data:
+          push:
+            interruption-level: time-sensitive
 
 
 # ==============================================================================
@@ -598,3 +657,246 @@
         name: "Jacuzzi Pipe Protection"
         message: >
           Pump cycled for 5 min (outdoor: {{ states('sensor.la_dole_temperature') }}°C)
+
+
+# ==============================================================================
+# 095 – THERMAL MODEL UPDATE (Adaptive Feedback Loop)
+# Samples temperature every 15 min and updates P_net or k via EWM average.
+# ==============================================================================
+- id: auto_jacuzzi_095_thermal_model_update
+  alias: "Jacuzzi 095 – Thermal Model Update"
+  description: >
+    Samples water temperature every 15 minutes and updates the thermal model
+    parameters (P_net or k) using exponentially weighted moving average.
+    Only updates when heater state was stable for the entire interval.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/15"
+
+  conditions:
+    - condition: template
+      value_template: >
+        {% set t = state_attr('climate.jacuzzi', 'current_temperature') %}
+        {{ t is not none and t not in ['unavailable', 'unknown'] }}
+
+  actions:
+    - variables:
+        # Current readings
+        t_now: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) }}"
+        t_ambient_now: "{{ states('sensor.la_dole_temperature') | float(10) }}"
+        heater_now: "{{ state_attr('climate.jacuzzi', 'hvac_action') | default('idle') }}"
+
+        # Last sample
+        t_last: "{{ states('input_number.jacuzzi_last_sample_temp') | float(20) }}"
+        t_ambient_last: "{{ states('input_number.jacuzzi_last_sample_ambient') | float(10) }}"
+        time_last: "{{ states('input_datetime.jacuzzi_last_sample_time') }}"
+        heater_last: "{{ states('input_select.jacuzzi_last_sample_heater_state') }}"
+
+        # Duration since last sample
+        has_last: "{{ time_last not in ['unknown', 'unavailable', ''] }}"
+        duration_h: >
+          {% if has_last %}
+            {{ ((as_timestamp(now()) - as_timestamp(time_last)) / 3600) | round(4) }}
+          {% else %}
+            0
+          {% endif %}
+
+        # Thermal capacity
+        vol: "{{ states('input_number.jacuzzi_volume_litres') | float(3200) }}"
+        c_water: "{{ (vol * 4.186 / 3600) | round(4) }}"
+
+        # Current k for the ambient band
+        k_current: "{{ states('sensor.jacuzzi_current_k') | float(0.035) }}"
+
+        # Validity checks
+        duration_valid: "{{ duration_h | float >= 0.1 and duration_h | float <= 2.0 }}"
+        state_stable: "{{ heater_now == heater_last }}"
+        should_update: "{{ has_last and duration_valid and state_stable }}"
+
+        # Averages
+        t_avg_water: "{{ ((t_last | float + t_now | float) / 2) | round(2) }}"
+        t_ambient_avg: "{{ ((t_ambient_last | float + t_ambient_now | float) / 2) | round(2) }}"
+
+    # Heating observation
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ should_update and heater_now == 'heating' }}"
+          sequence:
+            - variables:
+                # P_observed = C * dT/dt + k * (T_avg - T_amb_avg)
+                p_observed: >
+                  {{ (c_water | float * (t_now | float - t_last | float) / duration_h | float
+                      + k_current | float * (t_avg_water | float - t_ambient_avg | float)) | round(3) }}
+                p_sane: "{{ p_observed | float > 0.5 and p_observed | float < 12 }}"
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ p_sane }}"
+                  sequence:
+                    - variables:
+                        p_old: "{{ states('input_number.jacuzzi_effective_power_kw') | float(3.7) }}"
+                        p_new: "{{ (0.1 * p_observed | float + 0.9 * p_old | float) | round(3) }}"
+                        heat_count: "{{ states('input_number.jacuzzi_model_heating_observations') | int(0) + 1 }}"
+                    - action: input_number.set_value
+                      target:
+                        entity_id: input_number.jacuzzi_effective_power_kw
+                      data:
+                        value: "{{ p_new }}"
+                    - action: input_number.set_value
+                      target:
+                        entity_id: input_number.jacuzzi_model_heating_observations
+                      data:
+                        value: "{{ heat_count }}"
+                    - action: logbook.log
+                      data:
+                        name: "Thermal Model"
+                        message: >
+                          Heating #{{ heat_count }}. {{ t_last }}→{{ t_now }}°C in {{ duration_h }}h.
+                          Ambient {{ t_ambient_avg }}°C. P_obs={{ p_observed }}kW → P_net={{ p_new }}kW
+
+    # Cooling observation
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: >
+                {{ should_update and heater_now == 'idle'
+                   and (t_avg_water | float - t_ambient_avg | float) >= 3
+                   and t_now | float < t_last | float }}
+          sequence:
+            - variables:
+                # k_observed = C * ln((T_start - T_amb) / (T_end - T_amb)) / duration
+                t_start_diff: "{{ t_last | float - t_ambient_avg | float }}"
+                t_end_diff: "{{ t_now | float - t_ambient_avg | float }}"
+                k_observed: >
+                  {% if t_end_diff | float > 0 and t_start_diff | float > 0 %}
+                    {{ (c_water | float * ((t_start_diff / t_end_diff) | log) / duration_h | float) | round(4) }}
+                  {% else %}
+                    0
+                  {% endif %}
+                k_sane: "{{ k_observed | float > 0.005 and k_observed | float < 0.2 }}"
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ k_sane }}"
+                  sequence:
+                    - variables:
+                        # Determine which k to update based on ambient band
+                        band: >
+                          {% if t_ambient_avg | float < 5 %}cold
+                          {% elif t_ambient_avg | float <= 15 %}mild
+                          {% else %}warm{% endif %}
+                        k_entity: "input_number.jacuzzi_k_{{ band }}"
+                        k_old: "{{ states(k_entity) | float(0.035) }}"
+                        k_new: "{{ (0.1 * k_observed | float + 0.9 * k_old | float) | round(4) }}"
+                        cool_count: "{{ states('input_number.jacuzzi_model_cooling_observations') | int(0) + 1 }}"
+                    - action: input_number.set_value
+                      target:
+                        entity_id: "{{ k_entity }}"
+                      data:
+                        value: "{{ k_new }}"
+                    - action: input_number.set_value
+                      target:
+                        entity_id: input_number.jacuzzi_model_cooling_observations
+                      data:
+                        value: "{{ cool_count }}"
+                    - action: logbook.log
+                      data:
+                        name: "Thermal Model"
+                        message: >
+                          Cooling #{{ cool_count }} ({{ band }}). {{ t_last }}→{{ t_now }}°C in {{ duration_h }}h.
+                          Ambient {{ t_ambient_avg }}°C. k_obs={{ k_observed }}kW/°C → k_{{ band }}={{ k_new }}kW/°C
+
+    # Always: update sample state and increment total count
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_last_sample_temp
+      data:
+        value: "{{ t_now }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_last_sample_ambient
+      data:
+        value: "{{ t_ambient_now }}"
+
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.jacuzzi_last_sample_time
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.jacuzzi_last_sample_heater_state
+      data:
+        option: "{{ heater_now if heater_now in ['heating', 'idle'] else 'unknown' }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ should_update }}"
+          sequence:
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.jacuzzi_model_observation_count
+              data:
+                value: "{{ states('input_number.jacuzzi_model_observation_count') | int(0) + 1 }}"
+
+
+# ==============================================================================
+# 096 – THERMAL MODEL RESET SAMPLE (Heater State Change)
+# Resets the sample window when heater transitions between heating/idle.
+# ==============================================================================
+- id: auto_jacuzzi_096_thermal_model_reset_sample
+  alias: "Jacuzzi 096 – Thermal Model Reset Sample"
+  description: >
+    Immediately resets the thermal model sample window when the heater
+    changes state between heating and idle, since transition data is unreliable.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: template
+      value_template: >
+        {{ state_attr('climate.jacuzzi', 'hvac_action') | default('unknown') }}
+
+  actions:
+    - variables:
+        heater_state: "{{ state_attr('climate.jacuzzi', 'hvac_action') | default('unknown') }}"
+        t_now: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) }}"
+        t_ambient: "{{ states('sensor.la_dole_temperature') | float(10) }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_last_sample_temp
+      data:
+        value: "{{ t_now }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_last_sample_ambient
+      data:
+        value: "{{ t_ambient }}"
+
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.jacuzzi_last_sample_time
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.jacuzzi_last_sample_heater_state
+      data:
+        option: "{{ heater_state if heater_state in ['heating', 'idle'] else 'unknown' }}"
+
+    - action: logbook.log
+      data:
+        name: "Thermal Model"
+        message: "Heater changed to {{ heater_state }}. Reset sample window."

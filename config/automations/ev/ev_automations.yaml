@@ -146,7 +146,20 @@
       data:
         value: 0
 
-    # Clear trip data (will be recalculated)
+    # Carry forward tomorrow's trip data as today's
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_trip_km_fraser_today
+      data:
+        value: "{{ states('input_number.ev_trip_km_fraser_tomorrow') | float(0) }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_trip_km_heather_today
+      data:
+        value: "{{ states('input_number.ev_trip_km_heather_tomorrow') | float(0) }}"
+
+    # Clear tomorrow's trip data (will be recalculated)
     - action: input_number.set_value
       target:
         entity_id:
@@ -192,10 +205,11 @@
 ###############################################################################
 
 - id: auto_ev_010_calendar_sync
-  alias: "EV 010 – Calendar Sync (Tomorrow Trips)"
+  alias: "EV 010 – Calendar Sync (Today & Tomorrow Trips)"
   description: >
-    Fetches tomorrow's calendar events, computes trip chains via Waze,
-    and stores detailed trip leg data for notifications.
+    Fetches today's and tomorrow's calendar events, computes trip chains
+    via Waze. Today's data drives car assignment and departure reminders.
+    Tomorrow's data drives overnight charging decisions.
   mode: single
   max_exceeded: silent
   trace:
@@ -220,9 +234,13 @@
 
   actions:
     - variables:
+        today: "{{ as_local(now()).date() | string }}"
+        today_start: "{{ today ~ 'T00:00:00' }}"
+        today_end: "{{ today ~ 'T23:59:59' }}"
         tomorrow: "{{ (as_local(now()).date() + timedelta(days=1)) | string }}"
-        start_iso: "{{ tomorrow ~ 'T00:00:00' }}"
-        end_iso: "{{ tomorrow ~ 'T23:59:59' }}"
+        tomorrow_start: "{{ tomorrow ~ 'T00:00:00' }}"
+        tomorrow_end: "{{ tomorrow ~ 'T23:59:59' }}"
+        now_ts: "{{ as_timestamp(now()) }}"
         arrive_early_min: 15
 
         # Battery specs
@@ -232,14 +250,258 @@
         whkm_horatio: 215
 
     # =========================================================================
-    # FRASER CALENDAR
+    # TODAY – FRASER
     # =========================================================================
     - action: calendar.get_events
       target:
         entity_id: calendar.fraser
       data:
-        start_date_time: "{{ start_iso }}"
-        end_date_time: "{{ end_iso }}"
+        start_date_time: "{{ today_start }}"
+        end_date_time: "{{ today_end }}"
+      response_variable: fraser_today_resp
+
+    - variables:
+        fraser_today_events: "{{ (fraser_today_resp.get('calendar.fraser', {})).get('events', []) }}"
+        fraser_today_stops: >
+          {% set ns = namespace(items=[]) %}
+          {% for e in fraser_today_events %}
+            {% set loc = (e.location | default('') | replace('\n', ', ') | trim) %}
+            {% if loc | length > 0 and as_timestamp(as_datetime(e.end)) > now_ts %}
+              {% set st = as_timestamp(as_datetime(e.start)) %}
+              {% set en = as_timestamp(as_datetime(e.end)) %}
+              {% set ns.items = ns.items + [{
+                'start_ts': st | int,
+                'end_ts': en | int,
+                'loc': loc,
+                'title': (e.summary | default('Event'))
+              }] %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.items | sort(attribute='start_ts') }}
+
+    - variables:
+        fraser_today_km: 0
+        fraser_today_legs: []
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ fraser_today_stops | length > 0 }}"
+          sequence:
+            - variables:
+                points_tf: >
+                  {% set locs = fraser_today_stops | map(attribute='loc') | list %}
+                  {{ ['zone.home'] + locs + ['zone.home'] }}
+
+            - repeat:
+                count: "{{ points_tf | length - 1 }}"
+                sequence:
+                  - variables:
+                      leg_idx: "{{ repeat.index - 1 }}"
+                      origin: "{{ points_tf[leg_idx] }}"
+                      destination: "{{ points_tf[leg_idx + 1] }}"
+                      stop_idx: "{{ leg_idx }}"
+                      ev_info: >
+                        {% if stop_idx < fraser_today_stops | length %}
+                          {{ fraser_today_stops[stop_idx] }}
+                        {% else %}
+                          {{ {'title': 'Return Home', 'start_ts': 0, 'end_ts': 0} }}
+                        {% endif %}
+
+                  - action: waze_travel_time.get_travel_times
+                    data:
+                      origin: "{{ origin }}"
+                      destination: "{{ destination }}"
+                      region: "eu"
+                      units: "metric"
+                      vehicle_type: "car"
+                      realtime: false
+                    response_variable: waze_tf
+
+                  - variables:
+                      routes_tf: "{{ waze_tf.get('routes', []) }}"
+                      leg_km: "{{ (routes_tf[0].get('distance', 0) | float(0)) if routes_tf | length > 0 else 0 }}"
+                      leg_min: "{{ (routes_tf[0].get('duration', 30) | float(30)) if routes_tf | length > 0 else 30 }}"
+                      ev_start_ts: "{{ ev_info.start_ts | int if ev_info.start_ts else 0 }}"
+                      ev_end_ts: "{{ ev_info.end_ts | int if ev_info.end_ts else 0 }}"
+
+                      depart_ts: >
+                        {% if stop_idx < fraser_today_stops | length %}
+                          {{ (ev_start_ts - (arrive_early_min + leg_min) * 60) | int }}
+                        {% else %}
+                          {{ ev_end_ts | int }}
+                        {% endif %}
+
+                      fraser_today_km: "{{ fraser_today_km | float + leg_km | float }}"
+                      fraser_today_legs: >
+                        {{ fraser_today_legs + [{'leg': leg_idx,
+                           'depart_ts': depart_ts | int,
+                           'duration_min': leg_min | float | round(0)}] }}
+
+    - variables:
+        fraser_today_first_depart_ts: >
+          {{ fraser_today_legs[0].depart_ts if fraser_today_legs | length > 0 else 0 }}
+        fraser_today_has_trip: >
+          {{ fraser_today_first_depart_ts | int > now_ts | int }}
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_trip_km_fraser_today
+      data:
+        value: "{{ fraser_today_km | round(0) }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ fraser_today_has_trip }}"
+          sequence:
+            - action: input_datetime.set_datetime
+              target:
+                entity_id: input_datetime.ev_fraser_departure_time
+              data:
+                datetime: >
+                  {{ fraser_today_first_depart_ts
+                     | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.ev_fraser_travel_minutes
+              data:
+                value: >
+                  {{ fraser_today_legs[0].duration_min | int
+                     if fraser_today_legs | length > 0 else 0 }}
+
+    # =========================================================================
+    # TODAY – HEATHER
+    # =========================================================================
+    - action: calendar.get_events
+      target:
+        entity_id: calendar.heather
+      data:
+        start_date_time: "{{ today_start }}"
+        end_date_time: "{{ today_end }}"
+      response_variable: heather_today_resp
+
+    - variables:
+        heather_today_events: "{{ (heather_today_resp.get('calendar.heather', {})).get('events', []) }}"
+        heather_today_stops: >
+          {% set ns = namespace(items=[]) %}
+          {% for e in heather_today_events %}
+            {% set loc = (e.location | default('') | replace('\n', ', ') | trim) %}
+            {% if loc | length > 0 and as_timestamp(as_datetime(e.end)) > now_ts %}
+              {% set st = as_timestamp(as_datetime(e.start)) %}
+              {% set en = as_timestamp(as_datetime(e.end)) %}
+              {% set ns.items = ns.items + [{
+                'start_ts': st | int,
+                'end_ts': en | int,
+                'loc': loc,
+                'title': (e.summary | default('Event'))
+              }] %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.items | sort(attribute='start_ts') }}
+
+    - variables:
+        heather_today_km: 0
+        heather_today_legs: []
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ heather_today_stops | length > 0 }}"
+          sequence:
+            - variables:
+                points_th: >
+                  {% set locs = heather_today_stops | map(attribute='loc') | list %}
+                  {{ ['zone.home'] + locs + ['zone.home'] }}
+
+            - repeat:
+                count: "{{ points_th | length - 1 }}"
+                sequence:
+                  - variables:
+                      leg_idx: "{{ repeat.index - 1 }}"
+                      origin: "{{ points_th[leg_idx] }}"
+                      destination: "{{ points_th[leg_idx + 1] }}"
+                      stop_idx: "{{ leg_idx }}"
+                      ev_info: >
+                        {% if stop_idx < heather_today_stops | length %}
+                          {{ heather_today_stops[stop_idx] }}
+                        {% else %}
+                          {{ {'title': 'Return Home', 'start_ts': 0, 'end_ts': 0} }}
+                        {% endif %}
+
+                  - action: waze_travel_time.get_travel_times
+                    data:
+                      origin: "{{ origin }}"
+                      destination: "{{ destination }}"
+                      region: "eu"
+                      units: "metric"
+                      vehicle_type: "car"
+                      realtime: false
+                    response_variable: waze_th
+
+                  - variables:
+                      routes_th: "{{ waze_th.get('routes', []) }}"
+                      leg_km: "{{ (routes_th[0].get('distance', 0) | float(0)) if routes_th | length > 0 else 0 }}"
+                      leg_min: "{{ (routes_th[0].get('duration', 30) | float(30)) if routes_th | length > 0 else 30 }}"
+                      ev_start_ts: "{{ ev_info.start_ts | int if ev_info.start_ts else 0 }}"
+                      ev_end_ts: "{{ ev_info.end_ts | int if ev_info.end_ts else 0 }}"
+
+                      depart_ts: >
+                        {% if stop_idx < heather_today_stops | length %}
+                          {{ (ev_start_ts - (arrive_early_min + leg_min) * 60) | int }}
+                        {% else %}
+                          {{ ev_end_ts | int }}
+                        {% endif %}
+
+                      heather_today_km: "{{ heather_today_km | float + leg_km | float }}"
+                      heather_today_legs: >
+                        {{ heather_today_legs + [{'leg': leg_idx,
+                           'depart_ts': depart_ts | int,
+                           'duration_min': leg_min | float | round(0)}] }}
+
+    - variables:
+        heather_today_first_depart_ts: >
+          {{ heather_today_legs[0].depart_ts if heather_today_legs | length > 0 else 0 }}
+        heather_today_has_trip: >
+          {{ heather_today_first_depart_ts | int > now_ts | int }}
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.ev_trip_km_heather_today
+      data:
+        value: "{{ heather_today_km | round(0) }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ heather_today_has_trip }}"
+          sequence:
+            - action: input_datetime.set_datetime
+              target:
+                entity_id: input_datetime.ev_heather_departure_time
+              data:
+                datetime: >
+                  {{ heather_today_first_depart_ts
+                     | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.ev_heather_travel_minutes
+              data:
+                value: >
+                  {{ heather_today_legs[0].duration_min | int
+                     if heather_today_legs | length > 0 else 0 }}
+
+    # =========================================================================
+    # TOMORROW – FRASER
+    # =========================================================================
+    - action: calendar.get_events
+      target:
+        entity_id: calendar.fraser
+      data:
+        start_date_time: "{{ tomorrow_start }}"
+        end_date_time: "{{ tomorrow_end }}"
       response_variable: fraser_resp
 
     - variables:
@@ -411,7 +673,7 @@
     - choose:
         - conditions:
             - condition: template
-              value_template: "{{ fraser_first_departure_ts | int > 0 }}"
+              value_template: "{{ (not fraser_today_has_trip) and fraser_first_departure_ts | int > 0 }}"
           sequence:
             - action: input_datetime.set_datetime
               target:
@@ -426,14 +688,14 @@
                 value: "{{ fraser_legs[0].duration_min | int if fraser_legs | length > 0 else 0 }}"
 
     # =========================================================================
-    # HEATHER CALENDAR (same pattern)
+    # TOMORROW – HEATHER
     # =========================================================================
     - action: calendar.get_events
       target:
         entity_id: calendar.heather
       data:
-        start_date_time: "{{ start_iso }}"
-        end_date_time: "{{ end_iso }}"
+        start_date_time: "{{ tomorrow_start }}"
+        end_date_time: "{{ tomorrow_end }}"
       response_variable: heather_resp
 
     - variables:
@@ -598,7 +860,7 @@
     - choose:
         - conditions:
             - condition: template
-              value_template: "{{ heather_first_departure_ts | int > 0 }}"
+              value_template: "{{ (not heather_today_has_trip) and heather_first_departure_ts | int > 0 }}"
           sequence:
             - action: input_datetime.set_datetime
               target:
@@ -616,7 +878,9 @@
       data:
         name: "EV Calendar"
         message: >
-          Calendar sync complete. Fraser: {{ fraser_total_km | round(0) }}km ({{ fraser_stops | length }} stops).
+          Calendar sync complete.
+          Today – Fraser: {{ fraser_today_km | round(0) }}km, Heather: {{ heather_today_km | round(0) }}km.
+          Tomorrow – Fraser: {{ fraser_total_km | round(0) }}km ({{ fraser_stops | length }} stops),
           Heather: {{ heather_total_km | round(0) }}km ({{ heather_stops | length }} stops).
 
     # Compute elevation-adjusted consumption
@@ -939,9 +1203,11 @@
     stored_traces: 10
 
   triggers:
-    # Trip data changed
+    # Trip data changed (today or tomorrow)
     - trigger: state
       entity_id:
+        - input_number.ev_trip_km_fraser_today
+        - input_number.ev_trip_km_heather_today
         - input_number.ev_trip_km_fraser_tomorrow
         - input_number.ev_trip_km_heather_tomorrow
       for:
@@ -980,9 +1246,13 @@
 
   actions:
     - variables:
-        # Trip distances
-        km_fraser: "{{ states('input_number.ev_trip_km_fraser_tomorrow') | float(0) }}"
-        km_heather: "{{ states('input_number.ev_trip_km_heather_tomorrow') | float(0) }}"
+        # Trip distances – prefer today (day-of), fall back to tomorrow (planning)
+        km_fraser_today: "{{ states('input_number.ev_trip_km_fraser_today') | float(0) }}"
+        km_heather_today: "{{ states('input_number.ev_trip_km_heather_today') | float(0) }}"
+        km_fraser_tmrw: "{{ states('input_number.ev_trip_km_fraser_tomorrow') | float(0) }}"
+        km_heather_tmrw: "{{ states('input_number.ev_trip_km_heather_tomorrow') | float(0) }}"
+        km_fraser: "{{ km_fraser_today if km_fraser_today > 0 else km_fraser_tmrw }}"
+        km_heather: "{{ km_heather_today if km_heather_today > 0 else km_heather_tmrw }}"
         km_long: "{{ [km_fraser, km_heather] | max }}"
         km_short: "{{ [km_fraser, km_heather] | min }}"
         fraser_has_long: "{{ km_fraser >= km_heather }}"
@@ -2115,12 +2385,13 @@
         fire_window_end: "{{ depart_ts - lead_sec + 60 }}"
 
         travel_min: "{{ states('input_number.ev_fraser_travel_minutes') | float(0) }}"
+        assigned_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
         should_fire: >
           {{ travel_min > 0 and depart_ts > now_ts
              and now_ts >= fire_window_start and now_ts < fire_window_end
-             and last_notify_ts < fire_window_start }}
+             and last_notify_ts < fire_window_start
+             and assigned_car not in ['None', 'none', 'unavailable', 'unknown'] }}
 
-        assigned_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
         depart_soc: "{{ states('input_number.ev_fraser_departure_soc') | float(0) }}"
         depart_time: "{{ depart_ts | timestamp_custom('%H:%M', true) }}"
 
@@ -2164,12 +2435,13 @@
         fire_window_end: "{{ depart_ts - lead_sec + 60 }}"
 
         travel_min: "{{ states('input_number.ev_heather_travel_minutes') | float(0) }}"
+        assigned_car: "{{ states('input_select.ev_heather_assigned_car') }}"
         should_fire: >
           {{ travel_min > 0 and depart_ts > now_ts
              and now_ts >= fire_window_start and now_ts < fire_window_end
-             and last_notify_ts < fire_window_start }}
+             and last_notify_ts < fire_window_start
+             and assigned_car not in ['None', 'none', 'unavailable', 'unknown'] }}
 
-        assigned_car: "{{ states('input_select.ev_heather_assigned_car') }}"
         depart_soc: "{{ states('input_number.ev_heather_departure_soc') | float(0) }}"
         depart_time: "{{ depart_ts | timestamp_custom('%H:%M', true) }}"
 
@@ -2279,8 +2551,8 @@
   conditions:
     - condition: template
       value_template: >
-        {{ states('input_number.ev_trip_km_fraser_tomorrow') | float(0) > 0
-           or states('input_number.ev_trip_km_heather_tomorrow') | float(0) > 0 }}
+        {{ states('input_number.ev_trip_km_fraser_today') | float(0) > 0
+           or states('input_number.ev_trip_km_heather_today') | float(0) > 0 }}
 
   actions:
     - variables:

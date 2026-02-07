@@ -133,5 +133,30 @@ See `docs/006_phase_1d_enhancements.md` for full details.
 - [x] `ev_050` climate prep — departure proximity trigger (45 min window, /5 re-eval)
 - [x] yamllint passes on all modified files
 
+## What's Done (Phase 1D – Notifications)
+See `docs/009_notification_implementation.md` for full details.
+- [x] Critical bug fix: `jacuzzi_sensors.yaml` heat-up time now uses hardcoded 40°C (was using standby temp)
+- [x] `automations/jacuzzi/jacuzzi_notification_automations.yaml` created (10 automations: 062-071)
+- [x] `automations/ev/ev_notification_automations.yaml` created (6 automations: 065-069, 077)
+- [x] `automations/energy/energy_notification_automations.yaml` created (7 automations: 062-068)
+- [x] 3 helpers added to `energy_orchestrator_system.yaml` (start temp, progress temp, progress time)
+- [x] `jacuzzi_060` enhanced: specific mobile targets, heating source/start temp
+- [x] `jacuzzi_061` enhanced: time-sensitive, rate/ETA/late minutes
+- [x] `ev_064` already had time-sensitive — no change needed
+- [x] yamllint passes on all new and modified files
+
+## What's Done (Phase 1D – Thermal Model & EV Calendar Fix)
+See `docs/011_thermal_model_and_ev_calendar_fixes.md` for full details.
+- [x] Physics-based thermal model: 13 new helpers, 8 new/replaced sensors, 2 adaptive feedback automations (095, 096)
+- [x] Heat-up time sensor uses integral formula with Newton's law (not linear approximation)
+- [x] Adaptive learning: P_net via EWM (heating), k per temp band via EWM (cooling)
+- [x] EV calendar sync split into today/tomorrow data paths
+- [x] New helpers: `ev_trip_km_fraser_today`, `ev_trip_km_heather_today`
+- [x] Daily reset copies tomorrow→today before clearing
+- [x] Planner uses today-first-else-tomorrow logic for car assignment
+- [x] Departure reminders guard against `assigned_car = None`
+- [x] Morning SOC check + morning summary + orchestrator demand sensor updated to use `_today`
+- [x] yamllint passes on all modified files
+
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).

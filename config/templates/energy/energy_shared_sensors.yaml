@@ -291,8 +291,10 @@
       unique_id: energy_ev_demand_scenario
       icon: mdi:car-electric
       state: >
-        {% set km_fraser = states('input_number.ev_trip_km_fraser_tomorrow') | float(0) %}
-        {% set km_heather = states('input_number.ev_trip_km_heather_tomorrow') | float(0) %}
+        {% set km_f_today = states('input_number.ev_trip_km_fraser_today') | float(0) %}
+        {% set km_h_today = states('input_number.ev_trip_km_heather_today') | float(0) %}
+        {% set km_fraser = km_f_today if km_f_today > 0 else states('input_number.ev_trip_km_fraser_tomorrow') | float(0) %}
+        {% set km_heather = km_h_today if km_h_today > 0 else states('input_number.ev_trip_km_heather_tomorrow') | float(0) %}
         {% set has_trip = (km_fraser + km_heather) > 0 %}
 
         {% set horace_trip = is_state('input_boolean.ev_horace_trip_mode', 'on') %}

@@ -133,6 +133,23 @@ input_number:
     icon: mdi:battery-charging-80
     initial: 80
 
+  # --- Trip Distances (Today) ---
+  ev_trip_km_fraser_today:
+    name: "Fraser Today Trip Distance"
+    min: 0
+    max: 1000
+    step: 1
+    unit_of_measurement: "km"
+    icon: mdi:map-marker-distance
+
+  ev_trip_km_heather_today:
+    name: "Heather Today Trip Distance"
+    min: 0
+    max: 1000
+    step: 1
+    unit_of_measurement: "km"
+    icon: mdi:map-marker-distance
+
   # --- Trip Distances (Tomorrow) ---
   ev_trip_km_fraser_tomorrow:
     name: "Fraser Tomorrow Trip Distance"

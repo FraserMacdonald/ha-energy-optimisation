@@ -1,0 +1,643 @@
+###############################################################################
+# JACUZZI NOTIFICATION AUTOMATIONS
+# File: automations/jacuzzi/jacuzzi_notification_automations.yaml
+#
+# Numbering: 062-079 (notification sub-range)
+# Phase 1D notifications: P1, P2, A1, A2, R1, R2, X1, X4, X9, C2
+#
+# Notification targets:
+#   Fraser: notify.mobile_app_fraser_s_iphone
+#   Heather: notify.mobile_app_heather_s_iphone
+#   Both: call both services
+###############################################################################
+
+
+# ==============================================================================
+# P1 — 062 – DAILY PLAN
+# Sends jacuzzi plan summary when event detected or at 07:00.
+# ==============================================================================
+- id: auto_jacuzzi_062_daily_plan
+  alias: "Jacuzzi 062 – Daily Plan"
+  description: >
+    Sends jacuzzi event plan summary to both users when a calendar event
+    is detected or at 07:00 if an event exists today.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: calendar.jacuzzi_schedule
+      to: "on"
+    - trigger: time
+      at: "07:00:00"
+
+  conditions:
+    - condition: template
+      value_template: >
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {% if cal is not none and cal.attributes.start_time is defined %}
+          {% set event_start = as_timestamp(cal.attributes.start_time) %}
+          {% set now_ts = as_timestamp(now()) %}
+          {{ event_start > now_ts and (event_start - now_ts) < 86400 }}
+        {% else %}
+          false
+        {% endif %}
+
+  actions:
+    - variables:
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1) }}"
+        event_time: "{{ state_attr('calendar.jacuzzi_schedule', 'start_time') }}"
+        smart_start: "{{ states('sensor.jacuzzi_smart_start_time') }}"
+        heat_hours: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(0) | round(1) }}"
+        outdoor_temp: "{{ states('sensor.la_dole_temperature') | float(10) }}"
+        season: "{{ 'summer' if outdoor_temp | float > 15 else 'winter' }}"
+        rate: >
+          {% if outdoor_temp | float > 15 %}
+            {{ states('input_number.jacuzzi_heat_rate_summer') | float(5) }}
+          {% else %}
+            {{ states('input_number.jacuzzi_heat_rate_winter') | float(3) }}
+          {% endif %}
+        solar_status: "{{ 'Solar priority ON' if is_state('input_boolean.jacuzzi_solar_priority', 'on') else 'Grid/tariff' }}"
+        eta: >
+          {% set hrs = heat_hours | float %}
+          {% if hrs > 0 %}
+            {{ (as_timestamp(now()) + hrs * 3600) | timestamp_custom('%H:%M') }}
+          {% else %}
+            Ready now
+          {% endif %}
+        msg: >
+          Jacuzzi event at {{ event_time }}.
+          Current: {{ current_temp }}°C → Target: 40°C.
+          Heating rate: {{ rate }}°C/h ({{ season }}).
+          Planned start: {{ smart_start }}.
+          Source: {{ solar_status }}.
+          ETA ready: {{ eta }}.
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Jacuzzi Plan"
+        message: "{{ msg }}"
+
+    - action: notify.mobile_app_heather_s_iphone
+      data:
+        title: "Jacuzzi Plan"
+        message: "{{ msg }}"
+
+    - action: logbook.log
+      data:
+        name: "Jacuzzi Plan"
+        message: "{{ msg }}"
+
+
+# ==============================================================================
+# P2 — 063 – FEASIBILITY WARNING
+# Warns when smart start time is already past or insufficient time remains.
+# ==============================================================================
+- id: auto_jacuzzi_063_feasibility_warning
+  alias: "Jacuzzi 063 – Feasibility Warning"
+  description: >
+    Warns both users when the calculated smart start time is already in the
+    past, or heating hours needed exceeds hours available before the event.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: sensor.jacuzzi_smart_start_time
+    - trigger: time_pattern
+      minutes: "/15"
+
+  conditions:
+    - condition: template
+      value_template: >
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {% if cal is not none and cal.attributes.start_time is defined %}
+          {% set event_ts = as_timestamp(cal.attributes.start_time) %}
+          {% set now_ts = as_timestamp(now()) %}
+          {% set hours_available = (event_ts - now_ts) / 3600 %}
+          {% set hours_needed = states('sensor.jacuzzi_heat_up_time_required') | float(3) %}
+          {% set current_temp = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+          {{ hours_available > 0 and hours_available < 12
+             and current_temp < 38
+             and hours_needed > hours_available }}
+        {% else %}
+          false
+        {% endif %}
+
+  actions:
+    - variables:
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1) }}"
+        event_time: "{{ state_attr('calendar.jacuzzi_schedule', 'start_time') }}"
+        hours_needed: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(3) | round(1) }}"
+        hours_available: >
+          {{ ((as_timestamp(state_attr('calendar.jacuzzi_schedule', 'start_time'))
+               - as_timestamp(now())) / 3600) | round(1) }}
+        outdoor_temp: "{{ states('sensor.la_dole_temperature') | float(10) }}"
+        rate: >
+          {% if outdoor_temp | float > 15 %}
+            {{ states('input_number.jacuzzi_heat_rate_summer') | float(5) }}
+          {% else %}
+            {{ states('input_number.jacuzzi_heat_rate_winter') | float(3) }}
+          {% endif %}
+        projected_temp: "{{ (current_temp | float + rate | float * hours_available | float) | round(1) }}"
+        msg: >
+          Jacuzzi event at {{ event_time }} but heating needs
+          {{ hours_needed }}h and only {{ hours_available }}h remain.
+          Current: {{ current_temp }}°C. Will only reach ~{{ projected_temp }}°C.
+          Consider starting now.
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Jacuzzi Feasibility Warning"
+        message: "{{ msg }}"
+        data:
+          push:
+            interruption-level: time-sensitive
+
+    - action: notify.mobile_app_heather_s_iphone
+      data:
+        title: "Jacuzzi Feasibility Warning"
+        message: "{{ msg }}"
+        data:
+          push:
+            interruption-level: time-sensitive
+
+
+# ==============================================================================
+# A1 — 064 – HEATING STARTED
+# Notifies when jacuzzi begins heating (target rises above standby).
+# ==============================================================================
+- id: auto_jacuzzi_064_heating_started
+  alias: "Jacuzzi 064 – Heating Started"
+  description: >
+    Notifies both users when jacuzzi target temperature rises above standby,
+    indicating heating has started. Also records start temp for progress tracking.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: input_number.jacuzzi_target_temp
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ states('input_number.jacuzzi_target_temp') | float(15) >= 40
+           and (trigger.from_state.state | float(15)
+                < states('input_number.jacuzzi_target_temp') | float(40)) }}
+
+  actions:
+    - variables:
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1) }}"
+        heat_hours: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(0) | round(1) }}"
+        outdoor_temp: "{{ states('sensor.la_dole_temperature') | float(10) }}"
+        rate: >
+          {% if outdoor_temp | float > 15 %}
+            {{ states('input_number.jacuzzi_heat_rate_summer') | float(5) }}
+          {% else %}
+            {{ states('input_number.jacuzzi_heat_rate_winter') | float(3) }}
+          {% endif %}
+        eta: >
+          {% set hrs = heat_hours | float %}
+          {% if hrs > 0 %}
+            {{ (as_timestamp(now()) + hrs * 3600) | timestamp_custom('%H:%M') }}
+          {% else %}
+            Ready now
+          {% endif %}
+        event_time: >
+          {% set cal = states.calendar.jacuzzi_schedule %}
+          {% if cal is not none and cal.attributes.start_time is defined %}
+            {{ cal.attributes.start_time }}
+          {% else %}
+            no event
+          {% endif %}
+        surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
+        source: >
+          {% if surplus | float > 3500 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
+            solar ({{ surplus }}W)
+          {% elif is_state('binary_sensor.energy_low_tariff_active', 'on') %}
+            low tariff
+          {% else %}
+            grid
+          {% endif %}
+        msg: >
+          Jacuzzi heating started. {{ current_temp }}°C → 40°C.
+          Rate: {{ rate }}°C/h. ETA ready: {{ eta }}.
+          Event at {{ event_time }}. Source: {{ source }}.
+
+    # Store start temp for halfway and rate calculations
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.energy_jacuzzi_heating_start_temp
+      data:
+        value: "{{ current_temp }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.energy_jacuzzi_last_progress_temp
+      data:
+        value: "{{ current_temp }}"
+
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.energy_jacuzzi_last_progress_time
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Jacuzzi Heating Started"
+        message: "{{ msg }}"
+
+    - action: notify.mobile_app_heather_s_iphone
+      data:
+        title: "Jacuzzi Heating Started"
+        message: "{{ msg }}"
+
+    - action: logbook.log
+      data:
+        name: "Jacuzzi Heating"
+        message: "{{ msg }}"
+
+
+# ==============================================================================
+# A2 — 065 – SOURCE CHANGED
+# Notifies Fraser when heating source switches between solar and grid.
+# ==============================================================================
+- id: auto_jacuzzi_065_source_changed
+  alias: "Jacuzzi 065 – Source Changed"
+  description: >
+    Notifies Fraser when the jacuzzi heating source switches as solar
+    surplus crosses the 3500W threshold while actively heating.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: numeric_state
+      entity_id: sensor.energy_solar_surplus_w
+      above: 3500
+    - trigger: numeric_state
+      entity_id: sensor.energy_solar_surplus_w
+      below: 3500
+
+  conditions:
+    # Only when actively heating
+    - condition: template
+      value_template: >
+        {{ states('input_number.jacuzzi_target_temp') | float(15) >= 40 }}
+
+  actions:
+    - variables:
+        surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
+        new_source: "{{ 'solar' if surplus | float >= 3500 else 'grid' }}"
+        old_source: "{{ 'grid' if surplus | float >= 3500 else 'solar' }}"
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Jacuzzi Source Changed"
+        message: "Jacuzzi switched from {{ old_source }} to {{ new_source }}. Surplus: {{ surplus }}W"
+
+    - action: logbook.log
+      data:
+        name: "Jacuzzi Source"
+        message: "Heating source changed from {{ old_source }} to {{ new_source }}. Surplus: {{ surplus }}W"
+
+
+# ==============================================================================
+# R1 — 066 – PROGRESS UPDATE
+# Sends heating progress every 30 minutes while actively heating.
+# ==============================================================================
+- id: auto_jacuzzi_066_progress_update
+  alias: "Jacuzzi 066 – Progress Update"
+  description: >
+    Sends Fraser a progress update every 30 minutes while the jacuzzi is
+    actively heating, including actual rate and on-track status.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/30"
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ states('input_number.jacuzzi_target_temp') | float(15) >= 40 }}
+
+  actions:
+    - variables:
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) }}"
+        last_temp: "{{ states('input_number.energy_jacuzzi_last_progress_temp') | float(0) }}"
+        delta: "{{ (current_temp - last_temp) | round(1) }}"
+        actual_rate: "{{ (delta | float * 2) | round(1) }}"
+        heat_hours: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(0) }}"
+        eta: >
+          {% set hrs = heat_hours | float %}
+          {% if hrs > 0 %}
+            {{ (as_timestamp(now()) + hrs * 3600) | timestamp_custom('%H:%M') }}
+          {% else %}
+            Ready now
+          {% endif %}
+        event_time: >
+          {% set cal = states.calendar.jacuzzi_schedule %}
+          {% if cal is not none and cal.attributes.start_time is defined %}
+            {{ cal.attributes.start_time }}
+          {% else %}
+            no event
+          {% endif %}
+        on_track: >
+          {% set cal = states.calendar.jacuzzi_schedule %}
+          {% if cal is not none and cal.attributes.start_time is defined %}
+            {% set event_ts = as_timestamp(cal.attributes.start_time) %}
+            {% set eta_ts = as_timestamp(now()) + heat_hours | float * 3600 %}
+            {{ eta_ts <= event_ts }}
+          {% else %}
+            true
+          {% endif %}
+        status: "{{ 'On track' if on_track else 'Behind schedule' }}"
+
+    # Update progress tracking helpers
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.energy_jacuzzi_last_progress_temp
+      data:
+        value: "{{ current_temp }}"
+
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.energy_jacuzzi_last_progress_time
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Jacuzzi Progress"
+        message: >
+          Jacuzzi: {{ current_temp | round(1) }}°C (+{{ delta }}°C in last 30min).
+          Rate: {{ actual_rate }}°C/h. ETA: {{ eta }}. {{ status }}
+
+
+# ==============================================================================
+# R2 — 067 – HALFWAY
+# Notifies when jacuzzi temp crosses the midpoint between start and 40°C.
+# ==============================================================================
+- id: auto_jacuzzi_067_halfway
+  alias: "Jacuzzi 067 – Halfway"
+  description: >
+    Notifies both users when the jacuzzi temperature reaches the midpoint
+    between the starting temperature and 40°C during a heating session.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: climate.jacuzzi
+      attribute: current_temperature
+
+  conditions:
+    # Must be actively heating
+    - condition: template
+      value_template: >
+        {{ states('input_number.jacuzzi_target_temp') | float(15) >= 40 }}
+    # Event within 8 hours
+    - condition: template
+      value_template: >
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {% if cal is not none and cal.attributes.start_time is defined %}
+          {% set event_ts = as_timestamp(cal.attributes.start_time) %}
+          {% set now_ts = as_timestamp(now()) %}
+          {{ (event_ts - now_ts) > 0 and (event_ts - now_ts) < 28800 }}
+        {% else %}
+          false
+        {% endif %}
+    # Temperature crossed the midpoint
+    - condition: template
+      value_template: >
+        {% set start_temp = states('input_number.energy_jacuzzi_heating_start_temp') | float(15) %}
+        {% set midpoint = (start_temp + 40) / 2 %}
+        {% set current = state_attr('climate.jacuzzi', 'current_temperature') | float(0) %}
+        {% set previous = trigger.from_state.attributes.current_temperature | float(0) %}
+        {{ previous < midpoint and current >= midpoint }}
+
+  actions:
+    - variables:
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1) }}"
+        heat_hours: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(0) | round(1) }}"
+        eta: >
+          {% set hrs = heat_hours | float %}
+          {% if hrs > 0 %}
+            {{ (as_timestamp(now()) + hrs * 3600) | timestamp_custom('%H:%M') }}
+          {% else %}
+            Ready now
+          {% endif %}
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Jacuzzi Halfway"
+        message: "Jacuzzi at {{ current_temp }}°C — halfway! ETA ready: {{ eta }}"
+
+    - action: notify.mobile_app_heather_s_iphone
+      data:
+        title: "Jacuzzi Halfway"
+        message: "Jacuzzi at {{ current_temp }}°C — halfway! ETA ready: {{ eta }}"
+
+
+# ==============================================================================
+# X1 — 068 – WON'T BE READY (60 MIN)
+# Alert 60 minutes before event if temperature is still too low.
+# ==============================================================================
+- id: auto_jacuzzi_068_wont_be_ready_60
+  alias: "Jacuzzi 068 – Won't Be Ready (60 min)"
+  description: >
+    Alerts both users 60 minutes before a calendar event if the jacuzzi
+    water temperature is below 37°C, with projected temperature at event time.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: template
+      value_template: >
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {% if cal is not none and cal.attributes.start_time is defined %}
+          {% set event_start = as_timestamp(cal.attributes.start_time) %}
+          {% set now_ts = now().timestamp() %}
+          {% set diff = event_start - now_ts %}
+          {{ diff <= 3600 and diff > 3540 }}
+        {% else %}
+          false
+        {% endif %}
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) < 37 }}
+
+  actions:
+    - variables:
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1) }}"
+        outdoor_temp: "{{ states('sensor.la_dole_temperature') | float(10) }}"
+        rate: >
+          {% if outdoor_temp | float > 15 %}
+            {{ states('input_number.jacuzzi_heat_rate_summer') | float(5) }}
+          {% else %}
+            {{ states('input_number.jacuzzi_heat_rate_winter') | float(3) }}
+          {% endif %}
+        projected_temp: "{{ (current_temp | float + rate | float * 1.0) | round(1) }}"
+        msg: >
+          Jacuzzi at {{ current_temp }}°C with event in 60 min.
+          Heating at {{ rate }}°C/h — will only reach ~{{ projected_temp }}°C by event time.
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Jacuzzi Won't Be Ready"
+        message: "{{ msg }}"
+        data:
+          push:
+            interruption-level: time-sensitive
+
+    - action: notify.mobile_app_heather_s_iphone
+      data:
+        title: "Jacuzzi Won't Be Ready"
+        message: "{{ msg }}"
+        data:
+          push:
+            interruption-level: time-sensitive
+
+
+# ==============================================================================
+# X4 — 069 – PIPE CYCLING NOTIFY
+# Notifies Fraser when pipe freeze pump cycling activates.
+# ==============================================================================
+- id: auto_jacuzzi_069_pipe_cycling_notify
+  alias: "Jacuzzi 069 – Pipe Cycling Notify"
+  description: >
+    Notifies Fraser when auto_jacuzzi_091 pipe freeze cycling activates
+    due to outdoor temperature below 0°C.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: automation.jacuzzi_091_pipe_freeze_pump_cycling
+      attribute: last_triggered
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ states('sensor.la_dole_temperature') | float(5) < 0 }}
+
+  actions:
+    - variables:
+        outdoor_temp: "{{ states('sensor.la_dole_temperature') | float(0) | round(1) }}"
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Pipe Freeze Protection"
+        message: "Outdoor temp {{ outdoor_temp }}°C. Pipe freeze pump cycling active."
+
+
+# ==============================================================================
+# X9 — 070 – RATE ANOMALY
+# Warns when actual heating rate is significantly below expected.
+# ==============================================================================
+- id: auto_jacuzzi_070_rate_anomaly
+  alias: "Jacuzzi 070 – Rate Anomaly"
+  description: >
+    Warns Fraser when the actual jacuzzi heating rate is less than 70%
+    of the expected rate, indicating a potential heater or flow issue.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/30"
+
+  conditions:
+    # Must be actively heating
+    - condition: template
+      value_template: >
+        {{ states('input_number.jacuzzi_target_temp') | float(15) >= 40 }}
+    # Must have a previous progress reading
+    - condition: template
+      value_template: >
+        {% set last_time = states('input_datetime.energy_jacuzzi_last_progress_time') %}
+        {{ last_time not in ['unknown', 'unavailable', ''] }}
+
+  actions:
+    - variables:
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) }}"
+        last_temp: "{{ states('input_number.energy_jacuzzi_last_progress_temp') | float(0) }}"
+        last_time: "{{ states('input_datetime.energy_jacuzzi_last_progress_time') }}"
+        elapsed_hours: >
+          {% set last_ts = as_timestamp(last_time) %}
+          {{ ((as_timestamp(now()) - last_ts) / 3600) | round(2) }}
+        actual_rate: >
+          {% if elapsed_hours | float > 0 %}
+            {{ ((current_temp - last_temp) / elapsed_hours | float) | round(1) }}
+          {% else %}
+            0
+          {% endif %}
+        outdoor_temp: "{{ states('sensor.la_dole_temperature') | float(10) }}"
+        expected_rate: >
+          {% if outdoor_temp | float > 15 %}
+            {{ states('input_number.jacuzzi_heat_rate_summer') | float(5) }}
+          {% else %}
+            {{ states('input_number.jacuzzi_heat_rate_winter') | float(3) }}
+          {% endif %}
+        is_anomaly: "{{ actual_rate | float < (expected_rate | float * 0.7) and elapsed_hours | float >= 0.4 }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ is_anomaly }}"
+          sequence:
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                title: "Jacuzzi Rate Anomaly"
+                message: >
+                  Jacuzzi heating slower than expected:
+                  {{ actual_rate }}°C/h vs expected {{ expected_rate }}°C/h.
+                  Check heater/flow.
+
+
+# ==============================================================================
+# C2 — 071 – SESSION OVER
+# Notifies Fraser when a calendar event ends.
+# ==============================================================================
+- id: auto_jacuzzi_071_session_over
+  alias: "Jacuzzi 071 – Session Over"
+  description: >
+    Notifies Fraser when a jacuzzi calendar event ends and the system
+    returns to standby temperature.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: calendar.jacuzzi_schedule
+      from: "on"
+      to: "off"
+
+  actions:
+    - variables:
+        standby_temp: "{{ states('input_number.jacuzzi_standby_temp') | float(15) }}"
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Jacuzzi Session Ended"
+        message: "Jacuzzi session ended. Returning to standby at {{ standby_temp }}°C."
+
+    - action: logbook.log
+      data:
+        name: "Jacuzzi Session"
+        message: "Session ended. Returning to standby at {{ standby_temp }}°C."

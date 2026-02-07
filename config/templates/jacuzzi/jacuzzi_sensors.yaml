@@ -103,45 +103,135 @@
             ''
           {% endif %}
 
-    # Estimated Heat-Up Time
+    # =========================================================================
+    # THERMAL MODEL SENSORS (Physics-Based)
+    # =========================================================================
+
+    # Thermal Capacity: C_water = volume * 4.186 / 3600 (kWh/°C)
+    - name: "Jacuzzi Thermal Capacity"
+      unique_id: jacuzzi_thermal_capacity
+      unit_of_measurement: "kWh/°C"
+      icon: mdi:water-thermometer
+      state: >
+        {% set vol = states('input_number.jacuzzi_volume_litres') | float(3200) %}
+        {{ (vol * 4.186 / 3600) | round(3) }}
+
+    # Current k: select band based on outdoor temperature
+    - name: "Jacuzzi Current K"
+      unique_id: jacuzzi_current_k
+      unit_of_measurement: "kW/°C"
+      icon: mdi:thermometer-minus
+      state: >
+        {% set ambient = states('sensor.la_dole_temperature') | float(10) %}
+        {% if ambient < 5 %}
+          {{ states('input_number.jacuzzi_k_cold') | float(0.040) }}
+        {% elif ambient <= 15 %}
+          {{ states('input_number.jacuzzi_k_mild') | float(0.035) }}
+        {% else %}
+          {{ states('input_number.jacuzzi_k_warm') | float(0.025) }}
+        {% endif %}
+      attributes:
+        band: >
+          {% set ambient = states('sensor.la_dole_temperature') | float(10) %}
+          {% if ambient < 5 %}cold
+          {% elif ambient <= 15 %}mild
+          {% else %}warm{% endif %}
+        ambient_temp: "{{ states('sensor.la_dole_temperature') | float(0) }}"
+
+    # Current heat loss in kW
+    - name: "Jacuzzi Current Heat Loss kW"
+      unique_id: jacuzzi_current_heat_loss_kw
+      unit_of_measurement: "kW"
+      icon: mdi:thermometer-chevron-down
+      state: >
+        {% set k = states('sensor.jacuzzi_current_k') | float(0.035) %}
+        {% set t_water = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+        {% set t_ambient = states('sensor.la_dole_temperature') | float(10) %}
+        {{ (k * (t_water - t_ambient)) | round(3) }}
+
+    # Net heating rate in °C/h (positive when heating, negative when cooling)
+    - name: "Jacuzzi Net Heating Rate"
+      unique_id: jacuzzi_net_heating_rate
+      unit_of_measurement: "°C/h"
+      icon: mdi:trending-up
+      state: >
+        {% set k = states('sensor.jacuzzi_current_k') | float(0.035) %}
+        {% set p_net = states('input_number.jacuzzi_effective_power_kw') | float(3.7) %}
+        {% set c = states('sensor.jacuzzi_thermal_capacity') | float(3.72) %}
+        {% set t_water = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+        {% set t_ambient = states('sensor.la_dole_temperature') | float(10) %}
+        {% set loss = k * (t_water - t_ambient) %}
+        {% set hvac = state_attr('climate.jacuzzi', 'hvac_action') | default('idle') %}
+        {% if hvac == 'heating' %}
+          {{ ((p_net - loss) / c) | round(2) }}
+        {% else %}
+          {{ ((-loss) / c) | round(2) }}
+        {% endif %}
+      attributes:
+        heater_state: "{{ state_attr('climate.jacuzzi', 'hvac_action') | default('idle') }}"
+        heat_loss_kw: "{{ states('sensor.jacuzzi_current_heat_loss_kw') | float(0) }}"
+        p_net_kw: "{{ states('input_number.jacuzzi_effective_power_kw') | float(3.7) }}"
+
+    # Estimated Heat-Up Time (physics integral formula)
+    # time = -(C/k) * ln[(P/k - (T_target - T_amb)) / (P/k - (T_current - T_amb))]
     - name: "Jacuzzi Heat Up Time Required"
       unique_id: jacuzzi_heat_up_time
-      state: >
-        {% set current_temp = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
-        {% set target_temp = states('input_number.jacuzzi_target_temp') | float(40) %}
-        {% set temp_diff = target_temp - current_temp %}
-
-        {% set outdoor_temp = states('sensor.la_dole_temperature') | float(10) %}
-
-        {# Adjust heating rate based on season/outdoor temp #}
-        {% if outdoor_temp > 15 %}
-          {% set heat_rate = states('input_number.jacuzzi_heat_rate_summer') | float(5) %}
-        {% else %}
-          {% set heat_rate = states('input_number.jacuzzi_heat_rate_winter') | float(3) %}
-        {% endif %}
-
-        {# Calculate hours needed #}
-        {% if temp_diff > 0 %}
-          {{ (temp_diff / heat_rate) | round(1) }}
-        {% else %}
-          0
-        {% endif %}
       unit_of_measurement: "h"
       icon: mdi:clock-outline
+      state: >
+        {% set t_current = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+        {% set t_target = 40 %}
+        {% if t_current >= t_target %}
+          0
+        {% else %}
+          {% set t_ambient = states('sensor.la_dole_temperature') | float(10) %}
+          {% set k = states('sensor.jacuzzi_current_k') | float(0.035) %}
+          {% set p_net = states('input_number.jacuzzi_effective_power_kw') | float(3.7) %}
+          {% set c = states('sensor.jacuzzi_thermal_capacity') | float(3.72) %}
+          {% set equilibrium = p_net / k %}
+          {% set num = equilibrium - (t_target - t_ambient) %}
+          {% set den = equilibrium - (t_current - t_ambient) %}
+          {% if num <= 0 %}
+            99.9
+          {% elif den <= 0 %}
+            99.9
+          {% else %}
+            {% set ratio = num / den %}
+            {% if ratio <= 0 %}
+              99.9
+            {% else %}
+              {{ (-(c / k) * (ratio | log)) | round(1) }}
+            {% endif %}
+          {% endif %}
+        {% endif %}
       attributes:
         current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) }}"
-        target_temp: "{{ states('input_number.jacuzzi_target_temp') | float(40) }}"
-        temp_difference: >
-          {{ (states('input_number.jacuzzi_target_temp') | float(40) - state_attr('climate.jacuzzi', 'current_temperature') | float(20)) | round(1) }}
-        heating_rate_used: >
-          {% set outdoor_temp = states('sensor.la_dole_temperature') | float(10) %}
-          {% if outdoor_temp > 15 %}
-            {{ states('input_number.jacuzzi_heat_rate_summer') | float(5) }}
-          {% else %}
-            {{ states('input_number.jacuzzi_heat_rate_winter') | float(3) }}
-          {% endif %}
+        target_temp: "40"
+        outdoor_temp: "{{ states('sensor.la_dole_temperature') | float(0) }}"
+        k_used: "{{ states('sensor.jacuzzi_current_k') | float(0) }}"
+        p_net_used: "{{ states('input_number.jacuzzi_effective_power_kw') | float(0) }}"
+        heating_rate_at_current: "{{ states('sensor.jacuzzi_net_heating_rate') | float(0) }}"
+        heating_rate_at_target: >
+          {% set k = states('sensor.jacuzzi_current_k') | float(0.035) %}
+          {% set p_net = states('input_number.jacuzzi_effective_power_kw') | float(3.7) %}
+          {% set c = states('sensor.jacuzzi_thermal_capacity') | float(3.72) %}
+          {% set t_ambient = states('sensor.la_dole_temperature') | float(10) %}
+          {{ ((p_net - k * (40 - t_ambient)) / c) | round(2) }}
+        is_achievable: >
+          {% set k = states('sensor.jacuzzi_current_k') | float(0.035) %}
+          {% set p_net = states('input_number.jacuzzi_effective_power_kw') | float(3.7) %}
+          {% set t_ambient = states('sensor.la_dole_temperature') | float(10) %}
+          {{ (p_net / k) > (40 - t_ambient) }}
+        calculation_breakdown: >
+          {% set t_current = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+          {% set t_ambient = states('sensor.la_dole_temperature') | float(10) %}
+          {% set k = states('sensor.jacuzzi_current_k') | float(0.035) %}
+          {% set p = states('input_number.jacuzzi_effective_power_kw') | float(3.7) %}
+          {% set c = states('sensor.jacuzzi_thermal_capacity') | float(3.72) %}
+          {% set rate = ((p - k * (t_current - t_ambient)) / c) | round(2) %}
+          {{ t_current | round(1) }}°C → 40°C. P_net={{ p }}kW, k={{ k }}kW/°C, C={{ c | round(2) }}kWh/°C. Rate@current={{ rate }}°C/h. T_max={{ (t_ambient + p / k) | round(1) }}°C
 
-    # Smart Start Time Calculator
+    # Smart Start Time Calculator (uses physics-based heat_up_time)
     - name: "Jacuzzi Smart Start Time"
       unique_id: jacuzzi_smart_start_time
       state: >
@@ -152,16 +242,11 @@
           {% set buffer_min = states('input_number.jacuzzi_preheat_buffer') | float(30) %}
           {% set total_seconds = (heat_hours * 3600) + (buffer_min * 60) %}
           {% set start_time = event_start - total_seconds %}
-
-          {# Check if we should wait for solar or low tariff #}
           {% set solar_priority = is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
           {% set now_ts = now().timestamp() %}
-
-          {# If solar priority and enough time, try to align with solar hours (9-16) #}
           {% if solar_priority and (event_start - now_ts) > 28800 %}
             {% set start_hour = start_time | timestamp_custom('%H') | int %}
             {% if start_hour < 9 %}
-              {# Delay start to 9am if possible #}
               {% set proposed_start = start_time | timestamp_custom('%Y-%m-%d') + ' 09:00:00' %}
               {% set proposed_ts = as_timestamp(proposed_start) %}
               {% if proposed_ts + total_seconds <= event_start %}
@@ -186,6 +271,117 @@
             standard
           {% endif %}
         heating_duration_hours: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(0) }}"
+        event_time: >
+          {% set cal = states.calendar.jacuzzi_schedule %}
+          {% if cal is not none and cal.attributes.start_time is defined %}
+            {{ cal.attributes.start_time }}
+          {% else %}
+            unavailable
+          {% endif %}
+        is_achievable: "{{ state_attr('sensor.jacuzzi_heat_up_time_required', 'is_achievable') }}"
+
+    # Maximum achievable temperature: T_max = T_ambient + P_net / k
+    - name: "Jacuzzi Max Achievable Temp"
+      unique_id: jacuzzi_max_achievable_temp
+      unit_of_measurement: "°C"
+      icon: mdi:thermometer-chevron-up
+      state: >
+        {% set t_ambient = states('sensor.la_dole_temperature') | float(10) %}
+        {% set k = states('sensor.jacuzzi_current_k') | float(0.035) %}
+        {% set p_net = states('input_number.jacuzzi_effective_power_kw') | float(3.7) %}
+        {{ (t_ambient + p_net / k) | round(1) }}
+
+    # Standby loss rate in °C/h
+    - name: "Jacuzzi Standby Loss Rate"
+      unique_id: jacuzzi_standby_loss_rate
+      unit_of_measurement: "°C/h"
+      icon: mdi:trending-down
+      state: >
+        {% set k = states('sensor.jacuzzi_current_k') | float(0.035) %}
+        {% set c = states('sensor.jacuzzi_thermal_capacity') | float(3.72) %}
+        {% set t_water = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+        {% set t_ambient = states('sensor.la_dole_temperature') | float(10) %}
+        {{ (k * (t_water - t_ambient) / c) | round(2) }}
+
+    # Predicted temp at event time
+    - name: "Jacuzzi Predicted Temp at Event"
+      unique_id: jacuzzi_predicted_temp_at_event
+      unit_of_measurement: "°C"
+      icon: mdi:thermometer-probe
+      state: >
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {% if cal is not none and cal.attributes.start_time is defined %}
+          {% set event_ts = as_timestamp(cal.attributes.start_time) %}
+          {% set now_ts = as_timestamp(now()) %}
+          {% set hours_to_event = (event_ts - now_ts) / 3600 %}
+          {% if hours_to_event <= 0 or hours_to_event > 24 %}
+            unavailable
+          {% else %}
+            {% set t_current = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+            {% set t_ambient = states('sensor.la_dole_temperature') | float(10) %}
+            {% set k = states('sensor.jacuzzi_current_k') | float(0.035) %}
+            {% set p_net = states('input_number.jacuzzi_effective_power_kw') | float(3.7) %}
+            {% set c = states('sensor.jacuzzi_thermal_capacity') | float(3.72) %}
+            {% set smart_start = states('sensor.jacuzzi_smart_start_time') %}
+            {% set is_heating = states('input_number.jacuzzi_target_temp') | float(15) >= 40 %}
+            {% set equilibrium = t_ambient + p_net / k %}
+            {% if is_heating %}
+              {# Currently heating — project to event using exponential approach #}
+              {% set predicted = equilibrium - (equilibrium - t_current) * ((-k / c) * hours_to_event) | exp %}
+              {{ [predicted, 40] | min | round(1) }}
+            {% elif smart_start not in ['unavailable', 'unknown', ''] %}
+              {# Not yet heating — cool until smart_start, then heat until event #}
+              {% set smart_ts = as_timestamp(smart_start) %}
+              {% set cool_hours = [(smart_ts - now_ts) / 3600, 0] | max %}
+              {% set heat_hours = [hours_to_event - cool_hours, 0] | max %}
+              {# Cooling phase: T decays toward ambient #}
+              {% set t_after_cool = t_ambient + (t_current - t_ambient) * ((-k / c) * cool_hours) | exp %}
+              {# Heating phase: T approaches equilibrium #}
+              {% set predicted = equilibrium - (equilibrium - t_after_cool) * ((-k / c) * heat_hours) | exp %}
+              {{ [predicted, 40] | min | round(1) }}
+            {% else %}
+              {# No smart start — assume cooling only #}
+              {% set predicted = t_ambient + (t_current - t_ambient) * ((-k / c) * hours_to_event) | exp %}
+              {{ predicted | round(1) }}
+            {% endif %}
+          {% endif %}
+        {% else %}
+          unavailable
+        {% endif %}
+      attributes:
+        event_time: >
+          {% set cal = states.calendar.jacuzzi_schedule %}
+          {% if cal is not none and cal.attributes.start_time is defined %}
+            {{ cal.attributes.start_time }}
+          {% else %}
+            unavailable
+          {% endif %}
+        will_be_ready: >
+          {% set pred = states('sensor.jacuzzi_predicted_temp_at_event') %}
+          {{ pred not in ['unavailable', 'unknown'] and pred | float(0) >= 38 }}
+        predicted_temp: "{{ states('sensor.jacuzzi_predicted_temp_at_event') }}"
+
+    # Thermal model status
+    - name: "Jacuzzi Thermal Model Status"
+      unique_id: jacuzzi_thermal_model_status
+      icon: mdi:chart-line
+      state: >
+        {% set heat_obs = states('input_number.jacuzzi_model_heating_observations') | int(0) %}
+        {% set cool_obs = states('input_number.jacuzzi_model_cooling_observations') | int(0) %}
+        {% if heat_obs < 5 and cool_obs < 5 %}
+          bootstrapping
+        {% elif heat_obs < 20 or cool_obs < 20 %}
+          learning
+        {% else %}
+          calibrated
+        {% endif %}
+      attributes:
+        heating_observations: "{{ states('input_number.jacuzzi_model_heating_observations') | int(0) }}"
+        cooling_observations: "{{ states('input_number.jacuzzi_model_cooling_observations') | int(0) }}"
+        total_observations: "{{ states('input_number.jacuzzi_model_observation_count') | int(0) }}"
+        current_k: "{{ states('sensor.jacuzzi_current_k') | float(0) }}"
+        current_p_net: "{{ states('input_number.jacuzzi_effective_power_kw') | float(0) }}"
+        last_update: "{{ states('input_datetime.jacuzzi_last_sample_time') }}"
 
     # Cost Savings Tracker (Daily)
     - name: "Jacuzzi Daily Savings"
