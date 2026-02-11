@@ -1520,6 +1520,12 @@
       state: "above_horizon"
     - condition: template
       value_template: "{{ states('sensor.ev_plugged_vehicle') in ['Horace', 'Horatio'] }}"
+    # Check car is at home (not away)
+    - condition: template
+      value_template: >
+        {% set car = states('sensor.ev_plugged_vehicle') %}
+        {{ (car == 'Horace' and is_state('device_tracker.horace_location', 'home'))
+           or (car == 'Horatio' and is_state('device_tracker.horatio_location', 'home')) }}
     # Orchestrator gate: legacy mode (off) OR orchestrator grants permission
     - condition: or
       conditions:
@@ -1609,7 +1615,11 @@
         plugged_horatio: "{{ is_state('binary_sensor.horatio_plugged', 'on') }}"
         plan_car_plugged: "{{ plugged_horace if plan_car == 'Horace' else plugged_horatio }}"
 
-        should_charge: "{{ plan_car in ['Horace', 'Horatio'] and cheap_active and plan_car_plugged and current_soc < target_soc }}"
+        plan_car_home: >
+          {{ (plan_car == 'Horace' and is_state('device_tracker.horace_location', 'home'))
+             or (plan_car == 'Horatio' and is_state('device_tracker.horatio_location', 'home')) }}
+
+        should_charge: "{{ plan_car in ['Horace', 'Horatio'] and cheap_active and plan_car_plugged and plan_car_home and current_soc < target_soc }}"
 
     - choose:
         # No planned charge

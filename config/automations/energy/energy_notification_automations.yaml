@@ -99,6 +99,9 @@
       entity_id: sensor.energy_orchestrator_decision
 
   conditions:
+    # DISABLED — too noisy (fires on every orchestrator decision change)
+    - condition: template
+      value_template: "{{ false }}"
     - condition: state
       entity_id: input_boolean.energy_orchestrator_enabled
       state: "on"

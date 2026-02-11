@@ -249,15 +249,16 @@
       value_template: >
         {% set cal = states.calendar.jacuzzi_schedule %}
         {% set smart_start = states('sensor.jacuzzi_smart_start_time') %}
-        {% set in_preheat = false %}
+        {% set in_preheat_or_event = false %}
         {% if cal is not none and cal.attributes.start_time is defined
            and smart_start not in ['unavailable', 'unknown', ''] %}
           {% set now_ts = as_timestamp(now()) %}
           {% set event_ts = as_timestamp(cal.attributes.start_time) %}
           {% set smart_ts = as_timestamp(smart_start) %}
-          {% set in_preheat = now_ts >= smart_ts and now_ts < event_ts %}
+          {% set in_preheat_or_event = (now_ts >= smart_ts and now_ts < event_ts)
+                                       or is_state('calendar.jacuzzi_schedule', 'on') %}
         {% endif %}
-        {{ not in_preheat }}
+        {{ not in_preheat_or_event }}
 
   actions:
     - action: input_number.set_value

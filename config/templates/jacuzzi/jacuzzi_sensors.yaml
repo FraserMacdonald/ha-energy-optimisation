@@ -387,14 +387,18 @@
     - name: "Jacuzzi Daily Savings"
       unique_id: jacuzzi_daily_savings
       state: >
-        {# Calculate savings vs 24/7 at 40C #}
-        {# Estimate: 3.5kW * 40% duty cycle at steady state = 1.4kW avg * 24h = 33.6 kWh/day #}
-        {# At 0.35 CHF/kWh average = 11.76 CHF/day baseline cost #}
-
-        {# This is a simplified estimate - enhance with actual power monitoring #}
-        {% set baseline_daily_cost = 11.76 %}
+        {# Savings = what energy would cost at peak rate minus actual cost #}
+        {# Captures low-tariff savings; solar savings need per-device tracking #}
         {% set actual_cost = states('sensor.jacuzzi_daily_cost') | float(0) %}
-        {{ (baseline_daily_cost - actual_cost) | round(2) }}
+        {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.35) %}
+        {% set peak_rate = 0.35 %}
+        {% if actual_cost > 0 and rate > 0 %}
+          {% set actual_kwh = actual_cost / rate %}
+          {% set baseline = actual_kwh * peak_rate %}
+          {{ (baseline - actual_cost) | round(2) }}
+        {% else %}
+          0
+        {% endif %}
       unit_of_measurement: "CHF"
       icon: mdi:piggy-bank
 

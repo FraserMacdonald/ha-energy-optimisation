@@ -66,15 +66,14 @@
           {{ states('sensor.energy_production_scenario') }}-{{ states('sensor.energy_jacuzzi_demand_scenario') }}-{{ states('sensor.energy_ev_demand_scenario') }}
 
         # --- Priority queue: Jacuzzi heating decision ---
-        # Tier 1 (A): always allow — grid fallback
-        # Tier 2 (D): solar preferred, low-tariff grid fallback
-        # Tier 3 (B/C): solar only
+        # Tier 1 (A): always allow — mandatory (freeze risk)
+        # Tier 2 (B/D): always allow — mandatory (below standby / imminent event)
+        # Tier 3 (C): solar only
         # If surplus covers both loads, allow regardless of priority
         # If surplus covers one load, higher priority wins
         jacuzzi_allowed: >
           {% set jac = states('sensor.energy_jacuzzi_demand_scenario') %}
           {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
-          {% set low_tariff = is_state('binary_sensor.energy_low_tariff_active', 'on') %}
           {% set jac_tier = state_attr('sensor.energy_jacuzzi_demand_scenario', 'priority_tier') | int(99) %}
           {% set ev_tier = state_attr('sensor.energy_ev_demand_scenario', 'priority_tier') | int(99) %}
           {% set jac_w = 3500 %}
@@ -83,13 +82,11 @@
                             * (states('input_number.ev_phases') | int(3)) %}
           {% if jac == 'E' %}
             {{ false }}
-          {% elif jac == 'A' %}
+          {% elif jac in ['A', 'B', 'D'] %}
             {{ true }}
           {% elif surplus >= (jac_w + ev_min_w) %}
             {{ true }}
           {% elif surplus >= jac_w and jac_tier <= ev_tier %}
-            {{ true }}
-          {% elif jac == 'D' and low_tariff %}
             {{ true }}
           {% else %}
             {{ false }}

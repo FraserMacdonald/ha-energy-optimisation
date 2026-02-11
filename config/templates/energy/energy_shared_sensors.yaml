@@ -243,22 +243,22 @@
         priority_tier: >
           {% set s = states('sensor.energy_jacuzzi_demand_scenario') %}
           {% if s == 'A' %}1
-          {% elif s == 'D' %}2
-          {% elif s in ['B', 'C'] %}3
+          {% elif s in ['B', 'D'] %}2
+          {% elif s == 'C' %}3
           {% else %}99{% endif %}
         power_demand_w: >
           {% set s = states('sensor.energy_jacuzzi_demand_scenario') %}
           {{ 3500 if s in ['A', 'B', 'C', 'D'] else 0 }}
         can_use_grid: >
           {% set s = states('sensor.energy_jacuzzi_demand_scenario') %}
-          {{ s == 'A' }}
+          {{ s in ['A', 'B', 'D'] }}
         can_use_low_tariff: >
           {% set s = states('sensor.energy_jacuzzi_demand_scenario') %}
-          {{ s in ['A', 'D'] }}
+          {{ s in ['A', 'B', 'D'] }}
         description: >
           {% set s = states('sensor.energy_jacuzzi_demand_scenario') %}
           {% if s == 'A' %}Below minimum – freeze risk (Tier 1)
-          {% elif s == 'B' %}Below standby temp (Tier 3)
+          {% elif s == 'B' %}Below standby temp (Tier 2)
           {% elif s == 'C' %}Event <24h, solar preheat (Tier 3)
           {% elif s == 'D' %}Event imminent, preheat active (Tier 2)
           {% elif s == 'E' %}Satisfied – no demand

@@ -106,8 +106,6 @@
   triggers:
     - trigger: state
       entity_id: sensor.jacuzzi_smart_start_time
-    - trigger: time_pattern
-      minutes: "/15"
 
   conditions:
     - condition: template
@@ -119,8 +117,10 @@
           {% set hours_available = (event_ts - now_ts) / 3600 %}
           {% set hours_needed = states('sensor.jacuzzi_heat_up_time_required') | float(3) %}
           {% set current_temp = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+          {% set predicted = states('sensor.jacuzzi_predicted_temp_at_event') | float(0) %}
           {{ hours_available > 0 and hours_available < 12
              and current_temp < 38
+             and predicted < 38
              and hours_needed > hours_available }}
         {% else %}
           false
@@ -141,7 +141,7 @@
           {% else %}
             {{ states('input_number.jacuzzi_heat_rate_winter') | float(3) }}
           {% endif %}
-        projected_temp: "{{ (current_temp | float + rate | float * hours_available | float) | round(1) }}"
+        projected_temp: "{{ states('sensor.jacuzzi_predicted_temp_at_event') | float(0) | round(1) }}"
         msg: >
           Jacuzzi event at {{ event_time }} but heating needs
           {{ hours_needed }}h and only {{ hours_available }}h remain.
@@ -285,6 +285,9 @@
       below: 3500
 
   conditions:
+    # DISABLED — too noisy (fires on every surplus crossing of 3500W)
+    - condition: template
+      value_template: "{{ false }}"
     # Only when actively heating
     - condition: template
       value_template: >
@@ -314,7 +317,7 @@
 - id: auto_jacuzzi_066_progress_update
   alias: "Jacuzzi 066 – Progress Update"
   description: >
-    Sends Fraser a progress update every 30 minutes while the jacuzzi is
+    Sends Fraser a progress update every 60 minutes while the jacuzzi is
     actively heating, including actual rate and on-track status.
   mode: single
   trace:
@@ -322,7 +325,7 @@
 
   triggers:
     - trigger: time_pattern
-      minutes: "/30"
+      minutes: "/60"
 
   conditions:
     - condition: template
@@ -559,7 +562,7 @@
 
   triggers:
     - trigger: time_pattern
-      minutes: "/30"
+      minutes: "/60"
 
   conditions:
     # Must be actively heating

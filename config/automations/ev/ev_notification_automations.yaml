@@ -296,7 +296,7 @@
 - id: auto_ev_069_charging_progress
   alias: "EV 069 – Charging Progress"
   description: >
-    Sends the relevant driver a charging progress update every 30 minutes
+    Sends the relevant driver a charging progress update every 60 minutes
     while their car is actively charging.
   mode: single
   trace:
@@ -304,7 +304,7 @@
 
   triggers:
     - trigger: time_pattern
-      minutes: "/30"
+      minutes: "/60"
 
   conditions:
     - condition: template
