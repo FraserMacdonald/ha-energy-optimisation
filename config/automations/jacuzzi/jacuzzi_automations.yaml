@@ -147,6 +147,18 @@
           Using excess solar to pre-heat jacuzzi.
           Solar: {{ state_attr('binary_sensor.solar_available_for_jacuzzi', 'solar_power_w') }}W
 
+    - action: shell_command.log_action
+      data:
+        system: jacuzzi
+        action_type: heating_start
+        target_entity: climate.jacuzzi
+        parameters: >
+          {{ {'source': 'solar',
+              'trigger': 'solar_surplus',
+              'current_temp': state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1),
+              'solar_w': state_attr('binary_sensor.solar_available_for_jacuzzi', 'solar_power_w') | float(0) | round(0)
+          } | tojson }}
+
 
 # ==============================================================================
 # 021 – LOW TARIFF HEATING PREFERENCE
@@ -211,6 +223,18 @@
           Starting heating during low tariff for event
           at {{ state_attr('calendar.jacuzzi_schedule', 'start_time') }}
 
+    - action: shell_command.log_action
+      data:
+        system: jacuzzi
+        action_type: heating_start
+        target_entity: climate.jacuzzi
+        parameters: >
+          {{ {'source': 'low_tariff',
+              'trigger': 'tariff_change',
+              'current_temp': state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1),
+              'event_time': state_attr('calendar.jacuzzi_schedule', 'start_time') | string
+          } | tojson }}
+
 
 # ==============================================================================
 # 022 – SOLAR OFF FALLBACK
@@ -272,6 +296,18 @@
         message: >
           Solar surplus dropped below 3500W for 10 min. Reverting to standby
           ({{ states('input_number.jacuzzi_standby_temp') }}°C) to prevent grid heating.
+
+    - action: shell_command.log_action
+      data:
+        system: jacuzzi
+        action_type: heating_stop
+        target_entity: climate.jacuzzi
+        parameters: >
+          {{ {'source': 'solar_fallback',
+              'current_temp': state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1),
+              'standby_temp': states('input_number.jacuzzi_standby_temp') | float(15),
+              'surplus_w': states('sensor.energy_solar_surplus_w') | float(0) | round(0)
+          } | tojson }}
 
 
 # ==============================================================================
@@ -336,6 +372,18 @@
               data:
                 value: 40
 
+            - action: shell_command.log_decision
+              data:
+                system: jacuzzi
+                automation_id: auto_jacuzzi_040
+                decision_code: calendar_preheat
+                decision_text: "Calendar preheat started"
+                context: >
+                  {{ {'event_time': state_attr('calendar.jacuzzi_schedule', 'start_time') | string,
+                      'smart_start': states('sensor.jacuzzi_smart_start_time'),
+                      'current_temp': state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1)
+                  } | tojson }}
+
         # Event ongoing — maintain temperature
         - conditions:
             - condition: state
@@ -357,6 +405,14 @@
               data:
                 value: 40
 
+            - action: shell_command.log_action
+              data:
+                system: jacuzzi
+                action_type: heating_maintain
+                target_entity: climate.jacuzzi
+                parameters: >
+                  {{ {'trigger': 'event_ongoing'} | tojson }}
+
       # Default: no event or event passed — standby
       default:
         - action: input_number.set_value
@@ -364,6 +420,16 @@
             entity_id: input_number.jacuzzi_target_temp
           data:
             value: "{{ states('input_number.jacuzzi_standby_temp') }}"
+
+        - action: shell_command.log_action
+          data:
+            system: jacuzzi
+            action_type: heating_stop
+            target_entity: climate.jacuzzi
+            parameters: >
+              {{ {'trigger': 'no_event',
+                  'standby_temp': states('input_number.jacuzzi_standby_temp') | float(15)
+              } | tojson }}
 
 
 # ==============================================================================

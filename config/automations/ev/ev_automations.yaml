@@ -1488,6 +1488,24 @@
         name: "EV Planner"
         message: "{{ decision_summary }}"
 
+    - action: shell_command.log_decision
+      data:
+        system: ev
+        automation_id: auto_ev_030
+        decision_code: "{{ decision_summary[:80] }}"
+        decision_text: "{{ decision_summary }}"
+        context: >
+          {{ {'fraser_car': fraser_car,
+              'heather_car': heather_car,
+              'night_charge_car': night_charge_car | trim,
+              'night_target_soc': night_target_soc | float,
+              'fraser_departure_soc': fraser_departure_soc | float | round(0),
+              'heather_departure_soc': heather_departure_soc | float | round(0),
+              'external_required': external_required,
+              'km_fraser': km_fraser | float,
+              'km_heather': km_heather | float
+          } | tojson }}
+
 
 ###############################################################################
 # 40-49: CHARGING CONTROL
@@ -1574,6 +1592,19 @@
                 name: "EV Solar"
                 message: "{{ plugged_car }} solar charging @ {{ target_amps }}A"
 
+            - action: shell_command.log_action
+              data:
+                system: ev
+                action_type: charge_start
+                target_entity: "{{ 'switch.' ~ plugged_car | lower ~ '_charge' }}"
+                parameters: >
+                  {{ {'source': 'solar',
+                      'car': plugged_car,
+                      'target_amps': target_amps | int,
+                      'available_amps': available_amps | int,
+                      'surplus_w': states('sensor.energy_solar_surplus_w') | float(0) | round(0)
+                  } | tojson }}
+
       default:
         - action: input_boolean.turn_off
           target:
@@ -1583,6 +1614,18 @@
           data:
             name: "EV Solar"
             message: "{{ plugged_car }} solar charging OFF ({{ available_amps }}A available < {{ min_amps }}A min)"
+
+        - action: shell_command.log_action
+          data:
+            system: ev
+            action_type: charge_stop
+            target_entity: "{{ 'switch.' ~ plugged_car | lower ~ '_charge' }}"
+            parameters: >
+              {{ {'source': 'solar',
+                  'car': plugged_car,
+                  'available_amps': available_amps | int,
+                  'min_amps': min_amps | int
+              } | tojson }}
 
 
 - id: auto_ev_041_cheap_tariff
@@ -1664,6 +1707,18 @@
               target:
                 entity_id: "{{ 'switch.horatio_charge' if plan_car == 'Horace' else 'switch.horace_charge' }}"
 
+            - action: shell_command.log_action
+              data:
+                system: ev
+                action_type: charge_start
+                target_entity: "{{ 'switch.' ~ plan_car | lower ~ '_charge' }}"
+                parameters: >
+                  {{ {'source': 'tariff',
+                      'car': plan_car,
+                      'current_soc': current_soc | float,
+                      'target_soc': target_soc | float
+                  } | tojson }}
+
         # Target reached
         - conditions:
             - condition: template
@@ -1678,6 +1733,19 @@
               data:
                 name: "EV Charging"
                 message: "{{ plan_car }} reached target SOC {{ target_soc }}%"
+
+            - action: shell_command.log_action
+              data:
+                system: ev
+                action_type: charge_stop
+                target_entity: "{{ 'switch.' ~ plan_car | lower ~ '_charge' }}"
+                parameters: >
+                  {{ {'source': 'tariff',
+                      'car': plan_car,
+                      'current_soc': current_soc | float,
+                      'target_soc': target_soc | float,
+                      'reason': 'target_reached'
+                  } | tojson }}
 
 - id: auto_ev_042_solar_surplus_alert
   alias: "EV 042 – Solar Surplus Plug-In Alert"

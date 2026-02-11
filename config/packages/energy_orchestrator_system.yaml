@@ -64,6 +64,15 @@ input_number:
     icon: mdi:thermometer
     mode: box
 
+  jacuzzi_predicted_heat_hours:
+    name: "Jacuzzi Predicted Heat Hours"
+    min: 0
+    max: 24
+    step: 0.1
+    unit_of_measurement: "h"
+    icon: mdi:timer-outline
+    mode: box
+
 
 # =============================================================================
 # INPUT DATETIMES – Progress tracking timestamps
@@ -72,6 +81,12 @@ input_datetime:
   energy_jacuzzi_last_progress_time:
     name: "Energy Jacuzzi Last Progress Time"
     icon: mdi:clock-check
+    has_date: true
+    has_time: true
+
+  jacuzzi_heating_start_time:
+    name: "Jacuzzi Heating Start Time"
+    icon: mdi:clock-start
     has_date: true
     has_time: true
 

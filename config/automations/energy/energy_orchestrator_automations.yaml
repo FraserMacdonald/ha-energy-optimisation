@@ -254,6 +254,27 @@
         message: "{{ states('sensor.energy_orchestrator_decision') }}"
         entity_id: sensor.energy_orchestrator_decision
 
+    - variables:
+        decision_state: "{{ states('sensor.energy_orchestrator_decision') }}"
+        decision_code: "{{ decision_state.split(':')[0] | trim if ':' in decision_state else decision_state }}"
+    - action: shell_command.log_decision
+      data:
+        system: orchestrator
+        automation_id: auto_energy_060
+        decision_code: "{{ decision_code }}"
+        decision_text: "{{ decision_state }}"
+        context: >
+          {{ {'scenario': decision_code,
+              'surplus': states('sensor.energy_solar_surplus_w') | float(0) | round(0),
+              'low_tariff': is_state('binary_sensor.energy_low_tariff_active', 'on'),
+              'jac_state': states('sensor.energy_jacuzzi_demand_scenario'),
+              'ev_state': states('sensor.energy_ev_demand_scenario'),
+              'prod_state': states('sensor.energy_production_scenario'),
+              'jac_allowed': is_state('input_boolean.energy_jacuzzi_heat_allowed', 'on'),
+              'ev_solar_allowed': is_state('input_boolean.energy_ev_solar_charge_allowed', 'on'),
+              'ev_tariff_allowed': is_state('input_boolean.energy_ev_tariff_charge_allowed', 'on')
+          } | tojson }}
+
 
 # =============================================================================
 # 061 – CONFLICT ALERT
@@ -311,3 +332,19 @@
           Surplus: {{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }} W
 
           Decision: {{ states('sensor.energy_orchestrator_decision') }}
+
+    - action: shell_command.log_decision
+      data:
+        system: orchestrator
+        automation_id: auto_energy_061
+        decision_code: conflict
+        decision_text: >
+          Conflict: prod={{ states('sensor.energy_production_scenario') }}
+          jac={{ states('sensor.energy_jacuzzi_demand_scenario') }}
+          ev={{ states('sensor.energy_ev_demand_scenario') }}
+        context: >
+          {{ {'jac_state': states('sensor.energy_jacuzzi_demand_scenario'),
+              'ev_state': states('sensor.energy_ev_demand_scenario'),
+              'prod_state': states('sensor.energy_production_scenario'),
+              'surplus': states('sensor.energy_solar_surplus_w') | float(0) | round(0)
+          } | tojson }}

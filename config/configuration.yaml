@@ -79,6 +79,10 @@ shell_command:
   get_elevation: "python3 /config/python_scripts/get_elevation.py"
   compute_elevation: "python3 /config/python_scripts/compute_elevation.py"
   ev_text_set: "python3 /config/python_scripts/ev_text_store.py {{ key }} {{ value }}"
+  log_decision: "python3 /homeassistant/scripts/log_to_db.py decision '{{ system }}' '{{ automation_id }}' '{{ decision_code }}' '{{ decision_text }}' '{{ context }}'"
+  log_action: "python3 /homeassistant/scripts/log_to_db.py action '{{ system }}' '{{ action_type }}' '{{ target_entity }}' '{{ parameters }}'"
+  log_feedback: "python3 /homeassistant/scripts/log_to_db.py feedback '{{ system }}' '{{ metric }}' '{{ predicted }}' '{{ actual }}' '{{ context }}'"
+  log_cost: "python3 /homeassistant/scripts/log_to_db.py cost '{{ system }}' '{{ kwh_solar }}' '{{ kwh_grid_low }}' '{{ kwh_grid_high }}'"
 
 # =============================================================================
 # REST COMMANDS

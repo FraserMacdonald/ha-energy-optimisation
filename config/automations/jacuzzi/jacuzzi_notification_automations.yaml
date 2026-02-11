@@ -262,6 +262,32 @@
         name: "Jacuzzi Heating"
         message: "{{ msg }}"
 
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.jacuzzi_heating_start_time
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_predicted_heat_hours
+      data:
+        value: "{{ heat_hours }}"
+
+    - action: shell_command.log_action
+      data:
+        system: jacuzzi
+        action_type: heating_start_confirmed
+        target_entity: climate.jacuzzi
+        parameters: >
+          {{ {'start_temp': current_temp | float,
+              'predicted_hours': heat_hours | float,
+              'eta': eta,
+              'source': source,
+              'event_time': event_time,
+              'outdoor_temp': outdoor_temp | float
+          } | tojson }}
+
 
 # ==============================================================================
 # A2 — 065 – SOURCE CHANGED
@@ -325,7 +351,7 @@
 
   triggers:
     - trigger: time_pattern
-      minutes: "/60"
+      hours: "/1"
 
   conditions:
     - condition: template
@@ -562,7 +588,7 @@
 
   triggers:
     - trigger: time_pattern
-      minutes: "/60"
+      hours: "/1"
 
   conditions:
     # Must be actively heating
@@ -644,3 +670,71 @@
       data:
         name: "Jacuzzi Session"
         message: "Session ended. Returning to standby at {{ standby_temp }}°C."
+
+
+# ==============================================================================
+# 097 – HEATING FEEDBACK (Predicted vs Actual)
+# Logs feedback when jacuzzi reaches 38°C during a heating session.
+# ==============================================================================
+- id: auto_jacuzzi_097_heating_feedback
+  alias: "Jacuzzi 097 – Heating Feedback"
+  description: >
+    Logs predicted vs actual heating time when jacuzzi crosses 38°C upward
+    while target is >= 40°C. Feeds the DB for model accuracy analysis.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: climate.jacuzzi
+      attribute: current_temperature
+
+  conditions:
+    # Must be actively heating to 40°C
+    - condition: template
+      value_template: >
+        {{ states('input_number.jacuzzi_target_temp') | float(15) >= 40 }}
+    # Temperature just crossed 38°C upward
+    - condition: template
+      value_template: >
+        {% set current = state_attr('climate.jacuzzi', 'current_temperature') | float(0) %}
+        {% set previous = trigger.from_state.attributes.current_temperature | float(0) %}
+        {{ previous < 38 and current >= 38 }}
+    # Must have a valid start time recorded
+    - condition: template
+      value_template: >
+        {% set start = states('input_datetime.jacuzzi_heating_start_time') %}
+        {{ start not in ['unknown', 'unavailable', ''] }}
+
+  actions:
+    - variables:
+        predicted_hours: "{{ states('input_number.jacuzzi_predicted_heat_hours') | float(0) }}"
+        start_time: "{{ states('input_datetime.jacuzzi_heating_start_time') }}"
+        actual_hours: >
+          {% set start_ts = as_timestamp(start_time) %}
+          {{ ((as_timestamp(now()) - start_ts) / 3600) | round(2) }}
+        start_temp: "{{ states('input_number.energy_jacuzzi_heating_start_temp') | float(0) | round(1) }}"
+        outdoor_temp: "{{ states('sensor.la_dole_temperature') | float(10) }}"
+        surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
+        source: >
+          {% if surplus | float > 3500 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
+            solar
+          {% elif is_state('binary_sensor.energy_low_tariff_active', 'on') %}
+            low_tariff
+          {% else %}
+            grid
+          {% endif %}
+
+    - action: shell_command.log_feedback
+      data:
+        system: jacuzzi
+        metric: heating_time
+        predicted: "{{ predicted_hours }}"
+        actual: "{{ actual_hours }}"
+        context: >
+          {{ {'start_temp': start_temp | float,
+              'end_temp': 38,
+              'outdoor_temp': outdoor_temp | float,
+              'source': source
+          } | tojson }}

@@ -304,7 +304,7 @@
 
   triggers:
     - trigger: time_pattern
-      minutes: "/60"
+      hours: "/1"
 
   conditions:
     - condition: template
@@ -442,3 +442,101 @@
               data:
                 name: "EV Trip"
                 message: "{{ car }} returned home. SOC: {{ current_soc }}% (used {{ delta }}% on trip)."
+
+
+# ==============================================================================
+# 078 – TRIP FEEDBACK (Predicted vs Actual SOC Use)
+# Logs predicted vs actual SOC consumption when car returns home from a trip.
+# ==============================================================================
+- id: auto_ev_078_trip_feedback
+  alias: "EV 078 – Trip Feedback"
+  description: >
+    Logs predicted vs actual SOC use when a car arrives home after a trip.
+    Compares the predicted SOC drop (from trip km and Wh/km) against the
+    actual drop for model accuracy analysis.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: device_tracker.horace_location
+      to: "home"
+    - trigger: state
+      entity_id: device_tracker.horatio_location
+      to: "home"
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ trigger.from_state is not none
+           and trigger.from_state.state != 'home' }}
+
+  actions:
+    - variables:
+        car: >
+          {% if trigger.entity_id == 'device_tracker.horace_location' %}
+            Horace
+          {% else %}
+            Horatio
+          {% endif %}
+        current_soc: >
+          {% if car == 'Horace' %}
+            {{ states('sensor.horace_battery_level') | float(0) }}
+          {% else %}
+            {{ states('sensor.horatio_battery_level') | float(0) }}
+          {% endif %}
+        departure_soc: >
+          {% if car == 'Horace' %}
+            {{ states('input_number.ev_horace_departure_soc') | float(0) }}
+          {% else %}
+            {{ states('input_number.ev_horatio_departure_soc') | float(0) }}
+          {% endif %}
+        actual_use: "{{ (departure_soc | float - current_soc | float) | round(1) }}"
+
+        # Resolve driver from car assignment
+        fraser_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
+        heather_car: "{{ states('input_select.ev_heather_assigned_car') }}"
+        driver: >
+          {% if fraser_car == car %}fraser
+          {% elif heather_car == car %}heather
+          {% else %}unknown{% endif %}
+
+        # Trip km (driver-specific)
+        trip_km: >
+          {% if driver == 'fraser' %}
+            {{ states('input_number.ev_trip_km_fraser_today') | float(0) }}
+          {% elif driver == 'heather' %}
+            {{ states('input_number.ev_trip_km_heather_today') | float(0) }}
+          {% else %}
+            0
+          {% endif %}
+
+        # Car-specific parameters: Horace 70kWh/180Wh/km, Horatio 90kWh/215Wh/km
+        battery_kwh: "{{ 70 if car == 'Horace' else 90 }}"
+        wh_per_km: "{{ 180 if car == 'Horace' else 215 }}"
+
+        # Predicted SOC use as percentage
+        predicted_use: >
+          {% if trip_km | float > 0 %}
+            {{ (trip_km | float * wh_per_km | float / (battery_kwh | float * 10)) | round(1) }}
+          {% else %}
+            0
+          {% endif %}
+
+    - condition: template
+      value_template: "{{ actual_use | float > 0 and trip_km | float > 0 }}"
+
+    - action: shell_command.log_feedback
+      data:
+        system: ev
+        metric: trip_soc_use
+        predicted: "{{ predicted_use }}"
+        actual: "{{ actual_use }}"
+        context: >
+          {{ {'car': car | trim,
+              'trip_km': trip_km | float,
+              'departure_soc': departure_soc | float,
+              'arrival_soc': current_soc | float,
+              'wh_per_km': wh_per_km | int
+          } | tojson }}
