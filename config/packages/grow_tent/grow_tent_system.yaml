@@ -1,0 +1,344 @@
+###############################################################################
+# GROW TENT SYSTEM – HELPER DEFINITIONS
+# File: packages/grow_tent/grow_tent_system.yaml
+#
+# All helpers for the automated grow tent system.
+# Entity IDs marked # TODO: ENTITY_ID are placeholders to validate.
+###############################################################################
+
+# =============================================================================
+# INPUT SELECTS
+# =============================================================================
+input_select:
+  grow_tent_stage:
+    name: "Grow Tent Stage"
+    options:
+      - "clones"
+      - "veg_w1"
+      - "veg_w2"
+      - "flower_w1"
+      - "flower_w2"
+      - "flower_w3"
+      - "flower_w4"
+      - "flower_w5"
+      - "flower_w6"
+      - "flower_w7"
+      - "flush_w8"
+      - "flush_w9"
+      - "harvest"
+      - "idle"
+    initial: "clones"
+    icon: mdi:sprout
+
+  grow_tent_mode:
+    name: "Grow Tent Mode"
+    options:
+      - "active"
+      - "shadow"
+      - "manual"
+      - "idle"
+    initial: "shadow"
+    icon: mdi:auto-mode
+
+# =============================================================================
+# INPUT NUMBERS – System Configuration
+# =============================================================================
+input_number:
+  # --- Reservoir ---
+  grow_tent_reservoir_litres:
+    name: "Reservoir Volume"
+    min: 50
+    max: 200
+    step: 1
+    initial: 100
+    unit_of_measurement: "L"
+    icon: mdi:cup-water
+
+  # --- Light Schedule ---
+  grow_tent_lights_on_hour:
+    name: "Lights On Hour"
+    min: 0
+    max: 23
+    step: 1
+    initial: 6
+    unit_of_measurement: "h"
+    icon: mdi:clock-start
+
+  grow_tent_sunrise_ramp_minutes:
+    name: "Sunrise Ramp Duration"
+    min: 0
+    max: 60
+    step: 5
+    initial: 30
+    unit_of_measurement: "min"
+    icon: mdi:weather-sunset-up
+
+  grow_tent_sunset_ramp_minutes:
+    name: "Sunset Ramp Duration"
+    min: 0
+    max: 60
+    step: 5
+    initial: 30
+    unit_of_measurement: "min"
+    icon: mdi:weather-sunset-down
+
+  # --- Environment Targets ---
+  grow_tent_temp_target_lights_on:
+    name: "Temp Target (Lights On)"
+    min: 18
+    max: 30
+    step: 0.5
+    initial: 23
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer
+
+  grow_tent_temp_target_lights_off:
+    name: "Temp Target (Lights Off)"
+    min: 15
+    max: 25
+    step: 0.5
+    initial: 20
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-low
+
+  grow_tent_temp_deadband:
+    name: "Temperature Deadband"
+    min: 0.5
+    max: 3
+    step: 0.5
+    initial: 1.0
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-lines
+
+  grow_tent_humidity_target:
+    name: "Humidity Target"
+    min: 30
+    max: 80
+    step: 1
+    initial: 70
+    unit_of_measurement: "%"
+    icon: mdi:water-percent
+
+  grow_tent_humidity_deadband:
+    name: "Humidity Deadband"
+    min: 1
+    max: 10
+    step: 1
+    initial: 5
+    unit_of_measurement: "%"
+    icon: mdi:water-percent
+
+  grow_tent_water_temp_target:
+    name: "Water Temp Target"
+    min: 15
+    max: 25
+    step: 0.5
+    initial: 20
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-water
+
+  grow_tent_water_temp_deadband:
+    name: "Water Temp Deadband"
+    min: 0.5
+    max: 3
+    step: 0.5
+    initial: 1.0
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-water
+
+  # --- pH Control ---
+  grow_tent_ph_target:
+    name: "pH Target"
+    min: 5.0
+    max: 7.0
+    step: 0.1
+    initial: 5.6
+    icon: mdi:flask
+
+  grow_tent_ph_low_limit:
+    name: "pH Low Limit"
+    min: 4.5
+    max: 6.0
+    step: 0.1
+    initial: 5.5
+    icon: mdi:flask-minus
+
+  grow_tent_ph_high_limit:
+    name: "pH High Limit"
+    min: 5.5
+    max: 7.0
+    step: 0.1
+    initial: 5.8
+    icon: mdi:flask-plus
+
+  # --- Dosing Pump Calibration (ml per second, one per pump) ---
+  grow_tent_pump_1_ml_per_sec:
+    name: "Pump 1 (Base) Flow Rate"
+    min: 0.1
+    max: 10
+    step: 0.1
+    initial: 1.0
+    unit_of_measurement: "ml/s"
+    icon: mdi:pump
+
+  grow_tent_pump_2_ml_per_sec:
+    name: "Pump 2 (Grow) Flow Rate"
+    min: 0.1
+    max: 10
+    step: 0.1
+    initial: 1.0
+    unit_of_measurement: "ml/s"
+    icon: mdi:pump
+
+  grow_tent_pump_3_ml_per_sec:
+    name: "Pump 3 (Early Flower) Flow Rate"
+    min: 0.1
+    max: 10
+    step: 0.1
+    initial: 1.0
+    unit_of_measurement: "ml/s"
+    icon: mdi:pump
+
+  grow_tent_pump_4_ml_per_sec:
+    name: "Pump 4 (Late Flower) Flow Rate"
+    min: 0.1
+    max: 10
+    step: 0.1
+    initial: 1.0
+    unit_of_measurement: "ml/s"
+    icon: mdi:pump
+
+  grow_tent_pump_5_ml_per_sec:
+    name: "Pump 5 (SanaCan) Flow Rate"
+    min: 0.1
+    max: 10
+    step: 0.1
+    initial: 1.0
+    unit_of_measurement: "ml/s"
+    icon: mdi:pump
+
+  grow_tent_pump_6_ml_per_sec:
+    name: "Pump 6 (KaliCan) Flow Rate"
+    min: 0.1
+    max: 10
+    step: 0.1
+    initial: 1.0
+    unit_of_measurement: "ml/s"
+    icon: mdi:pump
+
+  grow_tent_pump_7_ml_per_sec:
+    name: "Pump 7 (pH Down) Flow Rate"
+    min: 0.1
+    max: 10
+    step: 0.1
+    initial: 1.0
+    unit_of_measurement: "ml/s"
+    icon: mdi:pump
+
+  grow_tent_pump_8_ml_per_sec:
+    name: "Pump 8 (pH Plus) Flow Rate"
+    min: 0.1
+    max: 10
+    step: 0.1
+    initial: 1.0
+    unit_of_measurement: "ml/s"
+    icon: mdi:pump
+
+  # --- Dosing Safety ---
+  grow_tent_max_ph_doses_per_hour:
+    name: "Max pH Doses Per Hour"
+    min: 1
+    max: 10
+    step: 1
+    initial: 3
+    icon: mdi:shield-alert
+
+  grow_tent_ph_dose_ml:
+    name: "pH Dose Amount"
+    min: 1
+    max: 50
+    step: 1
+    initial: 10
+    unit_of_measurement: "ml"
+    icon: mdi:eyedropper
+
+  grow_tent_ph_dose_wait_minutes:
+    name: "pH Dose Wait Time"
+    min: 5
+    max: 30
+    step: 5
+    initial: 10
+    unit_of_measurement: "min"
+    icon: mdi:timer-sand
+
+  # --- Fan ---
+  grow_tent_fan_min_speed:
+    name: "Fan Minimum Speed"
+    min: 0
+    max: 50
+    step: 5
+    initial: 25
+    unit_of_measurement: "%"
+    icon: mdi:fan
+
+  # --- Counters ---
+  grow_tent_ph_doses_this_hour:
+    name: "pH Doses This Hour"
+    min: 0
+    max: 100
+    step: 1
+    initial: 0
+    icon: mdi:counter
+
+  grow_tent_reservoir_age_days:
+    name: "Reservoir Age"
+    min: 0
+    max: 30
+    step: 1
+    initial: 0
+    unit_of_measurement: "days"
+    icon: mdi:calendar-clock
+
+# =============================================================================
+# INPUT BOOLEANS
+# =============================================================================
+input_boolean:
+  grow_tent_lights_on:
+    name: "Grow Tent Lights On"
+    icon: mdi:lightbulb
+
+  grow_tent_dosing_in_progress:
+    name: "Dosing In Progress"
+    icon: mdi:lock
+
+  grow_tent_reservoir_change_needed:
+    name: "Reservoir Change Needed"
+    icon: mdi:alert-circle
+
+# =============================================================================
+# INPUT DATETIMES
+# =============================================================================
+input_datetime:
+  grow_tent_stage_start_date:
+    name: "Stage Start Date"
+    has_date: true
+    has_time: false
+    icon: mdi:calendar-start
+
+  grow_tent_last_reservoir_change:
+    name: "Last Reservoir Change"
+    has_date: true
+    has_time: true
+    icon: mdi:water-sync
+
+  grow_tent_last_ph_dose_time:
+    name: "Last pH Dose Time"
+    has_date: true
+    has_time: true
+    icon: mdi:clock-check
+
+  grow_tent_plant_date:
+    name: "Plant Date"
+    has_date: true
+    has_time: false
+    icon: mdi:sprout

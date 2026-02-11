@@ -1,0 +1,364 @@
+###############################################################################
+# GROW TENT – TEMPLATE SENSORS
+# File: packages/grow_tent/grow_tent_sensors.yaml
+#
+# Stage-derived profiles, VPD calculation, dosing volumes, and computed values.
+# Sensor entities marked # TODO: ENTITY_ID are placeholders.
+###############################################################################
+
+template:
+  # ===========================================================================
+  # STAGE DISPLAY
+  # ===========================================================================
+  - sensor:
+      - name: "Grow Tent Stage Display"
+        unique_id: grow_tent_stage_display
+        icon: mdi:sprout
+        state: >
+          {% set stage = states('input_select.grow_tent_stage') %}
+          {% set names = {
+            'clones': 'Clones / Seedling',
+            'veg_w1': 'Vegetative Week 1',
+            'veg_w2': 'Vegetative Week 2',
+            'flower_w1': 'Flower Week 1',
+            'flower_w2': 'Flower Week 2',
+            'flower_w3': 'Flower Week 3',
+            'flower_w4': 'Flower Week 4',
+            'flower_w5': 'Flower Week 5',
+            'flower_w6': 'Flower Week 6',
+            'flower_w7': 'Flower Week 7',
+            'flush_w8': 'Flush Week 8',
+            'flush_w9': 'Flush Week 9',
+            'harvest': 'Harvest',
+            'idle': 'Idle'
+          } %}
+          {{ names.get(stage, stage) }}
+
+  # ===========================================================================
+  # LIGHT SCHEDULE SENSORS
+  # ===========================================================================
+  - sensor:
+      - name: "Grow Tent Target LED Percent"
+        unique_id: grow_tent_target_led_pct
+        icon: mdi:brightness-percent
+        unit_of_measurement: "%"
+        state: >
+          {% set stage = states('input_select.grow_tent_stage') %}
+          {% set pct = {
+            'clones': 20,
+            'veg_w1': 25,
+            'veg_w2': 40,
+            'flower_w1': 60,
+            'flower_w2': 80,
+            'flower_w3': 100,
+            'flower_w4': 100,
+            'flower_w5': 100,
+            'flower_w6': 100,
+            'flower_w7': 100,
+            'flush_w8': 100,
+            'flush_w9': 100,
+            'harvest': 0,
+            'idle': 0
+          } %}
+          {{ pct.get(stage, 0) }}
+
+      - name: "Grow Tent Target Light Hours"
+        unique_id: grow_tent_target_light_hours
+        icon: mdi:clock-outline
+        unit_of_measurement: "h"
+        state: >
+          {% set stage = states('input_select.grow_tent_stage') %}
+          {% if stage in ['clones', 'veg_w1', 'veg_w2'] %}18
+          {% elif stage.startswith('flower') or stage.startswith('flush') %}12
+          {% else %}0{% endif %}
+
+      - name: "Grow Tent Lights Off Hour"
+        unique_id: grow_tent_lights_off_hour
+        icon: mdi:clock-end
+        state: >
+          {% set on_hour = states('input_number.grow_tent_lights_on_hour') | int(6) %}
+          {% set hours = states('sensor.grow_tent_target_light_hours') | int(18) %}
+          {{ (on_hour + hours) % 24 }}
+
+  # ===========================================================================
+  # RECOMMENDED ENVIRONMENT BY SUB-STAGE
+  # ===========================================================================
+  - sensor:
+      - name: "Grow Tent Recommended Humidity"
+        unique_id: grow_tent_recommended_humidity
+        icon: mdi:water-percent
+        unit_of_measurement: "%"
+        state: >
+          {% set stage = states('input_select.grow_tent_stage') %}
+          {% set rh = {
+            'clones': 70, 'veg_w1': 65, 'veg_w2': 60,
+            'flower_w1': 55, 'flower_w2': 55, 'flower_w3': 50,
+            'flower_w4': 50, 'flower_w5': 45, 'flower_w6': 45,
+            'flower_w7': 45, 'flush_w8': 40, 'flush_w9': 40,
+            'harvest': 40, 'idle': 50
+          } %}
+          {{ rh.get(stage, 50) }}
+
+      - name: "Grow Tent Recommended Temp (Lights On)"
+        unique_id: grow_tent_recommended_temp_lights_on
+        icon: mdi:thermometer
+        unit_of_measurement: "°C"
+        state: >
+          {% set stage = states('input_select.grow_tent_stage') %}
+          {% if stage == 'clones' %}23
+          {% elif stage in ['veg_w1', 'veg_w2'] %}24
+          {% elif stage.startswith('flower') %}24
+          {% elif stage.startswith('flush') %}22
+          {% else %}22{% endif %}
+
+      - name: "Grow Tent Recommended Extractor Speed"
+        unique_id: grow_tent_recommended_extractor_pct
+        icon: mdi:fan
+        unit_of_measurement: "%"
+        state: >
+          {% set stage = states('input_select.grow_tent_stage') %}
+          {% set spd = {
+            'clones': 25, 'veg_w1': 50, 'veg_w2': 50,
+            'flower_w1': 70, 'flower_w2': 70, 'flower_w3': 70,
+            'flower_w4': 70, 'flower_w5': 70, 'flower_w6': 70,
+            'flower_w7': 70, 'flush_w8': 80, 'flush_w9': 80,
+            'harvest': 50, 'idle': 25
+          } %}
+          {{ spd.get(stage, 25) }}
+
+  # ===========================================================================
+  # DOSING PROFILES – ml per litre (from Canusol chart)
+  # ===========================================================================
+  - sensor:
+      - name: "Grow Tent Dose Base ml/L"
+        unique_id: grow_tent_dose_base_ml_l
+        icon: mdi:flask
+        unit_of_measurement: "ml/L"
+        state: >
+          {% set stage = states('input_select.grow_tent_stage') %}
+          {% if stage in ['clones', 'veg_w1', 'veg_w2'] or stage.startswith('flower') %}2.0
+          {% elif stage.startswith('flush') %}0.5
+          {% else %}0{% endif %}
+
+      - name: "Grow Tent Dose Grow ml/L"
+        unique_id: grow_tent_dose_grow_ml_l
+        icon: mdi:flask
+        unit_of_measurement: "ml/L"
+        state: >
+          {% set stage = states('input_select.grow_tent_stage') %}
+          {% if stage in ['clones', 'veg_w1', 'veg_w2'] %}2.5
+          {% else %}0{% endif %}
+
+      - name: "Grow Tent Dose Early Flower ml/L"
+        unique_id: grow_tent_dose_early_flower_ml_l
+        icon: mdi:flask
+        unit_of_measurement: "ml/L"
+        state: >
+          {% set stage = states('input_select.grow_tent_stage') %}
+          {% if stage.startswith('flower') %}3.5
+          {% else %}0{% endif %}
+
+      - name: "Grow Tent Dose Late Flower ml/L"
+        unique_id: grow_tent_dose_late_flower_ml_l
+        icon: mdi:flask
+        unit_of_measurement: "ml/L"
+        state: >
+          {% set stage = states('input_select.grow_tent_stage') %}
+          {% if stage.startswith('flush') %}1.0
+          {% else %}0{% endif %}
+
+      - name: "Grow Tent Dose SanaCan ml/L"
+        unique_id: grow_tent_dose_sanacan_ml_l
+        icon: mdi:flask
+        unit_of_measurement: "ml/L"
+        state: >
+          {% set stage = states('input_select.grow_tent_stage') %}
+          {% if stage in ['harvest', 'idle'] %}0
+          {% else %}1.0{% endif %}
+
+      - name: "Grow Tent Dose KaliCan ml/L"
+        unique_id: grow_tent_dose_kalican_ml_l
+        icon: mdi:flask
+        unit_of_measurement: "ml/L"
+        state: >
+          {% set stage = states('input_select.grow_tent_stage') %}
+          {% if stage in ['veg_w1', 'veg_w2'] or stage.startswith('flower') %}2.0
+          {% else %}0{% endif %}
+
+  # ===========================================================================
+  # DOSING VOLUMES – ml for full reservoir
+  # ===========================================================================
+  - sensor:
+      - name: "Grow Tent Dose Base Volume"
+        unique_id: grow_tent_dose_base_vol
+        icon: mdi:beaker
+        unit_of_measurement: "ml"
+        state: >
+          {% set ml_l = states('sensor.grow_tent_dose_base_ml_l') | float(0) %}
+          {% set litres = states('input_number.grow_tent_reservoir_litres') | float(100) %}
+          {{ (ml_l * litres) | round(0) }}
+
+      - name: "Grow Tent Dose Grow Volume"
+        unique_id: grow_tent_dose_grow_vol
+        icon: mdi:beaker
+        unit_of_measurement: "ml"
+        state: >
+          {% set ml_l = states('sensor.grow_tent_dose_grow_ml_l') | float(0) %}
+          {% set litres = states('input_number.grow_tent_reservoir_litres') | float(100) %}
+          {{ (ml_l * litres) | round(0) }}
+
+      - name: "Grow Tent Dose Early Flower Volume"
+        unique_id: grow_tent_dose_early_flower_vol
+        icon: mdi:beaker
+        unit_of_measurement: "ml"
+        state: >
+          {% set ml_l = states('sensor.grow_tent_dose_early_flower_ml_l') | float(0) %}
+          {% set litres = states('input_number.grow_tent_reservoir_litres') | float(100) %}
+          {{ (ml_l * litres) | round(0) }}
+
+      - name: "Grow Tent Dose Late Flower Volume"
+        unique_id: grow_tent_dose_late_flower_vol
+        icon: mdi:beaker
+        unit_of_measurement: "ml"
+        state: >
+          {% set ml_l = states('sensor.grow_tent_dose_late_flower_ml_l') | float(0) %}
+          {% set litres = states('input_number.grow_tent_reservoir_litres') | float(100) %}
+          {{ (ml_l * litres) | round(0) }}
+
+      - name: "Grow Tent Dose SanaCan Volume"
+        unique_id: grow_tent_dose_sanacan_vol
+        icon: mdi:beaker
+        unit_of_measurement: "ml"
+        state: >
+          {% set ml_l = states('sensor.grow_tent_dose_sanacan_ml_l') | float(0) %}
+          {% set litres = states('input_number.grow_tent_reservoir_litres') | float(100) %}
+          {{ (ml_l * litres) | round(0) }}
+
+      - name: "Grow Tent Dose KaliCan Volume"
+        unique_id: grow_tent_dose_kalican_vol
+        icon: mdi:beaker
+        unit_of_measurement: "ml"
+        state: >
+          {% set ml_l = states('sensor.grow_tent_dose_kalican_ml_l') | float(0) %}
+          {% set litres = states('input_number.grow_tent_reservoir_litres') | float(100) %}
+          {{ (ml_l * litres) | round(0) }}
+
+  # ===========================================================================
+  # VPD CALCULATION
+  # ===========================================================================
+  - sensor:
+      - name: "Grow Tent VPD"
+        unique_id: grow_tent_vpd
+        icon: mdi:gauge
+        unit_of_measurement: "kPa"
+        state: >
+          {% set t_air = states('sensor.marshydro_temperature') | float(0) %}
+          {% set rh = states('sensor.marshydro_humidity') | float(0) %}
+          {% if t_air == 0 or rh == 0 %}unavailable
+          {% else %}
+            {% set t_leaf = t_air - 2 %}
+            {% set svp_leaf = 0.6108 * e ** (17.27 * t_leaf / (t_leaf + 237.3)) %}
+            {% set svp_air = 0.6108 * e ** (17.27 * t_air / (t_air + 237.3)) %}
+            {% set avp = svp_air * (rh / 100) %}
+            {{ (svp_leaf - avp) | round(2) }}
+          {% endif %}
+        attributes:
+          t_leaf: >
+            {{ (states('sensor.marshydro_temperature') | float(0)) - 2 }}
+          t_air: "{{ states('sensor.marshydro_temperature') }}"
+          humidity: "{{ states('sensor.marshydro_humidity') }}"
+
+  # ===========================================================================
+  # VPD TARGET RANGE (by stage)
+  # ===========================================================================
+  - sensor:
+      - name: "Grow Tent VPD Target"
+        unique_id: grow_tent_vpd_target
+        icon: mdi:gauge
+        unit_of_measurement: "kPa"
+        state: >
+          {% set stage = states('input_select.grow_tent_stage') %}
+          {% if stage == 'clones' %}0.6
+          {% elif stage.startswith('veg') %}1.0
+          {% elif stage.startswith('flower') %}1.2
+          {% elif stage.startswith('flush') %}1.2
+          {% else %}0.8{% endif %}
+        attributes:
+          min: >
+            {% set stage = states('input_select.grow_tent_stage') %}
+            {% if stage == 'clones' %}0.4
+            {% elif stage.startswith('veg') %}0.8
+            {% elif stage.startswith('flower') or stage.startswith('flush') %}1.0
+            {% else %}0.4{% endif %}
+          max: >
+            {% set stage = states('input_select.grow_tent_stage') %}
+            {% if stage == 'clones' %}0.8
+            {% elif stage.startswith('veg') %}1.2
+            {% elif stage.startswith('flower') or stage.startswith('flush') %}1.5
+            {% else %}1.2{% endif %}
+
+  # ===========================================================================
+  # TIMELINE SENSORS
+  # ===========================================================================
+  - sensor:
+      - name: "Grow Tent Days in Stage"
+        unique_id: grow_tent_days_in_stage
+        icon: mdi:calendar-range
+        unit_of_measurement: "days"
+        state: >
+          {% set start = states('input_datetime.grow_tent_stage_start_date') %}
+          {% if start in ['unknown', 'unavailable', ''] %}0
+          {% else %}
+            {{ ((as_timestamp(now()) - as_timestamp(start)) / 86400) | round(0) }}
+          {% endif %}
+
+      - name: "Grow Tent Days Since Planting"
+        unique_id: grow_tent_days_since_planting
+        icon: mdi:calendar-heart
+        unit_of_measurement: "days"
+        state: >
+          {% set start = states('input_datetime.grow_tent_plant_date') %}
+          {% if start in ['unknown', 'unavailable', ''] %}0
+          {% else %}
+            {{ ((as_timestamp(now()) - as_timestamp(start)) / 86400) | round(0) }}
+          {% endif %}
+
+      - name: "Grow Tent Reservoir Age"
+        unique_id: grow_tent_reservoir_age
+        icon: mdi:water-sync
+        unit_of_measurement: "days"
+        state: >
+          {% set last = states('input_datetime.grow_tent_last_reservoir_change') %}
+          {% if last in ['unknown', 'unavailable', ''] %}0
+          {% else %}
+            {{ ((as_timestamp(now()) - as_timestamp(last)) / 86400) | round(1) }}
+          {% endif %}
+
+  # ===========================================================================
+  # FAN SPEED COORDINATOR
+  # Takes the higher of temperature-desired and humidity-desired fan speed.
+  # ===========================================================================
+  - sensor:
+      - name: "Grow Tent Target Fan Speed"
+        unique_id: grow_tent_target_fan_speed
+        icon: mdi:fan
+        unit_of_measurement: "%"
+        state: >
+          {% set min_spd = states('input_number.grow_tent_fan_min_speed') | float(25) %}
+          {% set t_air = states('sensor.marshydro_temperature') | float(22) %}
+          {% set rh = states('sensor.marshydro_humidity') | float(50) %}
+          {% set lights_on = is_state('input_boolean.grow_tent_lights_on', 'on') %}
+          {% set t_target = states('input_number.grow_tent_temp_target_lights_on') | float(23)
+                            if lights_on else
+                            states('input_number.grow_tent_temp_target_lights_off') | float(20) %}
+          {% set rh_target = states('input_number.grow_tent_humidity_target') | float(70) %}
+
+          {# Temperature-driven: ramp up if too hot #}
+          {% set temp_excess = t_air - t_target %}
+          {% set temp_spd = min_spd + ([0, temp_excess * 20] | max) %}
+
+          {# Humidity-driven: ramp up if too humid #}
+          {% set rh_excess = rh - rh_target %}
+          {% set rh_spd = min_spd + ([0, rh_excess * 5] | max) %}
+
+          {{ [[min_spd, temp_spd, rh_spd] | max, 100] | min | round(0) }}

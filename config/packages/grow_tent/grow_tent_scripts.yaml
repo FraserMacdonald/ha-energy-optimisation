@@ -1,0 +1,288 @@
+###############################################################################
+# GROW TENT – SCRIPTS
+# File: packages/grow_tent/grow_tent_scripts.yaml
+#
+# Reusable scripts for dosing, reservoir management, and stage advancement.
+# Entity IDs marked # TODO: ENTITY_ID are placeholders.
+###############################################################################
+
+script:
+  # =========================================================================
+  # DOSE PUMP – Timed peristaltic pump run
+  # Called by auto_grow_040 (pH) and auto_grow_050 (nutrients)
+  # =========================================================================
+  grow_tent_dose_pump:
+    alias: "Grow Tent: Dose Pump"
+    description: >
+      Runs a peristaltic pump for a calculated duration based on target ml
+      and the pump's calibrated flow rate (ml/sec).
+    fields:
+      pump_entity:
+        description: "Switch entity ID of the pump"
+        example: "switch.esphome_pump_1_base"
+      target_ml:
+        description: "Volume to dispense in ml"
+        example: "200"
+      cal_entity:
+        description: "Input number entity holding ml/sec calibration"
+        example: "input_number.grow_tent_pump_1_ml_per_sec"
+    mode: queued
+    max: 8
+    sequence:
+      - variables:
+          ml: "{{ target_ml | float(0) }}"
+          rate: "{{ states(cal_entity) | float(1.0) }}"
+          run_seconds: "{{ (ml / rate) | round(1) }}"
+
+      - condition: template
+        value_template: "{{ ml > 0 and rate > 0 }}"
+
+      - action: logbook.log
+        data:
+          name: "Grow Tent Dosing"
+          message: >
+            Pump {{ pump_entity }} dosing {{ ml }} ml
+            at {{ rate }} ml/s ({{ run_seconds }}s run time)
+
+      - action: switch.turn_on
+        target:
+          entity_id: "{{ pump_entity }}"
+
+      - delay:
+          seconds: "{{ run_seconds | int }}"
+
+      - action: switch.turn_off
+        target:
+          entity_id: "{{ pump_entity }}"
+
+      - action: logbook.log
+        data:
+          name: "Grow Tent Dosing"
+          message: "Pump {{ pump_entity }} complete ({{ ml }} ml)"
+
+  # =========================================================================
+  # RESERVOIR CHANGE – Reset tracking and trigger re-dose
+  # =========================================================================
+  grow_tent_reservoir_change:
+    alias: "Grow Tent: Reservoir Change"
+    description: >
+      Records a reservoir water change: resets age counter, timestamps the
+      change, and signals that fresh nutrient dosing is needed.
+    mode: single
+    sequence:
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.grow_tent_last_reservoir_change
+        data:
+          datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.grow_tent_reservoir_age_days
+        data:
+          value: 0
+
+      # Signal that reservoir has been changed (triggers nutrient dosing in Phase 2)
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.grow_tent_reservoir_change_needed
+
+      - action: notify.mobile_app_fraser_s_iphone
+        data:
+          message: >
+            🌱 Reservoir change recorded.
+            Stage: {{ states('sensor.grow_tent_stage_display') }}
+            {% set stage = states('input_select.grow_tent_stage') %}
+            {% if stage not in ['harvest', 'idle'] %}
+            Dosing recipe for {{ states('input_number.grow_tent_reservoir_litres') }}L:
+            {% set sensors = [
+              ('Base', 'sensor.grow_tent_dose_base_volume'),
+              ('Grow', 'sensor.grow_tent_dose_grow_volume'),
+              ('Early Flower', 'sensor.grow_tent_dose_early_flower_volume'),
+              ('Late Flower', 'sensor.grow_tent_dose_late_flower_volume'),
+              ('KaliCan', 'sensor.grow_tent_dose_kalican_volume'),
+              ('SanaCan', 'sensor.grow_tent_dose_sanacan_volume')
+            ] %}
+            {% for name, entity in sensors %}
+            {% set vol = states(entity) | float(0) %}
+            {% if vol > 0 %}• {{ name }}: {{ vol }} ml
+            {% endif %}
+            {% endfor %}
+            {% endif %}
+
+      - action: logbook.log
+        data:
+          name: "Grow Tent"
+          message: "Reservoir water changed and reset"
+
+  # =========================================================================
+  # ADVANCE STAGE – Move to next growth stage
+  # =========================================================================
+  grow_tent_advance_stage:
+    alias: "Grow Tent: Advance Stage"
+    description: >
+      Advances the grow to the next stage, updates the start date,
+      and syncs all environment targets from the new stage profile.
+    fields:
+      target_stage:
+        description: "Stage to advance to (optional – defaults to next in sequence)"
+        example: "veg_w1"
+    mode: single
+    sequence:
+      - variables:
+          current: "{{ states('input_select.grow_tent_stage') }}"
+          stage_order:
+            - "clones"
+            - "veg_w1"
+            - "veg_w2"
+            - "flower_w1"
+            - "flower_w2"
+            - "flower_w3"
+            - "flower_w4"
+            - "flower_w5"
+            - "flower_w6"
+            - "flower_w7"
+            - "flush_w8"
+            - "flush_w9"
+            - "harvest"
+            - "idle"
+
+      - variables:
+          new_stage: >
+            {% if target_stage is defined and target_stage %}
+              {{ target_stage }}
+            {% else %}
+              {% set idx = stage_order.index(current) if current in stage_order else -1 %}
+              {% if idx >= 0 and idx < (stage_order | length - 1) %}
+                {{ stage_order[idx + 1] }}
+              {% else %}
+                {{ current }}
+              {% endif %}
+            {% endif %}
+
+      # Set the new stage
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.grow_tent_stage
+        data:
+          option: "{{ new_stage }}"
+
+      # Update stage start date
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.grow_tent_stage_start_date
+        data:
+          date: "{{ now().strftime('%Y-%m-%d') }}"
+
+      # Sync environment targets from the new profile sensors
+      - delay:
+          seconds: 2
+
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.grow_tent_humidity_target
+        data:
+          value: "{{ states('sensor.grow_tent_recommended_humidity') | float(50) }}"
+
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.grow_tent_temp_target_lights_on
+        data:
+          value: "{{ states('sensor.grow_tent_recommended_temp_lights_on') | float(23) }}"
+
+      - action: notify.mobile_app_fraser_s_iphone
+        data:
+          message: >
+            🌱 Stage advanced: {{ current }} → {{ new_stage }}
+            ({{ states('sensor.grow_tent_stage_display') }})
+            Day {{ states('sensor.grow_tent_days_since_planting') }} since planting.
+            New targets:
+            • LED: {{ states('sensor.grow_tent_target_led_pct') }}%
+            • Light hours: {{ states('sensor.grow_tent_target_light_hours') }}h
+            • Humidity: {{ states('sensor.grow_tent_recommended_humidity') }}%
+            • Temp: {{ states('sensor.grow_tent_recommended_temp_lights_on') }}°C
+            • Fan: {{ states('sensor.grow_tent_recommended_extractor_pct') }}%
+          data:
+            push:
+              sound: default
+
+      - action: logbook.log
+        data:
+          name: "Grow Tent"
+          message: "Stage advanced from {{ current }} to {{ new_stage }}"
+
+  # =========================================================================
+  # RESET GROW – Full reset for new grow cycle
+  # =========================================================================
+  grow_tent_reset_grow:
+    alias: "Grow Tent: Reset for New Grow"
+    description: >
+      Resets all grow-related tracking for a brand new grow cycle.
+      Sets stage to clones, clears dates, resets counters.
+    mode: single
+    sequence:
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.grow_tent_stage
+        data:
+          option: "clones"
+
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.grow_tent_plant_date
+        data:
+          date: "{{ now().strftime('%Y-%m-%d') }}"
+
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.grow_tent_stage_start_date
+        data:
+          date: "{{ now().strftime('%Y-%m-%d') }}"
+
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.grow_tent_reservoir_age_days
+        data:
+          value: 0
+
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.grow_tent_ph_doses_this_hour
+        data:
+          value: 0
+
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.grow_tent_dosing_in_progress
+
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.grow_tent_reservoir_change_needed
+
+      # Sync targets from clones profile
+      - delay:
+          seconds: 2
+
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.grow_tent_humidity_target
+        data:
+          value: "{{ states('sensor.grow_tent_recommended_humidity') | float(70) }}"
+
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.grow_tent_temp_target_lights_on
+        data:
+          value: "{{ states('sensor.grow_tent_recommended_temp_lights_on') | float(23) }}"
+
+      - action: notify.mobile_app_fraser_s_iphone
+        data:
+          message: >
+            🌱 New grow cycle started!
+            Stage: Clones / Seedling
+            Plant date: {{ now().strftime('%Y-%m-%d') }}
+
+      - action: logbook.log
+        data:
+          name: "Grow Tent"
+          message: "New grow cycle started – reset to clones stage"

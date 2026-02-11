@@ -1,0 +1,224 @@
+###############################################################################
+# GROW TENT – NOTIFICATION AUTOMATIONS
+# File: packages/grow_tent/grow_tent_notifications.yaml
+#
+# Daily summaries, reservoir reminders, and weekly reports.
+# Entity IDs marked # TODO: ENTITY_ID are placeholders.
+###############################################################################
+
+automation:
+  # =========================================================================
+  # 080 – DAILY SUMMARY
+  # Sends at 1 hour after lights off to capture full day's data
+  # =========================================================================
+  - id: auto_grow_080_daily_summary
+    alias: "Grow 080 – Daily Summary"
+    description: "Comprehensive daily report of grow tent status"
+    mode: single
+    trace:
+      stored_traces: 10
+
+    triggers:
+      - trigger: template
+        value_template: >
+          {% set off_hour = states('sensor.grow_tent_lights_off_hour') | int(0) %}
+          {% set summary_hour = (off_hour + 1) % 24 %}
+          {{ now().hour == summary_hour and now().minute == 0 }}
+
+    conditions:
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_stage') not in ['idle'] }}
+
+    actions:
+      - variables:
+          stage_display: "{{ states('sensor.grow_tent_stage_display') }}"
+          days_stage: "{{ states('sensor.grow_tent_days_in_stage') | int(0) }}"
+          days_total: "{{ states('sensor.grow_tent_days_since_planting') | int(0) }}"
+          t_air: "{{ states('sensor.marshydro_temperature') | float(0) }}"
+          rh: "{{ states('sensor.marshydro_humidity') | float(0) }}"
+          vpd: "{{ states('sensor.grow_tent_vpd') | float(0) }}"
+          vpd_target: "{{ states('sensor.grow_tent_vpd_target') | float(0) }}"
+          t_water: "{{ states('sensor.aquatic_water_temp') | float(0) }}"
+          ph: "{{ states('sensor.aquatic_ph') | float(0) }}"
+          res_age: "{{ states('sensor.grow_tent_reservoir_age') | float(0) }}"
+          daily_kwh: "{{ states('sensor.grow_tent_total_energy_daily') | float(0) }}"
+          daily_cost: "{{ states('sensor.grow_tent_daily_cost') | float(0) }}"
+          mode: "{{ states('input_select.grow_tent_mode') }}"
+
+      - action: notify.mobile_app_fraser_s_iphone
+        data:
+          message: >
+            🌱 DAILY REPORT – {{ stage_display }}
+            Day {{ days_total }} (stage day {{ days_stage }})
+            Mode: {{ mode }}
+
+            Environment:
+            • Air: {{ t_air }}°C | RH: {{ rh }}%
+            • VPD: {{ vpd }} kPa (target: {{ vpd_target }})
+            • Water: {{ t_water }}°C | pH: {{ ph }}
+
+            Reservoir: {{ res_age | round(1) }} days old
+
+            Energy: {{ daily_kwh | round(2) }} kWh ({{ daily_cost }} CHF)
+
+      - action: logbook.log
+        data:
+          name: "Grow Tent"
+          message: >
+            Daily summary: {{ stage_display }}, day {{ days_total }},
+            air {{ t_air }}°C, RH {{ rh }}%, VPD {{ vpd }} kPa
+
+  # =========================================================================
+  # 082 – RESERVOIR CHANGE REMINDER
+  # =========================================================================
+  - id: auto_grow_082_reservoir_reminder
+    alias: "Grow 082 – Reservoir Change Reminder"
+    description: "Reminds to change reservoir water every 7 days"
+    mode: single
+    trace:
+      stored_traces: 5
+
+    triggers:
+      - trigger: time
+        at: "09:00:00"
+
+    conditions:
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_stage') not in ['harvest', 'idle'] }}
+      - condition: template
+        value_template: >
+          {{ states('sensor.grow_tent_reservoir_age') | float(0) >= 7 }}
+
+    actions:
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.grow_tent_reservoir_change_needed
+
+      - variables:
+          age: "{{ states('sensor.grow_tent_reservoir_age') | float(0) | round(1) }}"
+          stage: "{{ states('sensor.grow_tent_stage_display') }}"
+          litres: "{{ states('input_number.grow_tent_reservoir_litres') | float(100) }}"
+
+      - action: notify.mobile_app_fraser_s_iphone
+        data:
+          message: >
+            🌱 RESERVOIR CHANGE NEEDED
+            Age: {{ age }} days (max 7)
+            Stage: {{ stage }}
+
+            Dosing recipe for {{ litres }}L:
+            {% set sensors = [
+              ('Base', 'sensor.grow_tent_dose_base_volume'),
+              ('Grow', 'sensor.grow_tent_dose_grow_volume'),
+              ('Early Flower', 'sensor.grow_tent_dose_early_flower_volume'),
+              ('Late Flower', 'sensor.grow_tent_dose_late_flower_volume'),
+              ('KaliCan', 'sensor.grow_tent_dose_kalican_volume'),
+              ('SanaCan', 'sensor.grow_tent_dose_sanacan_volume')
+            ] %}
+            {% for name, entity in sensors %}
+            {% set vol = states(entity) | float(0) %}
+            {% if vol > 0 %}• {{ name }}: {{ vol }} ml
+            {% endif %}
+            {% endfor %}
+          data:
+            push:
+              interruption-level: time-sensitive
+
+  # =========================================================================
+  # 084 – WEEKLY PROGRESS REPORT
+  # =========================================================================
+  - id: auto_grow_084_weekly_report
+    alias: "Grow 084 – Weekly Progress Report"
+    description: "Weekly summary with energy totals and stage progression"
+    mode: single
+    trace:
+      stored_traces: 5
+
+    triggers:
+      - trigger: time
+        at: "20:00:00"
+
+    conditions:
+      # Sunday evening only
+      - condition: template
+        value_template: "{{ now().weekday() == 6 }}"
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_stage') not in ['idle'] }}
+
+    actions:
+      - variables:
+          stage_display: "{{ states('sensor.grow_tent_stage_display') }}"
+          days_total: "{{ states('sensor.grow_tent_days_since_planting') | int(0) }}"
+          monthly_kwh: "{{ states('sensor.grow_tent_total_energy_monthly') | float(0) }}"
+          monthly_cost: "{{ states('sensor.grow_tent_monthly_cost') | float(0) }}"
+          vpd: "{{ states('sensor.grow_tent_vpd') | float(0) }}"
+          vpd_target: "{{ states('sensor.grow_tent_vpd_target') | float(0) }}"
+
+      - action: notify.mobile_app_fraser_s_iphone
+        data:
+          message: >
+            🌱 WEEKLY REPORT – {{ stage_display }}
+            Day {{ days_total }} since planting
+
+            This month's energy:
+            • Total: {{ monthly_kwh | round(2) }} kWh
+            • Cost: {{ monthly_cost }} CHF
+            {% set devices = [
+              ('Light', 'sensor.grow_tent_light_energy_monthly'),
+              ('Heater', 'sensor.grow_tent_heater_energy_monthly'),
+              ('Water Heater', 'sensor.grow_tent_aquatic_heater_energy_monthly'),
+              ('Humidifier', 'sensor.grow_tent_humidifier_energy_monthly'),
+              ('Extractor', 'sensor.grow_tent_extractor_energy_monthly'),
+              ('Water Pump', 'sensor.grow_tent_water_pump_energy_monthly')
+            ] %}
+            {% for name, entity in devices %}
+            {% set v = states(entity) | float(0) %}
+            {% if v > 0 %}• {{ name }}: {{ v | round(2) }} kWh
+            {% endif %}
+            {% endfor %}
+
+            Current VPD: {{ vpd }} kPa (target: {{ vpd_target }})
+
+  # =========================================================================
+  # 086 – MODE CHANGE NOTIFICATION
+  # =========================================================================
+  - id: auto_grow_086_mode_change
+    alias: "Grow 086 – Mode Change Notification"
+    description: "Notifies when the grow tent operating mode changes"
+    mode: single
+    trace:
+      stored_traces: 5
+
+    triggers:
+      - trigger: state
+        entity_id: input_select.grow_tent_mode
+
+    conditions:
+      - condition: template
+        value_template: >
+          {{ trigger.from_state.state != trigger.to_state.state }}
+
+    actions:
+      - action: notify.mobile_app_fraser_s_iphone
+        data:
+          message: >
+            🌱 Mode changed: {{ trigger.from_state.state }} → {{ trigger.to_state.state }}
+            {% if trigger.to_state.state == 'active' %}
+            Full automation active — all devices will be controlled.
+            {% elif trigger.to_state.state == 'shadow' %}
+            Shadow mode — notifications only, no device control.
+            {% elif trigger.to_state.state == 'manual' %}
+            Manual mode — all automations paused.
+            {% elif trigger.to_state.state == 'idle' %}
+            Idle mode — system dormant.
+            {% endif %}
+
+      - action: logbook.log
+        data:
+          name: "Grow Tent"
+          message: >
+            Mode changed from {{ trigger.from_state.state }}
+            to {{ trigger.to_state.state }}

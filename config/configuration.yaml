@@ -44,6 +44,13 @@ homeassistant:
     jacuzzi: !include packages/jacuzzi_system.yaml
     ev_system: !include packages/ev_system.yaml
     # energy_orchestrator: !include packages/energy_orchestrator_system.yaml  # Phase 1C
+    # --- Grow Tent (6 package files) ---
+    grow_tent_system: !include packages/grow_tent/grow_tent_system.yaml
+    grow_tent_sensors: !include packages/grow_tent/grow_tent_sensors.yaml
+    grow_tent_automations: !include packages/grow_tent/grow_tent_automations.yaml
+    grow_tent_scripts: !include packages/grow_tent/grow_tent_scripts.yaml
+    grow_tent_energy: !include packages/grow_tent/grow_tent_energy.yaml
+    grow_tent_notifications: !include packages/grow_tent/grow_tent_notifications.yaml
 
 # =============================================================================
 # AUTOMATIONS (subdirectory per system, merged into one list)

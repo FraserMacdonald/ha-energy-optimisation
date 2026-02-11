@@ -1,0 +1,778 @@
+###############################################################################
+# GROW TENT – AUTOMATIONS
+# File: packages/grow_tent/grow_tent_automations.yaml
+#
+# All automations check grow_tent_mode:
+#   active → full actuation
+#   shadow → notify only (no switches/lights/fans)
+#   manual/idle → disabled
+#
+# Entity IDs marked # TODO: ENTITY_ID are placeholders.
+###############################################################################
+
+automation:
+  # =========================================================================
+  # 001 – LIGHT ON (Sunrise Ramp)
+  # =========================================================================
+  - id: auto_grow_001_light_on
+    alias: "Grow 001 – Lights On (Sunrise Ramp)"
+    description: "Gradually ramps LED to target brightness over sunrise_ramp_minutes"
+    mode: single
+    trace:
+      stored_traces: 10
+
+    triggers:
+      - trigger: template
+        value_template: >
+          {{ now().hour == states('input_number.grow_tent_lights_on_hour') | int(6)
+             and now().minute == 0 }}
+
+    conditions:
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_mode') in ['active', 'shadow'] }}
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_stage') not in ['harvest', 'idle'] }}
+
+    actions:
+      - variables:
+          target_pct: "{{ states('sensor.grow_tent_target_led_pct') | int(20) }}"
+          ramp_min: "{{ states('input_number.grow_tent_sunrise_ramp_minutes') | int(30) }}"
+          steps: "{{ [ramp_min, 1] | max }}"
+          step_pct: "{{ (target_pct / steps) | round(1) }}"
+          step_delay_sec: "{{ ((ramp_min * 60) / steps) | int }}"
+          is_shadow: "{{ states('input_select.grow_tent_mode') == 'shadow' }}"
+
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.grow_tent_lights_on
+
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ is_shadow }}"
+            sequence:
+              - action: notify.mobile_app_fraser_s_iphone
+                data:
+                  message: >
+                    🌱 SHADOW: Would ramp LED to {{ target_pct }}%
+                    over {{ ramp_min }} min ({{ steps }} steps of {{ step_pct }}%)
+        default:
+          - repeat:
+              count: "{{ steps }}"
+              sequence:
+                - variables:
+                    current_pct: "{{ ((repeat.index) * step_pct) | int }}"
+                - action: light.turn_on
+                  target:
+                    entity_id: light.marshydro_light  # TODO: ENTITY_ID
+                  data:
+                    brightness_pct: "{{ [current_pct, target_pct] | min }}"
+                - delay:
+                    seconds: "{{ step_delay_sec }}"
+
+      - action: logbook.log
+        data:
+          name: "Grow Tent"
+          message: "Lights ON – ramped to {{ target_pct }}%"
+
+  # =========================================================================
+  # 002 – LIGHT OFF (Sunset Ramp)
+  # =========================================================================
+  - id: auto_grow_002_light_off
+    alias: "Grow 002 – Lights Off (Sunset Ramp)"
+    description: "Gradually dims LED to 0% over sunset_ramp_minutes"
+    mode: single
+    trace:
+      stored_traces: 10
+
+    triggers:
+      - trigger: template
+        value_template: >
+          {% set off_hour = states('sensor.grow_tent_lights_off_hour') | int(0) %}
+          {% set ramp = states('input_number.grow_tent_sunset_ramp_minutes') | int(30) %}
+          {% set pre_min = ramp %}
+          {% set pre_hour = (off_hour * 60 - pre_min) // 60 %}
+          {% set pre_minute = (off_hour * 60 - pre_min) % 60 %}
+          {{ now().hour == pre_hour and now().minute == pre_minute }}
+
+    conditions:
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_mode') in ['active', 'shadow'] }}
+
+    actions:
+      - variables:
+          current_pct: "{{ states('sensor.grow_tent_target_led_pct') | int(20) }}"
+          ramp_min: "{{ states('input_number.grow_tent_sunset_ramp_minutes') | int(30) }}"
+          steps: "{{ [ramp_min, 1] | max }}"
+          step_pct: "{{ (current_pct / steps) | round(1) }}"
+          step_delay_sec: "{{ ((ramp_min * 60) / steps) | int }}"
+          is_shadow: "{{ states('input_select.grow_tent_mode') == 'shadow' }}"
+
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ is_shadow }}"
+            sequence:
+              - action: notify.mobile_app_fraser_s_iphone
+                data:
+                  message: >
+                    🌱 SHADOW: Would ramp LED from {{ current_pct }}% to 0%
+                    over {{ ramp_min }} min
+        default:
+          - repeat:
+              count: "{{ steps }}"
+              sequence:
+                - variables:
+                    dim_pct: "{{ [current_pct - (repeat.index * step_pct), 0] | max | int }}"
+                - action: light.turn_on
+                  target:
+                    entity_id: light.marshydro_light  # TODO: ENTITY_ID
+                  data:
+                    brightness_pct: "{{ dim_pct }}"
+                - delay:
+                    seconds: "{{ step_delay_sec }}"
+          - action: light.turn_off
+            target:
+              entity_id: light.marshydro_light  # TODO: ENTITY_ID
+
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.grow_tent_lights_on
+
+      - action: logbook.log
+        data:
+          name: "Grow Tent"
+          message: "Lights OFF – sunset ramp complete"
+
+  # =========================================================================
+  # 010 – TEMPERATURE CONTROL
+  # =========================================================================
+  - id: auto_grow_010_temp_control
+    alias: "Grow 010 – Temperature Control"
+    description: "Heater on/off with deadband hysteresis"
+    mode: restart
+    trace:
+      stored_traces: 10
+
+    triggers:
+      - trigger: state
+        entity_id: sensor.marshydro_temperature  # TODO: ENTITY_ID
+      - trigger: time_pattern
+        minutes: "/5"
+
+    conditions:
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_mode') in ['active', 'shadow'] }}
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_stage') not in ['harvest', 'idle'] }}
+
+    actions:
+      - variables:
+          t_air: "{{ states('sensor.marshydro_temperature') | float(0) }}"
+          lights_on: "{{ is_state('input_boolean.grow_tent_lights_on', 'on') }}"
+          target: >
+            {{ states('input_number.grow_tent_temp_target_lights_on') | float(23)
+               if lights_on else
+               states('input_number.grow_tent_temp_target_lights_off') | float(20) }}
+          deadband: "{{ states('input_number.grow_tent_temp_deadband') | float(1.0) }}"
+          heater_on: "{{ is_state('switch.shelly_heater', 'on') }}"
+          is_shadow: "{{ states('input_select.grow_tent_mode') == 'shadow' }}"
+
+          need_heat: "{{ t_air < (target - deadband) }}"
+          need_cool: "{{ t_air > (target + deadband) }}"
+
+      - choose:
+          # Too cold → heater ON
+          - conditions:
+              - condition: template
+                value_template: "{{ need_heat and not heater_on }}"
+            sequence:
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ is_shadow }}"
+                    sequence:
+                      - action: notify.mobile_app_fraser_s_iphone
+                        data:
+                          message: >
+                            🌱 SHADOW: Would turn ON heater.
+                            Temp {{ t_air }}°C < {{ (target - deadband) | round(1) }}°C
+                            (target {{ target }}°C, deadband {{ deadband }}°C)
+                default:
+                  - action: switch.turn_on
+                    target:
+                      entity_id: switch.shelly_heater  # TODO: ENTITY_ID
+
+          # Too hot → heater OFF
+          - conditions:
+              - condition: template
+                value_template: "{{ need_cool and heater_on }}"
+            sequence:
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ is_shadow }}"
+                    sequence:
+                      - action: notify.mobile_app_fraser_s_iphone
+                        data:
+                          message: >
+                            🌱 SHADOW: Would turn OFF heater.
+                            Temp {{ t_air }}°C > {{ (target + deadband) | round(1) }}°C
+                default:
+                  - action: switch.turn_off
+                    target:
+                      entity_id: switch.shelly_heater  # TODO: ENTITY_ID
+
+          # At target → heater OFF (no overshoot)
+          - conditions:
+              - condition: template
+                value_template: "{{ t_air >= target and heater_on }}"
+            sequence:
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ not is_shadow }}"
+                    sequence:
+                      - action: switch.turn_off
+                        target:
+                          entity_id: switch.shelly_heater  # TODO: ENTITY_ID
+
+  # =========================================================================
+  # 020 – HUMIDITY CONTROL
+  # =========================================================================
+  - id: auto_grow_020_humidity_control
+    alias: "Grow 020 – Humidity Control"
+    description: "Extractor fan speed + humidifier for humidity regulation"
+    mode: restart
+    trace:
+      stored_traces: 10
+
+    triggers:
+      - trigger: state
+        entity_id: sensor.marshydro_humidity  # TODO: ENTITY_ID
+      - trigger: time_pattern
+        minutes: "/5"
+
+    conditions:
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_mode') in ['active', 'shadow'] }}
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_stage') not in ['harvest', 'idle'] }}
+
+    actions:
+      - variables:
+          rh: "{{ states('sensor.marshydro_humidity') | float(50) }}"
+          target: "{{ states('input_number.grow_tent_humidity_target') | float(70) }}"
+          deadband: "{{ states('input_number.grow_tent_humidity_deadband') | float(5) }}"
+          fan_speed: "{{ states('sensor.grow_tent_target_fan_speed') | int(25) }}"
+          is_shadow: "{{ states('input_select.grow_tent_mode') == 'shadow' }}"
+
+          humidifier_on: "{{ rh < (target - deadband) }}"
+          humidifier_off: "{{ rh >= target }}"
+
+      # Set extractor fan speed (coordinated with temp via sensor)
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ is_shadow }}"
+            sequence:
+              - action: notify.mobile_app_fraser_s_iphone
+                data:
+                  message: >
+                    🌱 SHADOW: Would set extractor to {{ fan_speed }}%.
+                    RH {{ rh }}% (target {{ target }}%, deadband {{ deadband }}%).
+                    Humidifier: {{ 'ON' if humidifier_on else 'OFF' if humidifier_off else 'no change' }}
+        default:
+          - action: fan.set_percentage
+            target:
+              entity_id: fan.esphome_extractor  # TODO: ENTITY_ID
+            data:
+              percentage: "{{ fan_speed }}"
+
+          # Humidifier control
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ humidifier_on }}"
+                sequence:
+                  - action: switch.turn_on
+                    target:
+                      entity_id: switch.shelly_humidifier  # TODO: ENTITY_ID
+              - conditions:
+                  - condition: template
+                    value_template: "{{ humidifier_off }}"
+                sequence:
+                  - action: switch.turn_off
+                    target:
+                      entity_id: switch.shelly_humidifier  # TODO: ENTITY_ID
+
+  # =========================================================================
+  # 030 – WATER TEMPERATURE CONTROL
+  # =========================================================================
+  - id: auto_grow_030_water_temp_control
+    alias: "Grow 030 – Water Temperature Control"
+    description: "Aquatic heater with deadband hysteresis"
+    mode: restart
+    trace:
+      stored_traces: 10
+
+    triggers:
+      - trigger: state
+        entity_id: sensor.aquatic_water_temp  # TODO: ENTITY_ID
+      - trigger: time_pattern
+        minutes: "/5"
+
+    conditions:
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_mode') in ['active', 'shadow'] }}
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_stage') not in ['harvest', 'idle'] }}
+
+    actions:
+      - variables:
+          t_water: "{{ states('sensor.aquatic_water_temp') | float(0) }}"
+          target: "{{ states('input_number.grow_tent_water_temp_target') | float(20) }}"
+          deadband: "{{ states('input_number.grow_tent_water_temp_deadband') | float(1.0) }}"
+          heater_on: "{{ is_state('switch.shelly_aquatic_heater', 'on') }}"
+          is_shadow: "{{ states('input_select.grow_tent_mode') == 'shadow' }}"
+
+      - choose:
+          # Too cold → heater ON
+          - conditions:
+              - condition: template
+                value_template: "{{ t_water < (target - deadband) and not heater_on }}"
+            sequence:
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ is_shadow }}"
+                    sequence:
+                      - action: notify.mobile_app_fraser_s_iphone
+                        data:
+                          message: >
+                            🌱 SHADOW: Would turn ON aquatic heater.
+                            Water {{ t_water }}°C (target {{ target }}°C)
+                default:
+                  - action: switch.turn_on
+                    target:
+                      entity_id: switch.shelly_aquatic_heater  # TODO: ENTITY_ID
+
+          # Warm enough → heater OFF
+          - conditions:
+              - condition: template
+                value_template: "{{ t_water > (target + deadband) and heater_on }}"
+            sequence:
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ is_shadow }}"
+                    sequence:
+                      - action: notify.mobile_app_fraser_s_iphone
+                        data:
+                          message: >
+                            🌱 SHADOW: Would turn OFF aquatic heater.
+                            Water {{ t_water }}°C (target {{ target }}°C)
+                default:
+                  - action: switch.turn_off
+                    target:
+                      entity_id: switch.shelly_aquatic_heater  # TODO: ENTITY_ID
+
+  # =========================================================================
+  # 040 – pH AUTO-CORRECTION (Phase 2 – disabled by condition)
+  # =========================================================================
+  - id: auto_grow_040_ph_correction
+    alias: "Grow 040 – pH Auto-Correction"
+    description: "Phase 2: auto-correct pH with pumps 7/8. Disabled until pumps configured."
+    mode: single
+    trace:
+      stored_traces: 10
+
+    triggers:
+      - trigger: time_pattern
+        minutes: "/30"
+
+    conditions:
+      # Phase 2 gate – remove this condition when pumps are ready
+      - condition: template
+        value_template: "{{ false }}"
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_mode') == 'active' }}
+      - condition: template
+        value_template: >
+          {{ is_state('input_boolean.grow_tent_dosing_in_progress', 'off') }}
+      - condition: template
+        value_template: >
+          {{ states('input_number.grow_tent_ph_doses_this_hour') | int(0)
+             < states('input_number.grow_tent_max_ph_doses_per_hour') | int(3) }}
+
+    actions:
+      - variables:
+          ph: "{{ states('sensor.aquatic_ph') | float(0) }}"
+          ph_low: "{{ states('input_number.grow_tent_ph_low_limit') | float(5.5) }}"
+          ph_high: "{{ states('input_number.grow_tent_ph_high_limit') | float(5.8) }}"
+          dose_ml: "{{ states('input_number.grow_tent_ph_dose_ml') | float(10) }}"
+          wait_min: "{{ states('input_number.grow_tent_ph_dose_wait_minutes') | int(10) }}"
+
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.grow_tent_dosing_in_progress
+
+      - choose:
+          # pH too high → dose pH Down (pump 7)
+          - conditions:
+              - condition: template
+                value_template: "{{ ph > ph_high }}"
+            sequence:
+              - action: script.grow_tent_dose_pump
+                data:
+                  pump_entity: switch.esphome_pump_7_ph_down  # TODO: ENTITY_ID
+                  target_ml: "{{ dose_ml }}"
+                  cal_entity: input_number.grow_tent_pump_7_ml_per_sec
+              - delay:
+                  minutes: "{{ wait_min }}"
+              # Re-check and half-dose if still out of range
+              - variables:
+                  ph_recheck: "{{ states('sensor.aquatic_ph') | float(0) }}"
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ ph_recheck > ph_high }}"
+                    sequence:
+                      - action: script.grow_tent_dose_pump
+                        data:
+                          pump_entity: switch.esphome_pump_7_ph_down
+                          target_ml: "{{ (dose_ml / 2) | round(0) }}"
+                          cal_entity: input_number.grow_tent_pump_7_ml_per_sec
+
+          # pH too low → dose pH Plus (pump 8)
+          - conditions:
+              - condition: template
+                value_template: "{{ ph < ph_low and ph > 0 }}"
+            sequence:
+              - action: script.grow_tent_dose_pump
+                data:
+                  pump_entity: switch.esphome_pump_8_ph_plus  # TODO: ENTITY_ID
+                  target_ml: "{{ dose_ml }}"
+                  cal_entity: input_number.grow_tent_pump_8_ml_per_sec
+              - delay:
+                  minutes: "{{ wait_min }}"
+              - variables:
+                  ph_recheck: "{{ states('sensor.aquatic_ph') | float(0) }}"
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ ph_recheck < ph_low }}"
+                    sequence:
+                      - action: script.grow_tent_dose_pump
+                        data:
+                          pump_entity: switch.esphome_pump_8_ph_plus
+                          target_ml: "{{ (dose_ml / 2) | round(0) }}"
+                          cal_entity: input_number.grow_tent_pump_8_ml_per_sec
+
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.grow_tent_ph_doses_this_hour
+        data:
+          value: "{{ states('input_number.grow_tent_ph_doses_this_hour') | int(0) + 1 }}"
+
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.grow_tent_last_ph_dose_time
+        data:
+          datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.grow_tent_dosing_in_progress
+
+  # =========================================================================
+  # 050 – NUTRIENT DOSING (Phase 2 – disabled by condition)
+  # =========================================================================
+  - id: auto_grow_050_nutrient_dose
+    alias: "Grow 050 – Nutrient Dosing Sequence"
+    description: "Phase 2: doses nutrients in correct order after reservoir change"
+    mode: single
+    trace:
+      stored_traces: 10
+
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.grow_tent_reservoir_change_needed
+        to: "off"
+
+    conditions:
+      # Phase 2 gate – remove when pumps are ready
+      - condition: template
+        value_template: "{{ false }}"
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_mode') == 'active' }}
+
+    actions:
+      - variables:
+          stage: "{{ states('input_select.grow_tent_stage') }}"
+          litres: "{{ states('input_number.grow_tent_reservoir_litres') | float(100) }}"
+
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.grow_tent_dosing_in_progress
+
+      # STEP 1: Stage nutrient FIRST (Grow / Early Flower / Late Flower)
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ stage in ['clones', 'veg_w1', 'veg_w2'] }}"
+            sequence:
+              - action: script.grow_tent_dose_pump
+                data:
+                  pump_entity: switch.esphome_pump_2_grow  # TODO: ENTITY_ID
+                  target_ml: "{{ states('sensor.grow_tent_dose_grow_volume') | float(0) }}"
+                  cal_entity: input_number.grow_tent_pump_2_ml_per_sec
+          - conditions:
+              - condition: template
+                value_template: "{{ stage.startswith('flower') }}"
+            sequence:
+              - action: script.grow_tent_dose_pump
+                data:
+                  pump_entity: switch.esphome_pump_3_early_flower  # TODO: ENTITY_ID
+                  target_ml: "{{ states('sensor.grow_tent_dose_early_flower_volume') | float(0) }}"
+                  cal_entity: input_number.grow_tent_pump_3_ml_per_sec
+          - conditions:
+              - condition: template
+                value_template: "{{ stage.startswith('flush') }}"
+            sequence:
+              - action: script.grow_tent_dose_pump
+                data:
+                  pump_entity: switch.esphome_pump_4_late_flower  # TODO: ENTITY_ID
+                  target_ml: "{{ states('sensor.grow_tent_dose_late_flower_volume') | float(0) }}"
+                  cal_entity: input_number.grow_tent_pump_4_ml_per_sec
+
+      - delay:
+          seconds: 30
+
+      # STEP 2: Base SECOND
+      - action: script.grow_tent_dose_pump
+        data:
+          pump_entity: switch.esphome_pump_1_base  # TODO: ENTITY_ID
+          target_ml: "{{ states('sensor.grow_tent_dose_base_volume') | float(0) }}"
+          cal_entity: input_number.grow_tent_pump_1_ml_per_sec
+
+      - delay:
+          seconds: 30
+
+      # STEP 3: KaliCan THIRD (if required)
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ states('sensor.grow_tent_dose_kalican_volume') | float(0) > 0 }}"
+            sequence:
+              - action: script.grow_tent_dose_pump
+                data:
+                  pump_entity: switch.esphome_pump_6_kalican  # TODO: ENTITY_ID
+                  target_ml: "{{ states('sensor.grow_tent_dose_kalican_volume') | float(0) }}"
+                  cal_entity: input_number.grow_tent_pump_6_ml_per_sec
+
+      # STEP 4: Wait for mixing then pH correction
+      - delay:
+          minutes: 5
+
+      - action: logbook.log
+        data:
+          name: "Grow Tent"
+          message: "Nutrients mixed. Running pH correction before SanaCan."
+
+      # pH correction would run here in active Phase 2
+
+      # STEP 5: SanaCan LAST (always last)
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ states('sensor.grow_tent_dose_sanacan_volume') | float(0) > 0 }}"
+            sequence:
+              - action: script.grow_tent_dose_pump
+                data:
+                  pump_entity: switch.esphome_pump_5_sanacan  # TODO: ENTITY_ID
+                  target_ml: "{{ states('sensor.grow_tent_dose_sanacan_volume') | float(0) }}"
+                  cal_entity: input_number.grow_tent_pump_5_ml_per_sec
+
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.grow_tent_dosing_in_progress
+
+      - action: logbook.log
+        data:
+          name: "Grow Tent"
+          message: >
+            Nutrient dosing complete for stage {{ stage }}.
+
+  # =========================================================================
+  # 060 – pH DOSE COUNTER RESET
+  # =========================================================================
+  - id: auto_grow_060_ph_counter_reset
+    alias: "Grow 060 – pH Dose Counter Reset"
+    description: "Resets hourly pH dose counter"
+    mode: single
+    trace:
+      stored_traces: 5
+
+    triggers:
+      - trigger: time_pattern
+        hours: "/1"
+        minutes: "0"
+
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.grow_tent_ph_doses_this_hour
+        data:
+          value: 0
+
+  # =========================================================================
+  # 065 – STAGE ADVANCE SUGGESTION
+  # =========================================================================
+  - id: auto_grow_065_stage_advance
+    alias: "Grow 065 – Stage Advance Suggestion"
+    description: "Notifies when expected duration for current stage is reached"
+    mode: single
+    trace:
+      stored_traces: 10
+
+    triggers:
+      - trigger: time
+        at: "08:00:00"
+
+    conditions:
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_stage') not in ['harvest', 'idle'] }}
+
+    actions:
+      - variables:
+          stage: "{{ states('input_select.grow_tent_stage') }}"
+          days: "{{ states('sensor.grow_tent_days_in_stage') | int(0) }}"
+          # Expected days per stage
+          expected: >
+            {% set durations = {
+              'clones': 14, 'veg_w1': 7, 'veg_w2': 7,
+              'flower_w1': 7, 'flower_w2': 7, 'flower_w3': 7,
+              'flower_w4': 7, 'flower_w5': 7, 'flower_w6': 7,
+              'flower_w7': 7, 'flush_w8': 7, 'flush_w9': 7
+            } %}
+            {{ durations.get(stage, 7) }}
+
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ days >= expected | int }}"
+            sequence:
+              - action: notify.mobile_app_fraser_s_iphone
+                data:
+                  message: >
+                    🌱 Stage "{{ states('sensor.grow_tent_stage_display') }}" has been
+                    running for {{ days }} days (expected {{ expected }}).
+                    Consider advancing to the next stage.
+                  data:
+                    push:
+                      sound: default
+
+  # =========================================================================
+  # 070 – OUT OF RANGE ALERTS
+  # =========================================================================
+  - id: auto_grow_070_out_of_range
+    alias: "Grow 070 – Environment Out of Range Alert"
+    description: "Alerts when any monitored parameter exceeds range for >10 min"
+    mode: single
+    trace:
+      stored_traces: 10
+
+    triggers:
+      - trigger: time_pattern
+        minutes: "/10"
+
+    conditions:
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_mode') in ['active', 'shadow'] }}
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_stage') not in ['harvest', 'idle'] }}
+
+    actions:
+      - variables:
+          stage: "{{ states('input_select.grow_tent_stage') }}"
+          t_air: "{{ states('sensor.marshydro_temperature') | float(0) }}"
+          rh: "{{ states('sensor.marshydro_humidity') | float(0) }}"
+          vpd: "{{ states('sensor.grow_tent_vpd') | float(0) }}"
+          t_water: "{{ states('sensor.aquatic_water_temp') | float(0) }}"
+          ph: "{{ states('sensor.aquatic_ph') | float(0) }}"
+
+          # Range checks
+          temp_high: >
+            {% if stage == 'clones' %}25
+            {% elif stage.startswith('veg') %}28
+            {% elif stage.startswith('flower') %}26
+            {% else %}24{% endif %}
+          temp_low: >
+            {% if stage == 'clones' %}18
+            {% elif stage.startswith('veg') %}18
+            {% else %}17{% endif %}
+          rh_high: >
+            {% set target = states('input_number.grow_tent_humidity_target') | int(70) %}
+            {{ target + 10 }}
+          rh_low: >
+            {% set target = states('input_number.grow_tent_humidity_target') | int(70) %}
+            {{ target - 15 }}
+
+          alerts: >
+            {% set ns = namespace(items=[]) %}
+            {% if t_air > temp_high | float %}
+              {% set ns.items = ns.items + ['Air temp HIGH: ' ~ t_air ~ '°C (max ' ~ temp_high ~ '°C)'] %}
+            {% endif %}
+            {% if t_air < temp_low | float and t_air > 0 %}
+              {% set ns.items = ns.items + ['Air temp LOW: ' ~ t_air ~ '°C (min ' ~ temp_low ~ '°C)'] %}
+            {% endif %}
+            {% if rh > rh_high | float %}
+              {% set ns.items = ns.items + ['Humidity HIGH: ' ~ rh ~ '% (max ' ~ rh_high ~ '%)'] %}
+            {% endif %}
+            {% if rh < rh_low | float and rh > 0 %}
+              {% set ns.items = ns.items + ['Humidity LOW: ' ~ rh ~ '% (min ' ~ rh_low ~ '%)'] %}
+            {% endif %}
+            {% if t_water > 22 and t_water > 0 %}
+              {% set ns.items = ns.items + ['Water temp HIGH: ' ~ t_water ~ '°C (max 22°C)'] %}
+            {% endif %}
+            {% if t_water < 18 and t_water > 0 %}
+              {% set ns.items = ns.items + ['Water temp LOW: ' ~ t_water ~ '°C (min 18°C)'] %}
+            {% endif %}
+            {% if ph > 5.8 and ph > 0 %}
+              {% set ns.items = ns.items + ['pH HIGH: ' ~ ph ~ ' (max 5.8)'] %}
+            {% endif %}
+            {% if ph < 5.5 and ph > 0 %}
+              {% set ns.items = ns.items + ['pH LOW: ' ~ ph ~ ' (min 5.5)'] %}
+            {% endif %}
+            {{ ns.items }}
+
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ alerts | length > 0 }}"
+            sequence:
+              - action: notify.mobile_app_fraser_s_iphone
+                data:
+                  message: >
+                    🌱 ALERT ({{ states('sensor.grow_tent_stage_display') }}):
+                    {% for a in alerts %}
+                    • {{ a }}
+                    {% endfor %}
+                  data:
+                    push:
+                      interruption-level: time-sensitive

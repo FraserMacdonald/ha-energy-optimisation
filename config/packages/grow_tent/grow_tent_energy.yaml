@@ -1,0 +1,213 @@
+###############################################################################
+# GROW TENT – ENERGY TRACKING
+# File: packages/grow_tent/grow_tent_energy.yaml
+#
+# Utility meters (daily + monthly) per device, tariff-aware cost sensors.
+# Source sensors are from Shelly plug energy counters and ESPHome.
+# Entity IDs marked # TODO: ENTITY_ID are placeholders.
+###############################################################################
+
+# =============================================================================
+# UTILITY METERS – Daily and Monthly energy tracking per device
+#
+# Source sensors should be total_increasing energy sensors (kWh) from
+# Shelly plugs or ESPHome energy integrations.
+# =============================================================================
+utility_meter:
+  # --- LED Light ---
+  grow_tent_light_energy_daily:
+    source: sensor.shelly_light_energy  # TODO: ENTITY_ID
+    name: "Grow Tent Light Energy Daily"
+    cycle: daily
+  grow_tent_light_energy_monthly:
+    source: sensor.shelly_light_energy  # TODO: ENTITY_ID
+    name: "Grow Tent Light Energy Monthly"
+    cycle: monthly
+
+  # --- Space Heater ---
+  grow_tent_heater_energy_daily:
+    source: sensor.shelly_heater_energy  # TODO: ENTITY_ID
+    name: "Grow Tent Heater Energy Daily"
+    cycle: daily
+  grow_tent_heater_energy_monthly:
+    source: sensor.shelly_heater_energy  # TODO: ENTITY_ID
+    name: "Grow Tent Heater Energy Monthly"
+    cycle: monthly
+
+  # --- Aquatic (Water) Heater ---
+  grow_tent_aquatic_heater_energy_daily:
+    source: sensor.shelly_aquatic_heater_energy  # TODO: ENTITY_ID
+    name: "Grow Tent Aquatic Heater Energy Daily"
+    cycle: daily
+  grow_tent_aquatic_heater_energy_monthly:
+    source: sensor.shelly_aquatic_heater_energy  # TODO: ENTITY_ID
+    name: "Grow Tent Aquatic Heater Energy Monthly"
+    cycle: monthly
+
+  # --- Humidifier ---
+  grow_tent_humidifier_energy_daily:
+    source: sensor.shelly_humidifier_energy  # TODO: ENTITY_ID
+    name: "Grow Tent Humidifier Energy Daily"
+    cycle: daily
+  grow_tent_humidifier_energy_monthly:
+    source: sensor.shelly_humidifier_energy  # TODO: ENTITY_ID
+    name: "Grow Tent Humidifier Energy Monthly"
+    cycle: monthly
+
+  # --- Water Pump (Circulation) ---
+  grow_tent_water_pump_energy_daily:
+    source: sensor.shelly_water_pump_energy  # TODO: ENTITY_ID
+    name: "Grow Tent Water Pump Energy Daily"
+    cycle: daily
+  grow_tent_water_pump_energy_monthly:
+    source: sensor.shelly_water_pump_energy  # TODO: ENTITY_ID
+    name: "Grow Tent Water Pump Energy Monthly"
+    cycle: monthly
+
+  # --- Extractor Fan ---
+  grow_tent_extractor_energy_daily:
+    source: sensor.esphome_extractor_energy  # TODO: ENTITY_ID
+    name: "Grow Tent Extractor Energy Daily"
+    cycle: daily
+  grow_tent_extractor_energy_monthly:
+    source: sensor.esphome_extractor_energy  # TODO: ENTITY_ID
+    name: "Grow Tent Extractor Energy Monthly"
+    cycle: monthly
+
+# =============================================================================
+# TEMPLATE SENSORS – Cost calculations and total energy
+# =============================================================================
+template:
+  - sensor:
+      # -----------------------------------------------------------------
+      # TOTAL DAILY ENERGY (sum of all daily utility meters)
+      # -----------------------------------------------------------------
+      - name: "Grow Tent Total Energy Daily"
+        unique_id: grow_tent_total_energy_daily
+        icon: mdi:flash
+        unit_of_measurement: "kWh"
+        device_class: energy
+        state_class: total_increasing
+        state: >
+          {% set devices = [
+            'sensor.grow_tent_light_energy_daily',
+            'sensor.grow_tent_heater_energy_daily',
+            'sensor.grow_tent_aquatic_heater_energy_daily',
+            'sensor.grow_tent_humidifier_energy_daily',
+            'sensor.grow_tent_water_pump_energy_daily',
+            'sensor.grow_tent_extractor_energy_daily'
+          ] %}
+          {% set ns = namespace(total=0) %}
+          {% for s in devices %}
+            {% set v = states(s) | float(0) %}
+            {% set ns.total = ns.total + v %}
+          {% endfor %}
+          {{ ns.total | round(3) }}
+
+      # -----------------------------------------------------------------
+      # TOTAL MONTHLY ENERGY
+      # -----------------------------------------------------------------
+      - name: "Grow Tent Total Energy Monthly"
+        unique_id: grow_tent_total_energy_monthly
+        icon: mdi:flash
+        unit_of_measurement: "kWh"
+        device_class: energy
+        state_class: total_increasing
+        state: >
+          {% set devices = [
+            'sensor.grow_tent_light_energy_monthly',
+            'sensor.grow_tent_heater_energy_monthly',
+            'sensor.grow_tent_aquatic_heater_energy_monthly',
+            'sensor.grow_tent_humidifier_energy_monthly',
+            'sensor.grow_tent_water_pump_energy_monthly',
+            'sensor.grow_tent_extractor_energy_monthly'
+          ] %}
+          {% set ns = namespace(total=0) %}
+          {% for s in devices %}
+            {% set v = states(s) | float(0) %}
+            {% set ns.total = ns.total + v %}
+          {% endfor %}
+          {{ ns.total | round(3) }}
+
+      # -----------------------------------------------------------------
+      # DAILY COST (uses shared tariff sensor)
+      # -----------------------------------------------------------------
+      - name: "Grow Tent Daily Cost"
+        unique_id: grow_tent_daily_cost
+        icon: mdi:currency-usd
+        unit_of_measurement: "CHF"
+        state: >
+          {% set kwh = states('sensor.grow_tent_total_energy_daily') | float(0) %}
+          {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.35) %}
+          {{ (kwh * rate) | round(2) }}
+
+      # -----------------------------------------------------------------
+      # MONTHLY COST
+      # -----------------------------------------------------------------
+      - name: "Grow Tent Monthly Cost"
+        unique_id: grow_tent_monthly_cost
+        icon: mdi:currency-usd
+        unit_of_measurement: "CHF"
+        state: >
+          {% set kwh = states('sensor.grow_tent_total_energy_monthly') | float(0) %}
+          {% set avg_rate = 0.30 %}
+          {{ (kwh * avg_rate) | round(2) }}
+
+      # -----------------------------------------------------------------
+      # PER-DEVICE DAILY COST BREAKDOWN
+      # -----------------------------------------------------------------
+      - name: "Grow Tent Light Daily Cost"
+        unique_id: grow_tent_light_daily_cost
+        icon: mdi:lightbulb
+        unit_of_measurement: "CHF"
+        state: >
+          {% set kwh = states('sensor.grow_tent_light_energy_daily') | float(0) %}
+          {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.35) %}
+          {{ (kwh * rate) | round(2) }}
+
+      - name: "Grow Tent Heater Daily Cost"
+        unique_id: grow_tent_heater_daily_cost
+        icon: mdi:radiator
+        unit_of_measurement: "CHF"
+        state: >
+          {% set kwh = states('sensor.grow_tent_heater_energy_daily') | float(0) %}
+          {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.35) %}
+          {{ (kwh * rate) | round(2) }}
+
+      - name: "Grow Tent Aquatic Heater Daily Cost"
+        unique_id: grow_tent_aquatic_heater_daily_cost
+        icon: mdi:thermometer-water
+        unit_of_measurement: "CHF"
+        state: >
+          {% set kwh = states('sensor.grow_tent_aquatic_heater_energy_daily') | float(0) %}
+          {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.35) %}
+          {{ (kwh * rate) | round(2) }}
+
+      # -----------------------------------------------------------------
+      # ENERGY PER GRAM (after harvest – manually set plant weight)
+      # -----------------------------------------------------------------
+      - name: "Grow Tent Energy Per Gram"
+        unique_id: grow_tent_energy_per_gram
+        icon: mdi:scale
+        unit_of_measurement: "kWh/g"
+        state: >
+          {% set total = states('sensor.grow_tent_total_energy_monthly') | float(0) %}
+          {% set grams = states('input_number.grow_tent_harvest_grams') | float(0) %}
+          {% if grams > 0 %}
+            {{ (total / grams) | round(2) }}
+          {% else %}
+            unavailable
+          {% endif %}
+
+# =============================================================================
+# INPUT NUMBER – Harvest tracking
+# =============================================================================
+input_number:
+  grow_tent_harvest_grams:
+    name: "Harvest Yield"
+    min: 0
+    max: 2000
+    step: 1
+    initial: 0
+    unit_of_measurement: "g"
+    icon: mdi:scale
