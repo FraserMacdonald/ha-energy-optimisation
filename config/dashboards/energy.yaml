@@ -17,17 +17,17 @@ views:
       # ── TARIFF + SURPLUS ──
       - type: custom:mushroom-template-card
         primary: >
-          {{ states('sensor.electricity_tariff') | title }} Tariff
+          {{ states('sensor.energy_tariff_current') | title }} Tariff
         secondary: >
           {% set surplus = states('sensor.energy_solar_surplus_w') | int(0) %}
           {% if surplus > 0 %}☀️ {{ surplus }}W surplus — exporting
           {% elif surplus == 0 %}Balanced
           {% else %}⚡ Importing {{ surplus | abs }}W from grid{% endif %}
         icon: |-
-          {% if states('sensor.electricity_tariff') == 'low' %}mdi:cash-check
+          {% if states('sensor.energy_tariff_current') == 'low' %}mdi:cash-check
           {% else %}mdi:cash{% endif %}
         icon_color: |-
-          {% if states('sensor.electricity_tariff') == 'low' %}green
+          {% if states('sensor.energy_tariff_current') == 'low' %}green
           {% else %}orange{% endif %}
 
       # ── SOLAR PRODUCTION ──
@@ -66,7 +66,7 @@ views:
       - type: custom:mushroom-template-card
         primary: "Horace — {{ states('input_number.ev_horace_current_soc') | int }}%"
         secondary: >
-          {{ states('device_tracker.horace') | title }}
+          {{ states('device_tracker.horace_location') | title }}
           {% if is_state('binary_sensor.horace_plugged', 'on') %}· 🔌 Plugged{% endif %}
         icon: mdi:car-electric
         icon_color: |-
@@ -80,7 +80,7 @@ views:
       - type: custom:mushroom-template-card
         primary: "Horatio — {{ states('input_number.ev_horatio_current_soc') | int }}%"
         secondary: >
-          {{ states('device_tracker.horatio') | title }}
+          {{ states('device_tracker.horatio_location') | title }}
           {% if is_state('binary_sensor.horatio_plugged', 'on') %}· 🔌 Plugged{% endif %}
         icon: mdi:car-electric
         icon_color: |-

@@ -158,5 +158,53 @@ See `docs/011_thermal_model_and_ev_calendar_fixes.md` for full details.
 - [x] Morning SOC check + morning summary + orchestrator demand sensor updated to use `_today`
 - [x] yamllint passes on all modified files
 
+## What's Done (Phase 1D – EV Notification Gaps)
+5 notification gaps fixed across 2 files, plus dashboard fixes.
+
+### EV Notification Gaps (ev_automations.yaml):
+- [x] `ev_042` rewritten: wake home cars with stale plug state → wait 30s → re-check → alert if not plugged (Gap 5+1A)
+  - Removed plug-state condition from `conditions:`, moved check into actions after wake
+  - Heather notified if at home (Gap 1A)
+- [x] `ev_030` plug-in-tonight notification added after planner's final `shell_command.log_decision`
+  - Fires when `night_charge_car` needs charging (current SOC < target)
+  - Notifies Fraser always, Heather if at home (Gap 2)
+  - Uses chained `- variables:` blocks for dependent variable resolution
+- [x] `ev_061` + `ev_062` departure reminders: added `trip_km` variable and updated message with trip distance + drive duration (Gap 4)
+
+### EV Notification Gaps (ev_notification_automations.yaml):
+- [x] `ev_079` morning briefing: personalized messages per driver (Gap 3)
+  - Fraser: both cars' status, his trip, recommended car, overnight summary, climate note
+  - Heather: both cars' status, her trip, plug-in warning if her car isn't plugged, climate note
+  - Added `fraser_dep_time`, `heather_dep_time`, `fraser_travel_min`, `heather_travel_min` variables
+- [x] `ev_080` plug-in nag: Heather now notified if at home (Gap 1B)
+
+### Feedback Loop Notifications:
+- [x] `ev_067` night charge started: now notifies both Fraser and Heather (was Fraser-only)
+- [x] `ev_083` solar charge target reached (NEW): notifies assigned driver when SOC reaches charge limit during solar charging
+- [x] `ev_084` charging session ended (NEW): notifies assigned driver when charging stops, with final SOC, source, target status, and solar/grid kWh breakdown
+- [x] `jacuzzi_072` ready (NEW): notifies both users when jacuzzi crosses 39.5°C during heating session with upcoming event
+  - Time-sensitive push, includes start temp and elapsed heating time
+
+### Dashboard Fixes:
+- [x] Bug fix: `dashboards/jacuzzi.yaml` had `type: sections` with `cards:` — incompatible in HA 2026 (sections views require `sections:` key). Removed `type: sections` and `max_columns: 2` to match EV/Energy dashboards
+- [x] `dashboards/jacuzzi.yaml` + `dashboards/energy.yaml`: updated stale `sensor.electricity_tariff` → `sensor.energy_tariff_current` (4 refs total)
+- [x] `dashboards/ev.yaml` + `dashboards/energy.yaml`: fixed `device_tracker.horace` / `device_tracker.horatio` → `device_tracker.horace_location` / `device_tracker.horatio_location` (4 refs — was showing "Unknown")
+- [x] yamllint passes on all modified files
+
+## What's Done (Grow Tent Dashboard)
+- [x] `dashboards/grow_tent.yaml` created (mushroom cards + mini-graph-card, matching existing dashboard style)
+  - Status header: stage display, day count, cultivation phase, mode, lights state, LED%, photoperiod
+  - Environment: air temp + humidity vs targets (colour-coded), VPD vs target + fan speed
+  - Air graph: 24h mini-graph (temp + humidity, dual-axis)
+  - Water & pH: water temp + pH vs targets (colour-coded), reservoir age + volume + change alert
+  - Water graph: 24h mini-graph (water temp + pH, dual-axis)
+  - Nutrient recipe: per-reservoir volumes for current stage (6 nutrients)
+  - Quick actions: Advance Stage, Water Change, New Grow (with confirmation)
+  - Energy: daily + monthly totals with CHF cost, per-device daily breakdown (7 devices)
+  - Environment settings: mode, stage, light schedule, temp/humidity/water targets + deadbands
+  - pH & dosing settings: pH target/limits, dose config, reservoir volume, harvest yield, energy/gram
+- [x] `configuration.yaml` updated: `lovelace-grow-tent` dashboard registered (YAML mode, sidebar visible)
+- [x] yamllint passes on all files
+
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).

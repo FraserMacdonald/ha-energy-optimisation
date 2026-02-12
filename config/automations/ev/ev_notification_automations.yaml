@@ -237,6 +237,12 @@
         message: >
           {{ car }} night charging started. Current: {{ soc }}% → Target: {{ target }}%. Tariff: low.
 
+    - action: notify.mobile_app_heather_s_iphone
+      data:
+        title: "EV Night Charging"
+        message: >
+          {{ car }} night charging started. Current: {{ soc }}% → Target: {{ target }}%. Tariff: low.
+
 
 # ==============================================================================
 # A7 — 068 – NIGHT CHARGE COMPLETE
@@ -578,9 +584,9 @@
         horace_home: "{{ is_state('device_tracker.horace_location', 'home') }}"
         horatio_home: "{{ is_state('device_tracker.horatio_location', 'home') }}"
 
-        # Plug status
-        horace_plugged: "{{ is_state('binary_sensor.horace_charge_cable', 'on') }}"
-        horatio_plugged: "{{ is_state('binary_sensor.horatio_charge_cable', 'on') }}"
+        # Plug status (treat unknown/unavailable as plugged — car is asleep)
+        horace_plugged: "{{ states('binary_sensor.horace_charge_cable') != 'off' }}"
+        horatio_plugged: "{{ states('binary_sensor.horatio_charge_cable') != 'off' }}"
 
         # Trip plans
         fraser_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
@@ -614,30 +620,60 @@
           {% endif %}
 
     - variables:
-        msg: >
+        fraser_dep_time: "{{ states('input_datetime.ev_fraser_departure_time') | as_timestamp | timestamp_custom('%H:%M', true) if states('input_datetime.ev_fraser_departure_time') not in ['unknown', 'unavailable'] else 'N/A' }}"
+        heather_dep_time: "{{ states('input_datetime.ev_heather_departure_time') | as_timestamp | timestamp_custom('%H:%M', true) if states('input_datetime.ev_heather_departure_time') not in ['unknown', 'unavailable'] else 'N/A' }}"
+        fraser_travel_min: "{{ states('input_number.ev_fraser_travel_minutes') | float(0) | round(0) }}"
+        heather_travel_min: "{{ states('input_number.ev_heather_travel_minutes') | float(0) | round(0) }}"
+
+    - variables:
+        car_status: >
           Horace: {{ horace_soc }}% ({{ horace_range }}km) {{ 'plugged' if horace_plugged else 'NOT plugged' }} {{ 'HOME' if horace_home else 'AWAY' }}
           Horatio: {{ horatio_soc }}% ({{ horatio_range }}km) {{ 'plugged' if horatio_plugged else 'NOT plugged' }} {{ 'HOME' if horatio_home else 'AWAY' }}
-          {% if fraser_km | float > 0 or heather_km | float > 0 %}
-          Trips: {% if fraser_km | float > 0 %}Fraser {{ fraser_car }} ({{ fraser_km | round(0) }}km, need {{ fraser_dep_soc }}%). {% endif %}{% if heather_km | float > 0 %}Heather {{ heather_car }} ({{ heather_km | round(0) }}km, need {{ heather_dep_soc }}%).{% endif %}
-          {% else %}
-          No trips planned today.
-          {% endif %}
-          {% if needs_climate and (fraser_km | float > 0 or heather_km | float > 0) %}
-          Climate: {{ outdoor_temp }}C — pre-conditioning will activate before departure.
-          {% endif %}
+        overnight_summary: >
           {% if total_charged | float > 0 %}
           Overnight: {{ total_charged }}kWh charged ({{ (horace_solar | float + horatio_solar | float) | round(1) }}kWh solar, {{ (horace_grid | float + horatio_grid | float) | round(1) }}kWh low-tariff).
+          {% endif %}
+        fraser_msg: >
+          {{ car_status }}
+          {% if fraser_km | float > 0 %}
+          Your trip: {{ fraser_car }}, {{ fraser_km | round(0) }}km, depart {{ fraser_dep_time }}, ~{{ fraser_travel_min }} min drive, need {{ fraser_dep_soc }}%.
+          {% if recommended_car != fraser_car %}Recommended car: {{ recommended_car }} (higher SOC).{% endif %}
+          {% else %}
+          No trip planned for you today.
+          {% endif %}
+          {% if heather_km | float > 0 %}
+          Heather: {{ heather_car }}, {{ heather_km | round(0) }}km.
+          {% endif %}
+          {{ overnight_summary }}
+          {% if needs_climate and fraser_km | float > 0 %}
+          Climate: {{ outdoor_temp }}°C — pre-conditioning will activate before departure.
+          {% endif %}
+        heather_msg: >
+          {{ car_status }}
+          {% if heather_km | float > 0 %}
+          Your trip: {{ heather_car }}, {{ heather_km | round(0) }}km, depart {{ heather_dep_time }}, ~{{ heather_travel_min }} min drive, need {{ heather_dep_soc }}%.
+          {% set my_car_plugged = horace_plugged if heather_car == 'Horace' else horatio_plugged %}
+          {% if not my_car_plugged %}{{ heather_car }} is NOT plugged in.{% endif %}
+          {% else %}
+          No trip planned for you today.
+          {% endif %}
+          {% if fraser_km | float > 0 %}
+          Fraser: {{ fraser_car }}, {{ fraser_km | round(0) }}km.
+          {% endif %}
+          {{ overnight_summary }}
+          {% if needs_climate and heather_km | float > 0 %}
+          Climate: {{ outdoor_temp }}°C — pre-conditioning will activate before departure.
           {% endif %}
 
     - action: notify.mobile_app_fraser_s_iphone
       data:
         title: "EV Morning Briefing"
-        message: "{{ msg }}"
+        message: "{{ fraser_msg }}"
 
     - action: notify.mobile_app_heather_s_iphone
       data:
         title: "EV Morning Briefing"
-        message: "{{ msg }}"
+        message: "{{ heather_msg }}"
 
     - action: logbook.log
       data:
@@ -668,11 +704,12 @@
       value_template: >
         {{ is_state('device_tracker.horace_location', 'home')
            or is_state('device_tracker.horatio_location', 'home') }}
-    # No car is plugged in
+    # No car is plugged in (only nag when explicitly off, not unknown/unavailable)
     - condition: template
       value_template: >
-        {{ not is_state('binary_sensor.horace_charge_cable', 'on')
-           and not is_state('binary_sensor.horatio_charge_cable', 'on') }}
+        {% set h = states('binary_sensor.horace_charge_cable') %}
+        {% set r = states('binary_sensor.horatio_charge_cable') %}
+        {{ h == 'off' and r == 'off' }}
 
   actions:
     - variables:
@@ -700,6 +737,20 @@
         data:
           push:
             interruption-level: time-sensitive
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ is_state('device_tracker.heather_s_iphone', 'home') }}"
+          sequence:
+            - action: notify.mobile_app_heather_s_iphone
+              data:
+                title: "Plug In a Tesla"
+                message: >
+                  No car is plugged in. Please plug in {{ plug_car }} ({{ plug_soc }}%).
+                data:
+                  push:
+                    interruption-level: time-sensitive
 
     - action: logbook.log
       data:
@@ -756,10 +807,10 @@
     - delay:
         minutes: 10
 
-    # Check if still not plugged
+    # Check if still not plugged (only nag when explicitly off)
     - condition: template
       value_template: >
-        {{ not is_state(cable_entity | trim, 'on') }}
+        {{ states(cable_entity | trim) == 'off' }}
 
     - variables:
         soc: >
@@ -881,3 +932,212 @@
                 name: "EV Disconnect"
                 message: >
                   {{ car | trim }} unplugged at {{ soc }}% (target {{ target }}%).
+
+
+# ==============================================================================
+# 083 – SOLAR CHARGE TARGET REACHED
+# Notifies the assigned driver when solar charging reaches the charge limit.
+# ==============================================================================
+- id: auto_ev_083_solar_target_reached
+  alias: "EV 083 – Solar Charge Target Reached"
+  description: >
+    Notifies the assigned driver when their car reaches the charge limit
+    during a solar charging session.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: template
+      value_template: >
+        {% set plugged = states('sensor.ev_plugged_vehicle') %}
+        {% if plugged == 'Horace' %}
+          {% set soc = states('sensor.horace_battery_level') | float(0) %}
+          {% set limit = states('input_number.ev_horace_charge_limit') | float(80) %}
+          {{ soc >= limit }}
+        {% elif plugged == 'Horatio' %}
+          {% set soc = states('sensor.horatio_battery_level') | float(0) %}
+          {% set limit = states('input_number.ev_horatio_charge_limit') | float(80) %}
+          {{ soc >= limit }}
+        {% else %}
+          false
+        {% endif %}
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.ev_solar_mode_enabled
+      state: "on"
+    - condition: state
+      entity_id: sun.sun
+      state: "above_horizon"
+    - condition: template
+      value_template: >
+        {{ states('sensor.ev_plugged_vehicle') in ['Horace', 'Horatio'] }}
+
+  actions:
+    - variables:
+        car: "{{ states('sensor.ev_plugged_vehicle') }}"
+        soc: >
+          {% if car == 'Horace' %}
+            {{ states('sensor.horace_battery_level') | float(0) | round(0) }}
+          {% else %}
+            {{ states('sensor.horatio_battery_level') | float(0) | round(0) }}
+          {% endif %}
+        solar_kwh: >
+          {% if car == 'Horace' %}
+            {{ states('input_number.ev_horace_solar_kwh_today') | float(0) | round(1) }}
+          {% else %}
+            {{ states('input_number.ev_horatio_solar_kwh_today') | float(0) | round(1) }}
+          {% endif %}
+        fraser_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
+        heather_car: "{{ states('input_select.ev_heather_assigned_car') }}"
+        msg: "{{ car }} reached {{ soc }}% from solar. {{ solar_kwh }}kWh charged today."
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ fraser_car == car }}"
+          sequence:
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                title: "EV Solar Target Reached"
+                message: "{{ msg }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ heather_car == car }}"
+          sequence:
+            - action: notify.mobile_app_heather_s_iphone
+              data:
+                title: "EV Solar Target Reached"
+                message: "{{ msg }}"
+
+    # Fallback: if no driver assigned, notify Fraser
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: >
+                {{ fraser_car != car and heather_car != car }}
+          sequence:
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                title: "EV Solar Target Reached"
+                message: "{{ msg }}"
+
+    - action: logbook.log
+      data:
+        name: "EV Solar Charging"
+        message: "{{ car }} reached solar charge target: {{ soc }}%. {{ solar_kwh }}kWh today."
+
+
+# ==============================================================================
+# 084 – CHARGING SESSION ENDED
+# Notifies the assigned driver when charging stops (any source).
+# ==============================================================================
+- id: auto_ev_084_charging_session_ended
+  alias: "EV 084 – Charging Session Ended"
+  description: >
+    Notifies the assigned driver when their car stops charging,
+    with final SOC and energy summary.
+  mode: parallel
+  max: 2
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: switch.horace_charge
+      from: "on"
+      to: "off"
+    - trigger: state
+      entity_id: switch.horatio_charge
+      from: "on"
+      to: "off"
+
+  actions:
+    - variables:
+        car: >
+          {% if trigger.entity_id == 'switch.horace_charge' %}
+            Horace
+          {% else %}
+            Horatio
+          {% endif %}
+        soc: >
+          {% if car == 'Horace' %}
+            {{ states('sensor.horace_battery_level') | float(0) | round(0) }}
+          {% else %}
+            {{ states('sensor.horatio_battery_level') | float(0) | round(0) }}
+          {% endif %}
+        target: >
+          {% if car == 'Horace' %}
+            {{ states('input_number.ev_horace_charge_limit') | float(80) | round(0) }}
+          {% else %}
+            {{ states('input_number.ev_horatio_charge_limit') | float(80) | round(0) }}
+          {% endif %}
+        solar_kwh: >
+          {% if car == 'Horace' %}
+            {{ states('input_number.ev_horace_solar_kwh_today') | float(0) | round(1) }}
+          {% else %}
+            {{ states('input_number.ev_horatio_solar_kwh_today') | float(0) | round(1) }}
+          {% endif %}
+        grid_kwh: >
+          {% if car == 'Horace' %}
+            {{ states('input_number.ev_horace_grid_kwh_today') | float(0) | round(1) }}
+          {% else %}
+            {{ states('input_number.ev_horatio_grid_kwh_today') | float(0) | round(1) }}
+          {% endif %}
+        reached_target: "{{ soc | float >= target | float }}"
+        source: >
+          {% if is_state('sun.sun', 'above_horizon') and is_state('input_boolean.ev_solar_mode_enabled', 'on') %}
+            solar
+          {% elif is_state('binary_sensor.energy_low_tariff_active', 'on') %}
+            low tariff
+          {% else %}
+            grid
+          {% endif %}
+        fraser_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
+        heather_car: "{{ states('input_select.ev_heather_assigned_car') }}"
+
+    - variables:
+        msg: >
+          {{ car }} charging stopped ({{ source }}).
+          SOC: {{ soc }}%{{ ' — target reached' if reached_target else ' / ' ~ target ~ '% target' }}.
+          Today: {{ solar_kwh }}kWh solar, {{ grid_kwh }}kWh grid.
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ fraser_car == car }}"
+          sequence:
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                title: "EV Charging {{ 'Complete' if reached_target else 'Stopped' }}"
+                message: "{{ msg }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ heather_car == car }}"
+          sequence:
+            - action: notify.mobile_app_heather_s_iphone
+              data:
+                title: "EV Charging {{ 'Complete' if reached_target else 'Stopped' }}"
+                message: "{{ msg }}"
+
+    # Fallback: if no driver assigned, notify Fraser
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: >
+                {{ fraser_car != car and heather_car != car }}
+          sequence:
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                title: "EV Charging {{ 'Complete' if reached_target else 'Stopped' }}"
+                message: "{{ msg }}"
+
+    - action: logbook.log
+      data:
+        name: "EV Charging"
+        message: "{{ car }} charging stopped. SOC: {{ soc }}%. Solar: {{ solar_kwh }}kWh, Grid: {{ grid_kwh }}kWh."

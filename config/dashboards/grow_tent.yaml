@@ -1,0 +1,346 @@
+###############################################################################
+# GROW TENT DASHBOARD – Mobile-First Mushroom Cards
+# File: dashboards/grow_tent.yaml
+#
+# Requires: custom:mushroom cards, custom:mini-graph-card
+###############################################################################
+
+views:
+  - title: Grow Tent
+    path: grow-tent
+    icon: mdi:sprout
+    cards:
+
+      # =======================================================================
+      # STATUS HEADER
+      # =======================================================================
+      - type: custom:mushroom-template-card
+        primary: >
+          {{ states('sensor.grow_tent_stage_display') }}
+        secondary: >
+          Day {{ states('sensor.grow_tent_days_in_stage') | int }} of stage
+          · {{ states('sensor.grow_tent_days_since_planting') | int }} total
+          · {{ states('input_select.grow_tent_cultivation_status') | title }}
+        icon: mdi:sprout
+        icon_color: >
+          {% set stage = states('input_select.grow_tent_stage') %}
+          {% if 'veg' in stage %}green
+          {% elif 'flower' in stage %}purple
+          {% elif 'flush' in stage %}blue
+          {% elif stage == 'harvest' %}amber
+          {% elif stage == 'clones' %}light-green
+          {% else %}grey{% endif %}
+
+      - type: custom:mushroom-template-card
+        primary: >
+          Mode: {{ states('input_select.grow_tent_mode') | title }}
+        secondary: >
+          {% if is_state('input_boolean.grow_tent_lights_on', 'on') %}Lights ON{% else %}Lights OFF{% endif %}
+          · {{ states('sensor.grow_tent_target_led_pct') | int }}% LED
+          · {{ states('sensor.grow_tent_target_light_hours') | int }}h photoperiod
+        icon: >
+          {% if is_state('input_select.grow_tent_mode', 'active') %}mdi:play-circle
+          {% elif is_state('input_select.grow_tent_mode', 'shadow') %}mdi:eye
+          {% else %}mdi:pause-circle{% endif %}
+        icon_color: >
+          {% if is_state('input_select.grow_tent_mode', 'active') %}green
+          {% elif is_state('input_select.grow_tent_mode', 'shadow') %}orange
+          {% else %}grey{% endif %}
+
+      # =======================================================================
+      # ENVIRONMENT AT A GLANCE
+      # =======================================================================
+      - type: custom:mushroom-template-card
+        primary: >
+          {{ states('sensor.marshydro_temperature') | float(0) | round(1) }}°C
+          · {{ states('sensor.marshydro_humidity') | float(0) | round(0) }}% RH
+        secondary: >
+          Target: {{ states('input_number.grow_tent_temp_target_lights_on') }}°C on / {{ states('input_number.grow_tent_temp_target_lights_off') }}°C off
+          · RH target: {{ states('input_number.grow_tent_humidity_target') }}%
+        icon: mdi:thermometer
+        icon_color: >
+          {% set temp = states('sensor.marshydro_temperature') | float(0) %}
+          {% set target = states('input_number.grow_tent_temp_target_lights_on') | float(24) %}
+          {% if (temp - target) | abs <= 2 %}green
+          {% elif (temp - target) | abs <= 4 %}orange
+          {% else %}red{% endif %}
+
+      - type: custom:mushroom-template-card
+        primary: >
+          VPD: {{ states('sensor.grow_tent_vpd') }} kPa
+        secondary: >
+          Target: {{ states('sensor.grow_tent_vpd_target') }} kPa
+          · Fan: {{ states('sensor.grow_tent_target_fan_speed') | int }}%
+        icon: mdi:weather-windy
+        icon_color: >
+          {% set vpd = states('sensor.grow_tent_vpd') | float(0) %}
+          {% set target = states('sensor.grow_tent_vpd_target') | float(1.0) %}
+          {% if (vpd - target) | abs <= 0.2 %}green
+          {% elif (vpd - target) | abs <= 0.4 %}orange
+          {% else %}red{% endif %}
+
+      # =======================================================================
+      # AIR TEMPERATURE & HUMIDITY – 24h Graph
+      # =======================================================================
+      - type: custom:mini-graph-card
+        name: Air Temp & Humidity (24h)
+        entities:
+          - entity: sensor.marshydro_temperature
+            name: Temp
+            color: "#ff6b35"
+          - entity: sensor.marshydro_humidity
+            name: RH
+            color: "#4fc3f7"
+            y_axis: secondary
+        hours_to_show: 24
+        points_per_hour: 6
+        line_width: 2
+        hour24: true
+        animate: true
+        show:
+          labels: true
+          points: false
+          legend: true
+          average: false
+
+      # =======================================================================
+      # WATER & pH
+      # =======================================================================
+      - type: custom:mushroom-template-card
+        primary: >
+          Water: {{ states('sensor.temperature') | float(0) | round(1) }}°C
+          · pH {{ states('sensor.water_ph') | float(0) | round(1) }}
+        secondary: >
+          Target: {{ states('input_number.grow_tent_water_temp_target') }}°C
+          · pH range: {{ states('input_number.grow_tent_ph_low_limit') }}–{{ states('input_number.grow_tent_ph_high_limit') }}
+        icon: mdi:water-thermometer
+        icon_color: >
+          {% set ph = states('sensor.water_ph') | float(6) %}
+          {% set lo = states('input_number.grow_tent_ph_low_limit') | float(5.5) %}
+          {% set hi = states('input_number.grow_tent_ph_high_limit') | float(6.5) %}
+          {% if ph >= lo and ph <= hi %}green
+          {% elif (ph - lo) | abs <= 0.3 or (ph - hi) | abs <= 0.3 %}orange
+          {% else %}red{% endif %}
+
+      - type: custom:mushroom-template-card
+        primary: >
+          Reservoir: {{ states('sensor.grow_tent_reservoir_age') | int }} days old
+        secondary: >
+          {{ states('input_number.grow_tent_reservoir_litres') | int }}L
+          · Changed: {{ states('input_datetime.grow_tent_last_reservoir_change').split(' ')[0] if states('input_datetime.grow_tent_last_reservoir_change') not in ['unknown', 'unavailable'] else 'Never' }}
+          {% if is_state('input_boolean.grow_tent_reservoir_change_needed', 'on') %}· CHANGE NEEDED{% endif %}
+        icon: mdi:barrel
+        icon_color: >
+          {% set age = states('sensor.grow_tent_reservoir_age') | int(0) %}
+          {% if age < 5 %}green
+          {% elif age < 7 %}orange
+          {% else %}red{% endif %}
+
+      - type: custom:mini-graph-card
+        name: Water Temp & pH (24h)
+        entities:
+          - entity: sensor.temperature
+            name: Water °C
+            color: "#42a5f5"
+          - entity: sensor.water_ph
+            name: pH
+            color: "#66bb6a"
+            y_axis: secondary
+        hours_to_show: 24
+        points_per_hour: 6
+        line_width: 2
+        hour24: true
+        show:
+          labels: true
+          points: false
+          legend: true
+          average: false
+
+      # =======================================================================
+      # NUTRIENT RECIPE (current stage)
+      # =======================================================================
+      - type: entities
+        title: Nutrient Recipe (per reservoir)
+        entities:
+          - entity: sensor.grow_tent_dose_base_volume
+            name: Base
+            icon: mdi:flask
+          - entity: sensor.grow_tent_dose_grow_volume
+            name: Grow
+            icon: mdi:flask-outline
+          - entity: sensor.grow_tent_dose_early_flower_volume
+            name: Early Flower
+            icon: mdi:flower
+          - entity: sensor.grow_tent_dose_late_flower_volume
+            name: Late Flower
+            icon: mdi:flower-tulip
+          - entity: sensor.grow_tent_dose_sanacan_volume
+            name: SanaCan
+            icon: mdi:bottle-tonic-plus
+          - entity: sensor.grow_tent_dose_kalican_volume
+            name: KaliCan
+            icon: mdi:bottle-tonic
+
+      # =======================================================================
+      # QUICK ACTIONS
+      # =======================================================================
+      - type: custom:mushroom-chips-card
+        chips:
+          - type: action
+            icon: mdi:fast-forward
+            tap_action:
+              action: perform-action
+              perform_action: script.grow_tent_advance_stage
+          - type: action
+            icon: mdi:water-sync
+            tap_action:
+              action: perform-action
+              perform_action: script.grow_tent_reservoir_change
+          - type: action
+            icon: mdi:restart
+            tap_action:
+              action: perform-action
+              perform_action: script.grow_tent_reset_grow
+              confirmation:
+                text: "Reset for a new grow cycle? This clears all data."
+        alignment: center
+
+      - type: grid
+        square: false
+        columns: 3
+        cards:
+          - type: custom:mushroom-template-card
+            primary: "Advance"
+            icon: mdi:fast-forward
+            icon_color: green
+            layout: vertical
+            tap_action:
+              action: perform-action
+              perform_action: script.grow_tent_advance_stage
+            card_mod:
+              style: "ha-card { --ha-card-border-width: 0; }"
+
+          - type: custom:mushroom-template-card
+            primary: "Water Change"
+            icon: mdi:water-sync
+            icon_color: blue
+            layout: vertical
+            tap_action:
+              action: perform-action
+              perform_action: script.grow_tent_reservoir_change
+            card_mod:
+              style: "ha-card { --ha-card-border-width: 0; }"
+
+          - type: custom:mushroom-template-card
+            primary: "New Grow"
+            icon: mdi:restart
+            icon_color: red
+            layout: vertical
+            tap_action:
+              action: perform-action
+              perform_action: script.grow_tent_reset_grow
+            card_mod:
+              style: "ha-card { --ha-card-border-width: 0; }"
+
+      # =======================================================================
+      # ENERGY – TODAY
+      # =======================================================================
+      - type: custom:mushroom-template-card
+        primary: >
+          Today: {{ states('sensor.grow_tent_total_energy_daily') | float(0) | round(1) }}kWh
+          · CHF {{ states('sensor.grow_tent_daily_cost') | float(0) | round(2) }}
+        secondary: >
+          Month: {{ states('sensor.grow_tent_total_energy_monthly') | float(0) | round(1) }}kWh
+          · CHF {{ states('sensor.grow_tent_monthly_cost') | float(0) | round(2) }}
+        icon: mdi:lightning-bolt
+        icon_color: amber
+
+      - type: entities
+        title: Energy Breakdown (Today)
+        entities:
+          - entity: sensor.grow_tent_light_energy_daily
+            name: Light
+            icon: mdi:lightbulb
+          - entity: sensor.grow_tent_heater_energy_daily
+            name: Space Heater
+            icon: mdi:radiator
+          - entity: sensor.grow_tent_aquatic_heater_energy_daily
+            name: Water Heater
+            icon: mdi:water-boiler
+          - entity: sensor.grow_tent_humidifier_energy_daily
+            name: Humidifier
+            icon: mdi:air-humidifier
+          - entity: sensor.grow_tent_water_pump_energy_daily
+            name: Water Pump
+            icon: mdi:pump
+          - entity: sensor.grow_tent_water_circ_energy_daily
+            name: Water Circulation
+            icon: mdi:rotate-3d-variant
+          - entity: sensor.grow_tent_extractor_energy_daily
+            name: Extractor
+            icon: mdi:fan
+
+      # =======================================================================
+      # SETTINGS – ENVIRONMENT
+      # =======================================================================
+      - type: entities
+        title: Environment Settings
+        entities:
+          - entity: input_select.grow_tent_mode
+            name: System Mode
+          - entity: input_select.grow_tent_stage
+            name: Growth Stage
+          - entity: input_select.grow_tent_cultivation_status
+            name: Cultivation Status
+          - type: divider
+          - entity: input_number.grow_tent_lights_on_hour
+            name: Lights On Hour
+          - entity: input_number.grow_tent_sunrise_ramp_minutes
+            name: Sunrise Ramp
+          - entity: input_number.grow_tent_sunset_ramp_minutes
+            name: Sunset Ramp
+          - type: divider
+          - entity: input_number.grow_tent_temp_target_lights_on
+            name: Temp Target (Lights On)
+          - entity: input_number.grow_tent_temp_target_lights_off
+            name: Temp Target (Lights Off)
+          - entity: input_number.grow_tent_temp_deadband
+            name: Temp Deadband
+          - type: divider
+          - entity: input_number.grow_tent_humidity_target
+            name: Humidity Target
+          - entity: input_number.grow_tent_humidity_deadband
+            name: Humidity Deadband
+          - entity: input_number.grow_tent_fan_min_speed
+            name: Fan Min Speed
+          - type: divider
+          - entity: input_number.grow_tent_water_temp_target
+            name: Water Temp Target
+          - entity: input_number.grow_tent_water_temp_deadband
+            name: Water Temp Deadband
+
+      # =======================================================================
+      # SETTINGS – pH & DOSING
+      # =======================================================================
+      - type: entities
+        title: pH & Dosing Settings
+        entities:
+          - entity: input_number.grow_tent_ph_target
+            name: pH Target
+          - entity: input_number.grow_tent_ph_low_limit
+            name: pH Low Limit
+          - entity: input_number.grow_tent_ph_high_limit
+            name: pH High Limit
+          - entity: input_number.grow_tent_ph_dose_ml
+            name: Dose Amount (ml)
+          - entity: input_number.grow_tent_ph_dose_wait_minutes
+            name: Wait Between Doses
+          - entity: input_number.grow_tent_max_ph_doses_per_hour
+            name: Max Doses/Hour
+          - type: divider
+          - entity: input_number.grow_tent_reservoir_litres
+            name: Reservoir Volume
+          - entity: input_number.grow_tent_harvest_grams
+            name: Harvest Yield (g)
+          - entity: sensor.grow_tent_energy_per_gram
+            name: Energy per Gram

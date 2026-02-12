@@ -738,3 +738,83 @@
               'outdoor_temp': outdoor_temp | float,
               'source': source
           } | tojson }}
+
+
+# ==============================================================================
+# 072 – JACUZZI READY
+# Notifies both users when the jacuzzi reaches target temperature.
+# ==============================================================================
+- id: auto_jacuzzi_072_ready
+  alias: "Jacuzzi 072 – Ready"
+  description: >
+    Notifies both users when the jacuzzi water temperature reaches 39.5°C
+    or above during an active heating session with an upcoming event.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: climate.jacuzzi
+      attribute: current_temperature
+
+  conditions:
+    # Must be actively heating to 40°C
+    - condition: template
+      value_template: >
+        {{ states('input_number.jacuzzi_target_temp') | float(15) >= 40 }}
+    # Temperature just crossed 39.5°C upward
+    - condition: template
+      value_template: >
+        {% set current = state_attr('climate.jacuzzi', 'current_temperature') | float(0) %}
+        {% set previous = trigger.from_state.attributes.current_temperature | float(0) %}
+        {{ previous < 39.5 and current >= 39.5 }}
+    # Event within 12 hours
+    - condition: template
+      value_template: >
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {% if cal is not none and cal.attributes.start_time is defined %}
+          {% set event_ts = as_timestamp(cal.attributes.start_time) %}
+          {{ (event_ts - as_timestamp(now())) > 0
+             and (event_ts - as_timestamp(now())) < 43200 }}
+        {% else %}
+          false
+        {% endif %}
+
+  actions:
+    - variables:
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1) }}"
+        start_temp: "{{ states('input_number.energy_jacuzzi_heating_start_temp') | float(15) | round(1) }}"
+        start_time: "{{ states('input_datetime.jacuzzi_heating_start_time') }}"
+        elapsed_hours: >
+          {% if start_time not in ['unknown', 'unavailable', ''] %}
+            {{ ((as_timestamp(now()) - as_timestamp(start_time)) / 3600) | round(1) }}
+          {% else %}
+            0
+          {% endif %}
+        solar_kwh: "{{ states('input_number.jacuzzi_solar_kwh_today') | float(0) | round(1) }}"
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Jacuzzi Ready"
+        message: >
+          Jacuzzi at {{ current_temp }}°C — ready!
+          Heated from {{ start_temp }}°C in {{ elapsed_hours }}h.
+        data:
+          push:
+            interruption-level: time-sensitive
+
+    - action: notify.mobile_app_heather_s_iphone
+      data:
+        title: "Jacuzzi Ready"
+        message: >
+          Jacuzzi at {{ current_temp }}°C — ready!
+          Heated from {{ start_temp }}°C in {{ elapsed_hours }}h.
+        data:
+          push:
+            interruption-level: time-sensitive
+
+    - action: logbook.log
+      data:
+        name: "Jacuzzi Ready"
+        message: "Jacuzzi ready at {{ current_temp }}°C. Heated from {{ start_temp }}°C in {{ elapsed_hours }}h."

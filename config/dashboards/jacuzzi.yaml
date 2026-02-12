@@ -9,8 +9,6 @@ views:
   - title: Jacuzzi
     path: jacuzzi
     icon: mdi:hot-tub
-    type: sections
-    max_columns: 2
     cards:
 
       # =======================================================================
@@ -113,7 +111,7 @@ views:
           Rate: {{ states('sensor.jacuzzi_net_heating_rate') }}°C/h
         secondary: >
           Heat loss: {{ states('sensor.jacuzzi_standby_loss_rate') }}°C/h
-          | Tariff: {{ states('sensor.electricity_tariff') }}
+          | Tariff: {{ states('sensor.energy_tariff_current') }}
         icon: mdi:trending-up
         icon_color: >
           {% if states('sensor.jacuzzi_net_heating_rate') | float(0) > 0 %}orange

@@ -1506,6 +1506,45 @@
               'km_heather': km_heather | float
           } | tojson }}
 
+    # Notify to plug in for tonight's charging
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: >
+                {% set car = night_charge_car | trim %}
+                {% set current = soc_horace if car == 'Horace' else soc_horatio if car == 'Horatio' else 999 %}
+                {{ car in ['Horace', 'Horatio'] and current | float < night_target_soc | float }}
+          sequence:
+            - variables:
+                nc_car: "{{ night_charge_car | trim }}"
+            - variables:
+                nc_current_soc: "{{ soc_horace | round(0) if nc_car == 'Horace' else soc_horatio | round(0) }}"
+                nc_driver: >
+                  {% if fraser_car | trim == nc_car %}Fraser
+                  {% elif heather_car | trim == nc_car %}Heather
+                  {% else %}Someone{% endif %}
+                nc_km: >
+                  {% if fraser_car | trim == nc_car %}{{ km_fraser | round(0) }}
+                  {% else %}{{ km_heather | round(0) }}{% endif %}
+            - variables:
+                nc_msg: >
+                  Plug in {{ nc_car }} tonight.
+                  {{ nc_driver }} needs it for a {{ nc_km }}km trip tomorrow.
+                  Currently {{ nc_current_soc }}%, needs {{ night_target_soc | round(0) }}%.
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                title: "EV Charging Tonight"
+                message: "{{ nc_msg }}"
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ is_state('device_tracker.heather_s_iphone', 'home') }}"
+                  sequence:
+                    - action: notify.mobile_app_heather_s_iphone
+                      data:
+                        title: "EV Charging Tonight"
+                        message: "{{ nc_msg }}"
+
 
 ###############################################################################
 # 40-49: CHARGING CONTROL
@@ -1749,7 +1788,9 @@
 
 - id: auto_ev_042_solar_surplus_alert
   alias: "EV 042 – Solar Surplus Plug-In Alert"
-  description: "Notifies when solar surplus is available but no car is plugged in"
+  description: >
+    When solar surplus is available, wakes home cars with stale plug state,
+    waits 30s for fresh data, then either logs (if plugged) or alerts (if not).
   mode: single
   trace:
     stored_traces: 10
@@ -1765,14 +1806,44 @@
     - condition: state
       entity_id: input_boolean.ev_solar_mode_enabled
       state: "on"
-    - condition: template
-      value_template: "{{ states('sensor.ev_plugged_vehicle') not in ['Horace', 'Horatio'] }}"
     - condition: state
       entity_id: sun.sun
       state: "above_horizon"
 
   actions:
     - variables:
+        horace_home: "{{ is_state('device_tracker.horace_location', 'home') }}"
+        horatio_home: "{{ is_state('device_tracker.horatio_location', 'home') }}"
+        horace_cable_stale: "{{ states('binary_sensor.horace_charge_cable') in ['unknown', 'unavailable'] }}"
+        horatio_cable_stale: "{{ states('binary_sensor.horatio_charge_cable') in ['unknown', 'unavailable'] }}"
+
+    # Wake Horace if home and cable state is stale
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ horace_home and horace_cable_stale }}"
+          sequence:
+            - action: button.press
+              target:
+                entity_id: button.horace_wake
+
+    # Wake Horatio if home and cable state is stale
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ horatio_home and horatio_cable_stale }}"
+          sequence:
+            - action: button.press
+              target:
+                entity_id: button.horatio_wake
+
+    # Wait for fresh data
+    - delay:
+        seconds: 30
+
+    # Re-read plug status after wake
+    - variables:
+        plugged_vehicle: "{{ states('sensor.ev_plugged_vehicle') }}"
         available_amps: "{{ states('sensor.ev_solar_available_amps') | int(0) }}"
         surplus_kw: "{{ (available_amps * 230 / 1000) | round(1) }}"
         soc_horace: "{{ states('input_number.ev_horace_current_soc') | float(0) }}"
@@ -1780,21 +1851,51 @@
         recommend: "{{ 'Horace' if soc_horace < soc_horatio else 'Horatio' }}"
         recommend_soc: "{{ soc_horace if soc_horace < soc_horatio else soc_horatio }}"
 
-    - action: notify.mobile_app_fraser_s_iphone
-      data:
-        title: "☀️ Solar Surplus Available"
-        message: >
-          {{ surplus_kw }}kW surplus ({{ available_amps }}A).
-          Plug in {{ recommend }} ({{ recommend_soc | round(0) }}%).
-        data:
-          tag: "ev_solar_surplus"
-          group: "ev_charging"
+    - choose:
+        # Car IS plugged — ev_040 will handle solar charging
+        - conditions:
+            - condition: template
+              value_template: "{{ plugged_vehicle in ['Horace', 'Horatio'] }}"
+          sequence:
+            - action: logbook.log
+              data:
+                name: "EV Solar"
+                message: >
+                  Surplus available ({{ surplus_kw }}kW / {{ available_amps }}A).
+                  {{ plugged_vehicle }} is plugged in — ev_040 will handle charging.
+      # No car plugged — alert Fraser + Heather
+      default:
+        - action: notify.mobile_app_fraser_s_iphone
+          data:
+            title: "Solar Surplus Available"
+            message: >
+              {{ surplus_kw }}kW surplus ({{ available_amps }}A).
+              Plug in {{ recommend }} ({{ recommend_soc | round(0) }}%).
+            data:
+              tag: "ev_solar_surplus"
+              group: "ev_charging"
 
-    - action: logbook.log
-      data:
-        name: "EV Solar"
-        message: "Surplus alert: {{ surplus_kw }}kW available, no car plugged in. Recommend {{ recommend }}."
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ is_state('device_tracker.heather_s_iphone', 'home') }}"
+              sequence:
+                - action: notify.mobile_app_heather_s_iphone
+                  data:
+                    title: "Solar Surplus Available"
+                    message: >
+                      {{ surplus_kw }}kW surplus ({{ available_amps }}A).
+                      Plug in {{ recommend }} ({{ recommend_soc | round(0) }}%).
+                    data:
+                      tag: "ev_solar_surplus"
+                      group: "ev_charging"
 
+        - action: logbook.log
+          data:
+            name: "EV Solar"
+            message: "Surplus alert: {{ surplus_kw }}kW available, no car plugged in. Recommend {{ recommend }}."
+
+    # Cooldown to avoid repeated alerts
     - delay:
         minutes: 60
 
@@ -2463,6 +2564,7 @@
         fire_window_end: "{{ depart_ts - lead_sec + 60 }}"
 
         travel_min: "{{ states('input_number.ev_fraser_travel_minutes') | float(0) }}"
+        trip_km: "{{ states('input_number.ev_trip_km_fraser_today') | float(0) | round(0) }}"
         assigned_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
         should_fire: >
           {{ travel_min > 0 and depart_ts > now_ts
@@ -2480,7 +2582,9 @@
           sequence:
             - action: notify.mobile_app_fraser_s_iphone
               data:
-                message: "🚗 Leaving in ~30 min. Take **{{ assigned_car }}** ({{ depart_soc | round(0) }}%). Depart {{ depart_time }}."
+                message: >
+                  Leaving in ~30 min. Take **{{ assigned_car }}** ({{ depart_soc | round(0) }}%).
+                  Depart {{ depart_time }}. Trip: {{ trip_km }}km, ~{{ travel_min | round(0) }} min.
                 data:
                   push:
                     sound: default
@@ -2513,6 +2617,7 @@
         fire_window_end: "{{ depart_ts - lead_sec + 60 }}"
 
         travel_min: "{{ states('input_number.ev_heather_travel_minutes') | float(0) }}"
+        trip_km: "{{ states('input_number.ev_trip_km_heather_today') | float(0) | round(0) }}"
         assigned_car: "{{ states('input_select.ev_heather_assigned_car') }}"
         should_fire: >
           {{ travel_min > 0 and depart_ts > now_ts
@@ -2530,7 +2635,9 @@
           sequence:
             - action: notify.mobile_app_heather_s_iphone
               data:
-                message: "🚗 Leaving in ~30 min. Take **{{ assigned_car }}** ({{ depart_soc | round(0) }}%). Depart {{ depart_time }}."
+                message: >
+                  Leaving in ~30 min. Take **{{ assigned_car }}** ({{ depart_soc | round(0) }}%).
+                  Depart {{ depart_time }}. Trip: {{ trip_km }}km, ~{{ travel_min | round(0) }} min.
                 data:
                   push:
                     sound: default

@@ -8,7 +8,7 @@ views:
         primary: "Horace"
         secondary: >
           {{ states('input_number.ev_horace_current_soc') | int }}%
-          · {{ states('device_tracker.horace') | title }}
+          · {{ states('device_tracker.horace_location') | title }}
           {% if is_state('binary_sensor.horace_plugged', 'on') %}· 🔌 Plugged{% endif %}
         icon: mdi:car-electric
         icon_color: |-
@@ -35,7 +35,7 @@ views:
         primary: "Horatio"
         secondary: >
           {{ states('input_number.ev_horatio_current_soc') | int }}%
-          · {{ states('device_tracker.horatio') | title }}
+          · {{ states('device_tracker.horatio_location') | title }}
           {% if is_state('binary_sensor.horatio_plugged', 'on') %}· 🔌 Plugged{% endif %}
         icon: mdi:car-electric
         icon_color: |-
