@@ -206,5 +206,31 @@ See `docs/011_thermal_model_and_ev_calendar_fixes.md` for full details.
 - [x] `configuration.yaml` updated: `lovelace-grow-tent` dashboard registered (YAML mode, sidebar visible)
 - [x] yamllint passes on all files
 
+## What's Done (Phase 1D – Weather Forecast + Standby Boost)
+Two enhancements to the jacuzzi thermal model:
+
+### Part A: Weather Forecast Integration (Met.no)
+- [x] 3 helpers added to `jacuzzi_system.yaml`: `jacuzzi_forecast_temp_at_event`, `jacuzzi_forecast_temp_at_heating`, `jacuzzi_use_forecast`
+- [x] `jacuzzi_042` forecast ambient updater automation: fetches Met.no hourly forecast every 30 min, stores forecast ambient at event time and mid-heating time
+- [x] `jacuzzi_heat_up_time_required` sensor updated to use forecast ambient when available (with fallback to current)
+- [x] `jacuzzi_predicted_temp_at_event` sensor updated to use forecast ambient at event time
+- [x] `jacuzzi_max_achievable_temp` sensor: added `forecast_max` attribute
+- [x] Heat-up time attributes updated: `forecast_temp`, `using_forecast`, forecast-aware `heating_rate_at_target`, `is_achievable`, `calculation_breakdown`
+- [x] Prerequisite: user must configure Met.no integration via HA UI → creates `weather.forecast_home`
+
+### Part B: Standby Thermal Energy Banking
+- [x] 2 helpers added to `jacuzzi_system.yaml`: `jacuzzi_boosted_standby_temp` (default 25°C), `jacuzzi_standby_boost_enabled` (default off)
+- [x] `sensor.jacuzzi_effective_standby_temp` sensor added: dynamically selects normal or boosted standby based on solar surplus (>3500W) or low tariff
+- [x] `jacuzzi_040` default branch: standby reference changed to `sensor.jacuzzi_effective_standby_temp`
+- [x] `jacuzzi_022` solar off fallback: standby reference changed to `sensor.jacuzzi_effective_standby_temp`
+- [x] `jacuzzi_091` pipe freeze cycling: no change needed (boosted target > standby correctly skips cycling)
+
+### Dashboard Updates
+- [x] Standby boost status card (conditional, shows when boost enabled)
+- [x] Forecast status card (conditional, shows when forecast active + event upcoming)
+- [x] Settings section: added forecast toggle, boost toggle, boosted standby temp, effective standby temp
+- [x] yamllint passes on all 4 modified files
+- [x] All entity cross-references verified
+
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).

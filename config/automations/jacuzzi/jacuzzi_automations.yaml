@@ -309,13 +309,13 @@
       target:
         entity_id: input_number.jacuzzi_target_temp
       data:
-        value: "{{ states('input_number.jacuzzi_standby_temp') | float(15) }}"
+        value: "{{ states('sensor.jacuzzi_effective_standby_temp') | float(states('input_number.jacuzzi_standby_temp') | float(15)) }}"
     - action: logbook.log
       data:
         name: "Jacuzzi Solar Fallback"
         message: >
           Solar surplus dropped below 3500W for 10 min. Reverting to standby
-          ({{ states('input_number.jacuzzi_standby_temp') }}°C) to prevent grid heating.
+          ({{ states('sensor.jacuzzi_effective_standby_temp') | float(states('input_number.jacuzzi_standby_temp') | float(15)) }}°C) to prevent grid heating.
 
     - action: shell_command.log_action
       data:
@@ -325,7 +325,7 @@
         parameters: >
           {{ {'source': 'solar_fallback',
               'current_temp': state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1),
-              'standby_temp': states('input_number.jacuzzi_standby_temp') | float(15),
+              'standby_temp': states('sensor.jacuzzi_effective_standby_temp') | float(states('input_number.jacuzzi_standby_temp') | float(15)),
               'surplus_w': states('sensor.energy_solar_surplus_w') | float(0) | round(0)
           } | tojson }}
 
@@ -453,13 +453,13 @@
                 parameters: >
                   {{ {'trigger': 'event_ongoing'} | tojson }}
 
-      # Default: no event or event passed — standby
+      # Default: no event or event passed — standby (effective, may be boosted)
       default:
         - action: input_number.set_value
           target:
             entity_id: input_number.jacuzzi_target_temp
           data:
-            value: "{{ states('input_number.jacuzzi_standby_temp') }}"
+            value: "{{ states('sensor.jacuzzi_effective_standby_temp') | float(states('input_number.jacuzzi_standby_temp') | float(15)) }}"
 
         - action: shell_command.log_action
           data:
@@ -468,7 +468,7 @@
             target_entity: climate.jacuzzi
             parameters: >
               {{ {'trigger': 'no_event',
-                  'standby_temp': states('input_number.jacuzzi_standby_temp') | float(15)
+                  'standby_temp': states('sensor.jacuzzi_effective_standby_temp') | float(states('input_number.jacuzzi_standby_temp') | float(15))
               } | tojson }}
 
 
@@ -547,6 +547,97 @@
           {{ {'trigger': 'persistence_recovery',
               'current_temp': state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1)
           } | tojson }}
+
+
+# ==============================================================================
+# 042 – FORECAST AMBIENT UPDATER
+# Fetches Met.no hourly forecast and stores ambient at event time + mid-heating.
+# ==============================================================================
+- id: auto_jacuzzi_042_forecast_ambient_updater
+  alias: "Jacuzzi 042 – Forecast Ambient Updater"
+  description: >
+    Every 30 min, fetches hourly weather forecast from Met.no and stores the
+    forecast ambient temperature at the next event time and mid-heating time.
+    Used by planning sensors for more accurate heat-up estimates.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/30"
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.jacuzzi_use_forecast
+      state: "on"
+    - condition: template
+      value_template: >
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {{ cal is not none and cal.attributes.start_time is defined }}
+
+  actions:
+    - action: weather.get_forecasts
+      target:
+        entity_id: weather.forecast_home
+      data:
+        type: hourly
+      response_variable: forecast_data
+
+    - variables:
+        event_start_str: "{{ state_attr('calendar.jacuzzi_schedule', 'start_time') }}"
+        event_ts: "{{ as_timestamp(state_attr('calendar.jacuzzi_schedule', 'start_time')) }}"
+        heat_hours_est: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(3) }}"
+        mid_heat_ts: "{{ event_ts | float - (heat_hours_est | float * 1800) }}"
+        forecasts: "{{ forecast_data['weather.forecast_home'].forecast }}"
+
+    - variables:
+        # Find forecast closest to event time
+        forecast_at_event: >
+          {% set ns = namespace(best_temp=states('sensor.la_dole_temperature') | float(10), best_diff=999999) %}
+          {% for fc in forecasts %}
+            {% set fc_ts = as_timestamp(fc.datetime) %}
+            {% set diff = (fc_ts - event_ts | float) | abs %}
+            {% if diff < ns.best_diff %}
+              {% set ns.best_diff = diff %}
+              {% set ns.best_temp = fc.temperature %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.best_temp }}
+        # Find forecast closest to mid-heating time
+        forecast_at_heating: >
+          {% set ns = namespace(best_temp=states('sensor.la_dole_temperature') | float(10), best_diff=999999) %}
+          {% for fc in forecasts %}
+            {% set fc_ts = as_timestamp(fc.datetime) %}
+            {% set diff = (fc_ts - mid_heat_ts | float) | abs %}
+            {% if diff < ns.best_diff %}
+              {% set ns.best_diff = diff %}
+              {% set ns.best_temp = fc.temperature %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.best_temp }}
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_forecast_temp_at_event
+      data:
+        value: "{{ forecast_at_event | float(10) }}"
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.jacuzzi_forecast_temp_at_heating
+      data:
+        value: "{{ forecast_at_heating | float(10) }}"
+
+    - action: logbook.log
+      data:
+        name: "Jacuzzi Forecast"
+        message: >
+          Forecast updated for event at {{ event_start_str }}.
+          Current ambient: {{ states('sensor.la_dole_temperature') }}°C.
+          Forecast at event: {{ forecast_at_event }}°C.
+          Forecast at mid-heating: {{ forecast_at_heating }}°C.
+          Delta: {{ (forecast_at_event | float - states('sensor.la_dole_temperature') | float(10)) | round(1) }}°C
 
 
 # ==============================================================================
