@@ -140,6 +140,16 @@
         entity_id: input_number.jacuzzi_target_temp
       data:
         value: 40
+    - action: climate.set_temperature
+      target:
+        entity_id: climate.jacuzzi
+      data:
+        temperature: 40
+    - action: climate.set_hvac_mode
+      target:
+        entity_id: climate.jacuzzi
+      data:
+        hvac_mode: heat
     - action: logbook.log
       data:
         name: "Jacuzzi Solar Heating"
@@ -216,6 +226,16 @@
         entity_id: input_number.jacuzzi_target_temp
       data:
         value: 40
+    - action: climate.set_temperature
+      target:
+        entity_id: climate.jacuzzi
+      data:
+        temperature: 40
+    - action: climate.set_hvac_mode
+      target:
+        entity_id: climate.jacuzzi
+      data:
+        hvac_mode: heat
     - action: logbook.log
       data:
         name: "Jacuzzi Low Tariff Heating"
@@ -371,6 +391,16 @@
                 entity_id: input_number.jacuzzi_target_temp
               data:
                 value: 40
+            - action: climate.set_temperature
+              target:
+                entity_id: climate.jacuzzi
+              data:
+                temperature: 40
+            - action: climate.set_hvac_mode
+              target:
+                entity_id: climate.jacuzzi
+              data:
+                hvac_mode: heat
 
             - action: shell_command.log_decision
               data:
@@ -404,6 +434,16 @@
                 entity_id: input_number.jacuzzi_target_temp
               data:
                 value: 40
+            - action: climate.set_temperature
+              target:
+                entity_id: climate.jacuzzi
+              data:
+                temperature: 40
+            - action: climate.set_hvac_mode
+              target:
+                entity_id: climate.jacuzzi
+              data:
+                hvac_mode: heat
 
             - action: shell_command.log_action
               data:
@@ -430,6 +470,83 @@
               {{ {'trigger': 'no_event',
                   'standby_temp': states('input_number.jacuzzi_standby_temp') | float(15)
               } | tojson }}
+
+
+# ==============================================================================
+# 041 – EVENT HEATING PERSISTENCE
+# Restarts heating if turned off during an event-driven heating session.
+# ==============================================================================
+- id: auto_jacuzzi_041_event_heating_persist
+  alias: "Jacuzzi 041 – Event Heating Persistence"
+  description: >
+    Detects when the heater is turned off (by user, app, or system) while a
+    calendar event demands 40°C and water is below target. Immediately restarts
+    heating. The ONLY things that stop event heating are: reaching 40°C, event
+    deletion/cancellation, or input_boolean.jacuzzi_emergency_stop.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: climate.jacuzzi
+      attribute: hvac_action
+      to: "idle"
+    - trigger: time_pattern
+      minutes: "/2"
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.jacuzzi_automation_enabled
+      state: "on"
+    - condition: state
+      entity_id: input_boolean.jacuzzi_maintenance_mode
+      state: "off"
+    # Emergency stop respected
+    - condition: template
+      value_template: >
+        {{ not is_state('input_boolean.jacuzzi_emergency_stop', 'on') }}
+    # Target is 40 (event-driven heating)
+    - condition: template
+      value_template: >
+        {{ states('input_number.jacuzzi_target_temp') | float(15) >= 40 }}
+    # Water is below target
+    - condition: template
+      value_template: >
+        {% set current = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+        {{ current < 39.5 }}
+    # Heater is not in heat mode
+    - condition: template
+      value_template: >
+        {{ not is_state_attr('climate.jacuzzi', 'hvac_action', 'heating') }}
+
+  actions:
+    - action: climate.set_temperature
+      target:
+        entity_id: climate.jacuzzi
+      data:
+        temperature: 40
+    - action: climate.set_hvac_mode
+      target:
+        entity_id: climate.jacuzzi
+      data:
+        hvac_mode: heat
+    - action: logbook.log
+      data:
+        name: "Jacuzzi Heating Persist"
+        message: >
+          Heater was off during event heating (water
+          {{ state_attr('climate.jacuzzi', 'current_temperature') }}°C < 40°C).
+          Restarted heating automatically.
+    - action: shell_command.log_action
+      data:
+        system: jacuzzi
+        action_type: heating_restart
+        target_entity: climate.jacuzzi
+        parameters: >
+          {{ {'trigger': 'persistence_recovery',
+              'current_temp': state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1)
+          } | tojson }}
 
 
 # ==============================================================================

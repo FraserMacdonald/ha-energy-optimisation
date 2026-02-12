@@ -3,7 +3,7 @@
 # File: packages/grow_tent/grow_tent_notifications.yaml
 #
 # Daily summaries, reservoir reminders, and weekly reports.
-# Entity IDs marked # TODO: ENTITY_ID are placeholders.
+# Confirmed entity IDs: water temp (sensor.temperature), pH (sensor.water_ph).
 ###############################################################################
 
 automation:
@@ -28,6 +28,12 @@ automation:
     conditions:
       - condition: template
         value_template: >
+          {{ states('input_select.grow_tent_mode') == 'active' }}
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_cultivation_status') != 'idle' }}
+      - condition: template
+        value_template: >
           {{ states('input_select.grow_tent_stage') not in ['idle'] }}
 
     actions:
@@ -39,8 +45,8 @@ automation:
           rh: "{{ states('sensor.marshydro_humidity') | float(0) }}"
           vpd: "{{ states('sensor.grow_tent_vpd') | float(0) }}"
           vpd_target: "{{ states('sensor.grow_tent_vpd_target') | float(0) }}"
-          t_water: "{{ states('sensor.aquatic_water_temp') | float(0) }}"
-          ph: "{{ states('sensor.aquatic_ph') | float(0) }}"
+          t_water: "{{ states('sensor.temperature') | float(0) }}"
+          ph: "{{ states('sensor.water_ph') | float(0) }}"
           res_age: "{{ states('sensor.grow_tent_reservoir_age') | float(0) }}"
           daily_kwh: "{{ states('sensor.grow_tent_total_energy_daily') | float(0) }}"
           daily_cost: "{{ states('sensor.grow_tent_daily_cost') | float(0) }}"
@@ -84,6 +90,12 @@ automation:
         at: "09:00:00"
 
     conditions:
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_mode') == 'active' }}
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_cultivation_status') != 'idle' }}
       - condition: template
         value_template: >
           {{ states('input_select.grow_tent_stage') not in ['harvest', 'idle'] }}
@@ -141,9 +153,15 @@ automation:
         at: "20:00:00"
 
     conditions:
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_mode') == 'active' }}
       # Sunday evening only
       - condition: template
         value_template: "{{ now().weekday() == 6 }}"
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_cultivation_status') != 'idle' }}
       - condition: template
         value_template: >
           {{ states('input_select.grow_tent_stage') not in ['idle'] }}
@@ -172,7 +190,8 @@ automation:
               ('Water Heater', 'sensor.grow_tent_aquatic_heater_energy_monthly'),
               ('Humidifier', 'sensor.grow_tent_humidifier_energy_monthly'),
               ('Extractor', 'sensor.grow_tent_extractor_energy_monthly'),
-              ('Water Pump', 'sensor.grow_tent_water_pump_energy_monthly')
+              ('Water Pump', 'sensor.grow_tent_water_pump_energy_monthly'),
+              ('Water Circ', 'sensor.grow_tent_water_circ_energy_monthly')
             ] %}
             {% for name, entity in devices %}
             {% set v = states(entity) | float(0) %}
@@ -199,7 +218,14 @@ automation:
     conditions:
       - condition: template
         value_template: >
+          {{ states('input_select.grow_tent_cultivation_status') != 'idle' }}
+      - condition: template
+        value_template: >
           {{ trigger.from_state.state != trigger.to_state.state }}
+      # Allow mode change notification ONLY when moving to active or shadow
+      - condition: template
+        value_template: >
+          {{ trigger.to_state.state in ['active', 'shadow'] }}
 
     actions:
       - action: notify.mobile_app_fraser_s_iphone

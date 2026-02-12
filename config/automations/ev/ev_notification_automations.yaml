@@ -2,7 +2,7 @@
 # EV NOTIFICATION AUTOMATIONS
 # File: automations/ev/ev_notification_automations.yaml
 #
-# Numbering: 065-069, 077 (notification sub-range, avoiding existing 060-064, 070-076)
+# Numbering: 065-069, 077-082 (notification sub-range, avoiding existing 060-064, 070-076)
 # Note: ev_060-064 remain in ev_automations.yaml — not moved.
 # ev_070-076 are helper bridges in ev_automations.yaml — avoid those IDs.
 #
@@ -540,3 +540,344 @@
               'arrival_soc': current_soc | float,
               'wh_per_km': wh_per_km | int
           } | tojson }}
+
+
+# ==============================================================================
+# 079 – EV MORNING BRIEFING
+# Comprehensive morning notification with car recommendation and status.
+# ==============================================================================
+- id: auto_ev_079_morning_briefing
+  alias: "EV 079 – Morning Briefing"
+  description: >
+    Sends both users a comprehensive morning briefing with battery levels,
+    car recommendation, departure time, climate plan, plug status, and
+    overnight charging summary.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time
+      at: "06:30:00"
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ is_state('device_tracker.horace_location', 'home')
+           or is_state('device_tracker.horatio_location', 'home') }}
+
+  actions:
+    - variables:
+        # Battery levels + estimated range
+        horace_soc: "{{ states('sensor.horace_battery_level') | float(0) | round(0) }}"
+        horatio_soc: "{{ states('sensor.horatio_battery_level') | float(0) | round(0) }}"
+        horace_range: "{{ (horace_soc | float * 70 * 10 / 180) | round(0) }}"
+        horatio_range: "{{ (horatio_soc | float * 90 * 10 / 215) | round(0) }}"
+
+        # Location
+        horace_home: "{{ is_state('device_tracker.horace_location', 'home') }}"
+        horatio_home: "{{ is_state('device_tracker.horatio_location', 'home') }}"
+
+        # Plug status
+        horace_plugged: "{{ is_state('binary_sensor.horace_charge_cable', 'on') }}"
+        horatio_plugged: "{{ is_state('binary_sensor.horatio_charge_cable', 'on') }}"
+
+        # Trip plans
+        fraser_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
+        heather_car: "{{ states('input_select.ev_heather_assigned_car') }}"
+        fraser_km: "{{ states('input_number.ev_trip_km_fraser_today') | float(0) }}"
+        heather_km: "{{ states('input_number.ev_trip_km_heather_today') | float(0) }}"
+        fraser_dep_soc: "{{ states('input_number.ev_fraser_departure_soc') | float(0) | round(0) }}"
+        heather_dep_soc: "{{ states('input_number.ev_heather_departure_soc') | float(0) | round(0) }}"
+
+        # Overnight charging summary
+        horace_solar: "{{ states('input_number.ev_horace_solar_kwh_today') | float(0) | round(1) }}"
+        horace_grid: "{{ states('input_number.ev_horace_grid_kwh_today') | float(0) | round(1) }}"
+        horatio_solar: "{{ states('input_number.ev_horatio_solar_kwh_today') | float(0) | round(1) }}"
+        horatio_grid: "{{ states('input_number.ev_horatio_grid_kwh_today') | float(0) | round(1) }}"
+        total_charged: >
+          {{ (horace_solar | float + horace_grid | float
+              + horatio_solar | float + horatio_grid | float) | round(1) }}
+
+        # Outdoor temp for climate recommendation
+        outdoor_temp: "{{ states('sensor.la_dole_temperature') | float(10) }}"
+        needs_climate: "{{ outdoor_temp | float < 10 or outdoor_temp | float > 25 }}"
+
+        # Car recommendation (higher SOC wins if both have trips)
+        recommended_car: >
+          {% if fraser_km | float > 0 and horace_soc | float >= horatio_soc | float %}
+            Horace
+          {% elif fraser_km | float > 0 %}
+            Horatio
+          {% else %}
+            {{ fraser_car }}
+          {% endif %}
+
+    - variables:
+        msg: >
+          Horace: {{ horace_soc }}% ({{ horace_range }}km) {{ 'plugged' if horace_plugged else 'NOT plugged' }} {{ 'HOME' if horace_home else 'AWAY' }}
+          Horatio: {{ horatio_soc }}% ({{ horatio_range }}km) {{ 'plugged' if horatio_plugged else 'NOT plugged' }} {{ 'HOME' if horatio_home else 'AWAY' }}
+          {% if fraser_km | float > 0 or heather_km | float > 0 %}
+          Trips: {% if fraser_km | float > 0 %}Fraser {{ fraser_car }} ({{ fraser_km | round(0) }}km, need {{ fraser_dep_soc }}%). {% endif %}{% if heather_km | float > 0 %}Heather {{ heather_car }} ({{ heather_km | round(0) }}km, need {{ heather_dep_soc }}%).{% endif %}
+          {% else %}
+          No trips planned today.
+          {% endif %}
+          {% if needs_climate and (fraser_km | float > 0 or heather_km | float > 0) %}
+          Climate: {{ outdoor_temp }}C — pre-conditioning will activate before departure.
+          {% endif %}
+          {% if total_charged | float > 0 %}
+          Overnight: {{ total_charged }}kWh charged ({{ (horace_solar | float + horatio_solar | float) | round(1) }}kWh solar, {{ (horace_grid | float + horatio_grid | float) | round(1) }}kWh low-tariff).
+          {% endif %}
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "EV Morning Briefing"
+        message: "{{ msg }}"
+
+    - action: notify.mobile_app_heather_s_iphone
+      data:
+        title: "EV Morning Briefing"
+        message: "{{ msg }}"
+
+    - action: logbook.log
+      data:
+        name: "EV Morning"
+        message: "Briefing sent. Horace {{ horace_soc }}%, Horatio {{ horatio_soc }}%."
+
+
+# ==============================================================================
+# 080 – ALWAYS ONE CAR PLUGGED NAG
+# Periodically nags when no car is plugged in at home.
+# ==============================================================================
+- id: auto_ev_080_always_plugged_nag
+  alias: "EV 080 – Always One Car Plugged"
+  description: >
+    Nags every 30 minutes when at least one car is at home but none are
+    plugged in. Escalates urgency after 2 hours.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/30"
+
+  conditions:
+    # At least one car is at home
+    - condition: template
+      value_template: >
+        {{ is_state('device_tracker.horace_location', 'home')
+           or is_state('device_tracker.horatio_location', 'home') }}
+    # No car is plugged in
+    - condition: template
+      value_template: >
+        {{ not is_state('binary_sensor.horace_charge_cable', 'on')
+           and not is_state('binary_sensor.horatio_charge_cable', 'on') }}
+
+  actions:
+    - variables:
+        horace_home: "{{ is_state('device_tracker.horace_location', 'home') }}"
+        horatio_home: "{{ is_state('device_tracker.horatio_location', 'home') }}"
+        horace_soc: "{{ states('sensor.horace_battery_level') | float(0) | round(0) }}"
+        horatio_soc: "{{ states('sensor.horatio_battery_level') | float(0) | round(0) }}"
+        # Recommend the car with lower SOC
+        plug_car: >
+          {% if horace_home and horatio_home %}
+            {{ 'Horace' if horace_soc | float <= horatio_soc | float else 'Horatio' }}
+          {% elif horace_home %}
+            Horace
+          {% else %}
+            Horatio
+          {% endif %}
+        plug_soc: >
+          {{ horace_soc if plug_car == 'Horace' else horatio_soc }}
+
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Plug In a Tesla"
+        message: >
+          No car is plugged in. Please plug in {{ plug_car }} ({{ plug_soc }}%).
+        data:
+          push:
+            interruption-level: time-sensitive
+
+    - action: logbook.log
+      data:
+        name: "EV Plug Reminder"
+        message: "No car plugged in. Recommended: {{ plug_car }} ({{ plug_soc }}%)."
+
+
+# ==============================================================================
+# 081 – ARRIVAL PLUG-IN REMINDER
+# Reminds to plug in a car 10 minutes after arriving home.
+# ==============================================================================
+- id: auto_ev_081_arrival_plug_reminder
+  alias: "EV 081 – Arrival Plug-In Reminder"
+  description: >
+    When a car arrives home, waits 10 minutes then checks if it's plugged in.
+    If not, sends a reminder to the relevant driver.
+  mode: parallel
+  max: 2
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: device_tracker.horace_location
+      to: "home"
+    - trigger: state
+      entity_id: device_tracker.horatio_location
+      to: "home"
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ trigger.from_state is not none
+           and trigger.from_state.state != 'home' }}
+
+  actions:
+    - variables:
+        car: >
+          {% if trigger.entity_id == 'device_tracker.horace_location' %}
+            Horace
+          {% else %}
+            Horatio
+          {% endif %}
+        cable_entity: >
+          {% if car == 'Horace' %}
+            binary_sensor.horace_charge_cable
+          {% else %}
+            binary_sensor.horatio_charge_cable
+          {% endif %}
+        fraser_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
+        heather_car: "{{ states('input_select.ev_heather_assigned_car') }}"
+
+    # Wait 10 minutes for user to plug in
+    - delay:
+        minutes: 10
+
+    # Check if still not plugged
+    - condition: template
+      value_template: >
+        {{ not is_state(cable_entity | trim, 'on') }}
+
+    - variables:
+        soc: >
+          {% if car == 'Horace' %}
+            {{ states('sensor.horace_battery_level') | float(0) | round(0) }}
+          {% else %}
+            {{ states('sensor.horatio_battery_level') | float(0) | round(0) }}
+          {% endif %}
+
+    # Notify the driver of that car
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ fraser_car | trim == car | trim }}"
+          sequence:
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                title: "Plug In {{ car | trim }}"
+                message: >
+                  You've been home 10 minutes — please plug in {{ car | trim }} ({{ soc }}%).
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ heather_car | trim == car | trim }}"
+          sequence:
+            - action: notify.mobile_app_heather_s_iphone
+              data:
+                title: "Plug In {{ car | trim }}"
+                message: >
+                  You've been home 10 minutes — please plug in {{ car | trim }} ({{ soc }}%).
+
+    # Fallback: if no driver assigned, notify Fraser
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: >
+                {{ fraser_car | trim != car | trim
+                   and heather_car | trim != car | trim }}
+          sequence:
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                title: "Plug In {{ car | trim }}"
+                message: >
+                  {{ car | trim }} arrived home 10 min ago and isn't plugged in ({{ soc }}%).
+
+
+# ==============================================================================
+# 082 – UNEXPECTED DISCONNECT
+# Alerts when a car is unplugged at home while below charge target.
+# ==============================================================================
+- id: auto_ev_082_unexpected_disconnect
+  alias: "EV 082 – Unexpected Disconnect"
+  description: >
+    Alerts when a car's charge cable is disconnected while at home and
+    the battery is below the charge target.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: binary_sensor.horace_charge_cable
+      to: "off"
+    - trigger: state
+      entity_id: binary_sensor.horatio_charge_cable
+      to: "off"
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ trigger.from_state is not none
+           and trigger.from_state.state == 'on' }}
+
+  actions:
+    - variables:
+        car: >
+          {% if trigger.entity_id == 'binary_sensor.horace_charge_cable' %}
+            Horace
+          {% else %}
+            Horatio
+          {% endif %}
+        at_home: >
+          {% if car == 'Horace' %}
+            {{ is_state('device_tracker.horace_location', 'home') }}
+          {% else %}
+            {{ is_state('device_tracker.horatio_location', 'home') }}
+          {% endif %}
+        soc: >
+          {% if car == 'Horace' %}
+            {{ states('sensor.horace_battery_level') | float(0) | round(0) }}
+          {% else %}
+            {{ states('sensor.horatio_battery_level') | float(0) | round(0) }}
+          {% endif %}
+        target: >
+          {% if car == 'Horace' %}
+            {{ states('input_number.ev_horace_charge_limit') | float(80) | round(0) }}
+          {% else %}
+            {{ states('input_number.ev_horatio_charge_limit') | float(80) | round(0) }}
+          {% endif %}
+        below_target: "{{ soc | float < target | float }}"
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ at_home and below_target }}"
+          sequence:
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                title: "Tesla Unplugged"
+                message: >
+                  {{ car | trim }} was unplugged at {{ soc }}% (target {{ target }}%). Please reconnect.
+                data:
+                  push:
+                    interruption-level: time-sensitive
+
+            - action: logbook.log
+              data:
+                name: "EV Disconnect"
+                message: >
+                  {{ car | trim }} unplugged at {{ soc }}% (target {{ target }}%).

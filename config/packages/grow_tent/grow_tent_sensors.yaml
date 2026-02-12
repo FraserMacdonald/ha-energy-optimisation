@@ -3,7 +3,8 @@
 # File: packages/grow_tent/grow_tent_sensors.yaml
 #
 # Stage-derived profiles, VPD calculation, dosing volumes, and computed values.
-# Sensor entities marked # TODO: ENTITY_ID are placeholders.
+# Source sensors: sensor.marshydro_temperature, sensor.marshydro_humidity (MarsHydro),
+# sensor.temperature (pHw218 water temp), sensor.water_ph (pHw218 pH).
 ###############################################################################
 
 template:
@@ -362,3 +363,19 @@ template:
           {% set rh_spd = min_spd + ([0, rh_excess * 5] | max) %}
 
           {{ [[min_spd, temp_spd, rh_spd] | max, 100] | min | round(0) }}
+
+  # ===========================================================================
+  # MODE GATE SENSORS
+  # ===========================================================================
+  - binary_sensor:
+      - name: "Grow Tent Automations Enabled"
+        unique_id: grow_tent_automations_enabled
+        icon: mdi:auto-mode
+        state: >
+          {{ states('input_select.grow_tent_mode') in ['shadow', 'active'] }}
+
+      - name: "Grow Tent Notifications Enabled"
+        unique_id: grow_tent_notifications_enabled
+        icon: mdi:bell
+        state: >
+          {{ states('input_select.grow_tent_mode') == 'active' }}

@@ -3,7 +3,7 @@
 # File: packages/grow_tent/grow_tent_system.yaml
 #
 # All helpers for the automated grow tent system.
-# Entity IDs marked # TODO: ENTITY_ID are placeholders to validate.
+# No external entity references — this file defines helpers only.
 ###############################################################################
 
 # =============================================================================
@@ -33,12 +33,27 @@ input_select:
   grow_tent_mode:
     name: "Grow Tent Mode"
     options:
-      - "active"
-      - "shadow"
-      - "manual"
       - "idle"
-    initial: "shadow"
+      - "setup"
+      - "shadow"
+      - "active"
+    initial: "idle"
     icon: mdi:auto-mode
+
+  grow_tent_cultivation_status:
+    name: "Grow Tent Cultivation Status"
+    options:
+      - "idle"
+      - "germination"
+      - "seedling"
+      - "vegetative"
+      - "transition"
+      - "flowering"
+      - "flush"
+      - "drying"
+      - "curing"
+    initial: "idle"
+    icon: mdi:flower
 
 # =============================================================================
 # INPUT NUMBERS – System Configuration

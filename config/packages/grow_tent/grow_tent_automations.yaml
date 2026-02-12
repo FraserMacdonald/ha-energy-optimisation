@@ -7,7 +7,8 @@
 #   shadow → notify only (no switches/lights/fans)
 #   manual/idle → disabled
 #
-# Entity IDs marked # TODO: ENTITY_ID are placeholders.
+# Confirmed entity IDs: water heater, water temp, pH, water pump.
+# Remaining # TODO placeholders: light, space heater, humidifier, dosing pumps, extractor.
 ###############################################################################
 
 automation:
@@ -53,11 +54,12 @@ automation:
               - condition: template
                 value_template: "{{ is_shadow }}"
             sequence:
-              - action: notify.mobile_app_fraser_s_iphone
+              - action: logbook.log
                 data:
+                  name: "Grow Tent Shadow"
                   message: >
-                    🌱 SHADOW: Would ramp LED to {{ target_pct }}%
-                    over {{ ramp_min }} min ({{ steps }} steps of {{ step_pct }}%)
+                    Would ramp LED to {{ target_pct }}%
+                    over {{ ramp_min }} min ({{ steps }} steps)
         default:
           - repeat:
               count: "{{ steps }}"
@@ -116,10 +118,11 @@ automation:
               - condition: template
                 value_template: "{{ is_shadow }}"
             sequence:
-              - action: notify.mobile_app_fraser_s_iphone
+              - action: logbook.log
                 data:
+                  name: "Grow Tent Shadow"
                   message: >
-                    🌱 SHADOW: Would ramp LED from {{ current_pct }}% to 0%
+                    Would ramp LED from {{ current_pct }}% to 0%
                     over {{ ramp_min }} min
         default:
           - repeat:
@@ -197,12 +200,12 @@ automation:
                       - condition: template
                         value_template: "{{ is_shadow }}"
                     sequence:
-                      - action: notify.mobile_app_fraser_s_iphone
+                      - action: logbook.log
                         data:
+                          name: "Grow Tent Shadow"
                           message: >
-                            🌱 SHADOW: Would turn ON heater.
+                            Would turn ON heater.
                             Temp {{ t_air }}°C < {{ (target - deadband) | round(1) }}°C
-                            (target {{ target }}°C, deadband {{ deadband }}°C)
                 default:
                   - action: switch.turn_on
                     target:
@@ -218,10 +221,11 @@ automation:
                       - condition: template
                         value_template: "{{ is_shadow }}"
                     sequence:
-                      - action: notify.mobile_app_fraser_s_iphone
+                      - action: logbook.log
                         data:
+                          name: "Grow Tent Shadow"
                           message: >
-                            🌱 SHADOW: Would turn OFF heater.
+                            Would turn OFF heater.
                             Temp {{ t_air }}°C > {{ (target + deadband) | round(1) }}°C
                 default:
                   - action: switch.turn_off
@@ -283,16 +287,17 @@ automation:
               - condition: template
                 value_template: "{{ is_shadow }}"
             sequence:
-              - action: notify.mobile_app_fraser_s_iphone
+              - action: logbook.log
                 data:
+                  name: "Grow Tent Shadow"
                   message: >
-                    🌱 SHADOW: Would set extractor to {{ fan_speed }}%.
-                    RH {{ rh }}% (target {{ target }}%, deadband {{ deadband }}%).
+                    Would set extractor to {{ fan_speed }}%.
+                    RH {{ rh }}% (target {{ target }}%).
                     Humidifier: {{ 'ON' if humidifier_on else 'OFF' if humidifier_off else 'no change' }}
         default:
           - action: fan.set_percentage
             target:
-              entity_id: fan.esphome_extractor  # TODO: ENTITY_ID
+              entity_id: fan.grow_node_01_extractor  # TODO: placeholder until ESP32 configured
             data:
               percentage: "{{ fan_speed }}"
 
@@ -325,7 +330,7 @@ automation:
 
     triggers:
       - trigger: state
-        entity_id: sensor.aquatic_water_temp  # TODO: ENTITY_ID
+        entity_id: sensor.temperature
       - trigger: time_pattern
         minutes: "/5"
 
@@ -339,10 +344,10 @@ automation:
 
     actions:
       - variables:
-          t_water: "{{ states('sensor.aquatic_water_temp') | float(0) }}"
+          t_water: "{{ states('sensor.temperature') | float(0) }}"
           target: "{{ states('input_number.grow_tent_water_temp_target') | float(20) }}"
           deadband: "{{ states('input_number.grow_tent_water_temp_deadband') | float(1.0) }}"
-          heater_on: "{{ is_state('switch.shelly_aquatic_heater', 'on') }}"
+          heater_on: "{{ is_state('switch.growtent_plug_shelly_waterheater', 'on') }}"
           is_shadow: "{{ states('input_select.grow_tent_mode') == 'shadow' }}"
 
       - choose:
@@ -356,15 +361,16 @@ automation:
                       - condition: template
                         value_template: "{{ is_shadow }}"
                     sequence:
-                      - action: notify.mobile_app_fraser_s_iphone
+                      - action: logbook.log
                         data:
+                          name: "Grow Tent Shadow"
                           message: >
-                            🌱 SHADOW: Would turn ON aquatic heater.
+                            Would turn ON aquatic heater.
                             Water {{ t_water }}°C (target {{ target }}°C)
                 default:
                   - action: switch.turn_on
                     target:
-                      entity_id: switch.shelly_aquatic_heater  # TODO: ENTITY_ID
+                      entity_id: switch.growtent_plug_shelly_waterheater
 
           # Warm enough → heater OFF
           - conditions:
@@ -376,15 +382,16 @@ automation:
                       - condition: template
                         value_template: "{{ is_shadow }}"
                     sequence:
-                      - action: notify.mobile_app_fraser_s_iphone
+                      - action: logbook.log
                         data:
+                          name: "Grow Tent Shadow"
                           message: >
-                            🌱 SHADOW: Would turn OFF aquatic heater.
+                            Would turn OFF aquatic heater.
                             Water {{ t_water }}°C (target {{ target }}°C)
                 default:
                   - action: switch.turn_off
                     target:
-                      entity_id: switch.shelly_aquatic_heater  # TODO: ENTITY_ID
+                      entity_id: switch.growtent_plug_shelly_waterheater
 
   # =========================================================================
   # 040 – pH AUTO-CORRECTION (Phase 2 – disabled by condition)
@@ -417,7 +424,7 @@ automation:
 
     actions:
       - variables:
-          ph: "{{ states('sensor.aquatic_ph') | float(0) }}"
+          ph: "{{ states('sensor.water_ph') | float(0) }}"
           ph_low: "{{ states('input_number.grow_tent_ph_low_limit') | float(5.5) }}"
           ph_high: "{{ states('input_number.grow_tent_ph_high_limit') | float(5.8) }}"
           dose_ml: "{{ states('input_number.grow_tent_ph_dose_ml') | float(10) }}"
@@ -442,7 +449,7 @@ automation:
                   minutes: "{{ wait_min }}"
               # Re-check and half-dose if still out of range
               - variables:
-                  ph_recheck: "{{ states('sensor.aquatic_ph') | float(0) }}"
+                  ph_recheck: "{{ states('sensor.water_ph') | float(0) }}"
               - choose:
                   - conditions:
                       - condition: template
@@ -467,7 +474,7 @@ automation:
               - delay:
                   minutes: "{{ wait_min }}"
               - variables:
-                  ph_recheck: "{{ states('sensor.aquatic_ph') | float(0) }}"
+                  ph_recheck: "{{ states('sensor.water_ph') | float(0) }}"
               - choose:
                   - conditions:
                       - condition: template
@@ -630,6 +637,11 @@ automation:
         hours: "/1"
         minutes: "0"
 
+    conditions:
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_mode') in ['active', 'shadow'] }}
+
     actions:
       - action: input_number.set_value
         target:
@@ -652,6 +664,12 @@ automation:
         at: "08:00:00"
 
     conditions:
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_mode') == 'active' }}
+      - condition: template
+        value_template: >
+          {{ states('input_select.grow_tent_cultivation_status') != 'idle' }}
       - condition: template
         value_template: >
           {{ states('input_select.grow_tent_stage') not in ['harvest', 'idle'] }}
@@ -702,6 +720,9 @@ automation:
     conditions:
       - condition: template
         value_template: >
+          {{ states('input_select.grow_tent_cultivation_status') != 'idle' }}
+      - condition: template
+        value_template: >
           {{ states('input_select.grow_tent_mode') in ['active', 'shadow'] }}
       - condition: template
         value_template: >
@@ -713,8 +734,8 @@ automation:
           t_air: "{{ states('sensor.marshydro_temperature') | float(0) }}"
           rh: "{{ states('sensor.marshydro_humidity') | float(0) }}"
           vpd: "{{ states('sensor.grow_tent_vpd') | float(0) }}"
-          t_water: "{{ states('sensor.aquatic_water_temp') | float(0) }}"
-          ph: "{{ states('sensor.aquatic_ph') | float(0) }}"
+          t_water: "{{ states('sensor.temperature') | float(0) }}"
+          ph: "{{ states('sensor.water_ph') | float(0) }}"
 
           # Range checks
           temp_high: >
@@ -761,17 +782,28 @@ automation:
             {% endif %}
             {{ ns.items }}
 
+      # Log alerts in both shadow and active mode
       - choose:
           - conditions:
               - condition: template
                 value_template: "{{ alerts | length > 0 }}"
             sequence:
+              - action: logbook.log
+                data:
+                  name: "Grow Tent Alert"
+                  message: >
+                    Out of range:
+                    {% for a in alerts %}{{ a }}; {% endfor %}
+              # Only send push notification in active mode
+              - condition: template
+                value_template: >
+                  {{ states('input_select.grow_tent_mode') == 'active' }}
               - action: notify.mobile_app_fraser_s_iphone
                 data:
                   message: >
-                    🌱 ALERT ({{ states('sensor.grow_tent_stage_display') }}):
+                    ALERT ({{ states('sensor.grow_tent_stage_display') }}):
                     {% for a in alerts %}
-                    • {{ a }}
+                    - {{ a }}
                     {% endfor %}
                   data:
                     push:

@@ -4,7 +4,8 @@
 #
 # Utility meters (daily + monthly) per device, tariff-aware cost sensors.
 # Source sensors are from Shelly plug energy counters and ESPHome.
-# Entity IDs marked # TODO: ENTITY_ID are placeholders.
+# Confirmed: water heater, water pump, water circulation energy sensors.
+# Remaining # TODO placeholders: light, space heater, humidifier, extractor.
 ###############################################################################
 
 # =============================================================================
@@ -36,11 +37,11 @@ utility_meter:
 
   # --- Aquatic (Water) Heater ---
   grow_tent_aquatic_heater_energy_daily:
-    source: sensor.shelly_aquatic_heater_energy  # TODO: ENTITY_ID
+    source: sensor.growtent_plug_shelly_waterheater_energy
     name: "Grow Tent Aquatic Heater Energy Daily"
     cycle: daily
   grow_tent_aquatic_heater_energy_monthly:
-    source: sensor.shelly_aquatic_heater_energy  # TODO: ENTITY_ID
+    source: sensor.growtent_plug_shelly_waterheater_energy
     name: "Grow Tent Aquatic Heater Energy Monthly"
     cycle: monthly
 
@@ -56,12 +57,22 @@ utility_meter:
 
   # --- Water Pump (Circulation) ---
   grow_tent_water_pump_energy_daily:
-    source: sensor.shelly_water_pump_energy  # TODO: ENTITY_ID
+    source: sensor.shellyplugsg3_e4b063fbce80_energy
     name: "Grow Tent Water Pump Energy Daily"
     cycle: daily
   grow_tent_water_pump_energy_monthly:
-    source: sensor.shelly_water_pump_energy  # TODO: ENTITY_ID
+    source: sensor.shellyplugsg3_e4b063fbce80_energy
     name: "Grow Tent Water Pump Energy Monthly"
+    cycle: monthly
+
+  # --- Water Circulation ---
+  grow_tent_water_circ_energy_daily:
+    source: sensor.shellyplugsg3_28372f36fd70_energy
+    name: "Grow Tent Water Circulation Energy Daily"
+    cycle: daily
+  grow_tent_water_circ_energy_monthly:
+    source: sensor.shellyplugsg3_28372f36fd70_energy
+    name: "Grow Tent Water Circulation Energy Monthly"
     cycle: monthly
 
   # --- Extractor Fan ---
@@ -95,6 +106,7 @@ template:
             'sensor.grow_tent_aquatic_heater_energy_daily',
             'sensor.grow_tent_humidifier_energy_daily',
             'sensor.grow_tent_water_pump_energy_daily',
+            'sensor.grow_tent_water_circ_energy_daily',
             'sensor.grow_tent_extractor_energy_daily'
           ] %}
           {% set ns = namespace(total=0) %}
@@ -120,6 +132,7 @@ template:
             'sensor.grow_tent_aquatic_heater_energy_monthly',
             'sensor.grow_tent_humidifier_energy_monthly',
             'sensor.grow_tent_water_pump_energy_monthly',
+            'sensor.grow_tent_water_circ_energy_monthly',
             'sensor.grow_tent_extractor_energy_monthly'
           ] %}
           {% set ns = namespace(total=0) %}

@@ -372,3 +372,58 @@
         notification_id: energy_weekly_summary
         title: "Weekly Energy Summary"
         message: "{{ msg }}"
+
+
+# ==============================================================================
+# 069 – DAILY COST LOGGER
+# Logs each system's daily energy consumption to the database at 23:55.
+# ==============================================================================
+- id: auto_energy_069_daily_cost_log
+  alias: "Energy 069 – Daily Cost Logger"
+  description: >
+    At 23:55 each day, logs energy consumption per system to the ha_analytics
+    database via shell_command.log_cost. Captures solar vs grid kWh breakdown.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time
+      at: "23:55:00"
+
+  actions:
+    - variables:
+        # EV energy (tracked in helpers, reset daily)
+        ev_solar_kwh: >
+          {{ (states('input_number.ev_horace_solar_kwh_today') | float(0)
+              + states('input_number.ev_horatio_solar_kwh_today') | float(0)) | round(2) }}
+        ev_grid_kwh: >
+          {{ (states('input_number.ev_horace_grid_kwh_today') | float(0)
+              + states('input_number.ev_horatio_grid_kwh_today') | float(0)) | round(2) }}
+
+        # Grow tent energy (utility meters, all grid)
+        growtent_kwh: >
+          {{ states('sensor.grow_tent_total_energy_daily') | float(0) | round(3) }}
+
+    # Log EV costs — grid assumed low tariff (overnight charging)
+    - action: shell_command.log_cost
+      data:
+        system: ev
+        kwh_solar: "{{ ev_solar_kwh }}"
+        kwh_grid_low: "{{ ev_grid_kwh }}"
+        kwh_grid_high: "0"
+
+    # Log grow tent costs — no solar, split unknown so log all as grid_high
+    - action: shell_command.log_cost
+      data:
+        system: growtent
+        kwh_solar: "0"
+        kwh_grid_low: "0"
+        kwh_grid_high: "{{ growtent_kwh }}"
+
+    - action: logbook.log
+      data:
+        name: "Energy Cost Logger"
+        message: >
+          Daily cost logged: EV solar={{ ev_solar_kwh }}kWh
+          grid={{ ev_grid_kwh }}kWh. Grow tent={{ growtent_kwh }}kWh.

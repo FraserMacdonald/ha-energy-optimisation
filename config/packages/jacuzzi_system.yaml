@@ -184,6 +184,14 @@ input_boolean:
     name: "Jacuzzi Maintenance Mode"
     icon: mdi:wrench
 
+  jacuzzi_emergency_stop:
+    name: "Jacuzzi Emergency Stop"
+    icon: mdi:stop-circle
+
+  jacuzzi_heater_upgrade_pending:
+    name: "Jacuzzi Heater Upgrade Pending"
+    icon: mdi:wrench-clock
+
 # =============================================================================
 # INPUT DATETIMES
 # =============================================================================
