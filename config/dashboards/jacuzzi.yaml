@@ -308,6 +308,10 @@ views:
             name: Standby Energy Banking
           - entity: input_number.jacuzzi_boosted_standby_temp
             name: Boosted Standby Temp
+          - entity: input_number.jacuzzi_max_heat_up_hours
+            name: Max Heat-Up Time
+          - entity: sensor.jacuzzi_minimum_standby_temp
+            name: Min Standby (readiness)
           - entity: sensor.jacuzzi_effective_standby_temp
             name: Effective Standby Temp
           - type: divider
