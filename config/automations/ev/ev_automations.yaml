@@ -1276,11 +1276,19 @@
         driver_long: "{{ 'fraser' if fraser_has_long else 'heather' }}"
         driver_short: "{{ 'heather' if fraser_has_long else 'fraser' }}"
 
-        # SOC drops (elevation-adjusted)
-        drop_horace_long: "{{ states('input_number.ev_' ~ driver_long ~ '_soc_drop_horace') | float(0) }}"
-        drop_horace_short: "{{ states('input_number.ev_' ~ driver_short ~ '_soc_drop_horace') | float(0) }}"
-        drop_horatio_long: "{{ states('input_number.ev_' ~ driver_long ~ '_soc_drop_horatio') | float(0) }}"
-        drop_horatio_short: "{{ states('input_number.ev_' ~ driver_short ~ '_soc_drop_horatio') | float(0) }}"
+        # SOC drops (elevation-adjusted, with flat-road fallback)
+        elev_horace_long: "{{ states('input_number.ev_' ~ driver_long ~ '_soc_drop_horace') | float(0) }}"
+        elev_horace_short: "{{ states('input_number.ev_' ~ driver_short ~ '_soc_drop_horace') | float(0) }}"
+        elev_horatio_long: "{{ states('input_number.ev_' ~ driver_long ~ '_soc_drop_horatio') | float(0) }}"
+        elev_horatio_short: "{{ states('input_number.ev_' ~ driver_short ~ '_soc_drop_horatio') | float(0) }}"
+        flat_horace_long: "{{ (km_long | float(0) * whkm_horace / (batt_horace_kwh * 10)) | round(1) }}"
+        flat_horace_short: "{{ (km_short | float(0) * whkm_horace / (batt_horace_kwh * 10)) | round(1) }}"
+        flat_horatio_long: "{{ (km_long | float(0) * whkm_horatio / (batt_horatio_kwh * 10)) | round(1) }}"
+        flat_horatio_short: "{{ (km_short | float(0) * whkm_horatio / (batt_horatio_kwh * 10)) | round(1) }}"
+        drop_horace_long: "{{ elev_horace_long if elev_horace_long > 0 else flat_horace_long }}"
+        drop_horace_short: "{{ elev_horace_short if elev_horace_short > 0 else flat_horace_short }}"
+        drop_horatio_long: "{{ elev_horatio_long if elev_horatio_long > 0 else flat_horatio_long }}"
+        drop_horatio_short: "{{ elev_horatio_short if elev_horatio_short > 0 else flat_horatio_short }}"
 
         # Required starting SOC (to end at hard floor)
         req_horace_long: "{{ drop_horace_long + hard_floor_soc }}"
