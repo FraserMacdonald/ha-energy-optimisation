@@ -1700,6 +1700,9 @@
       value_template: "{{ plan_car in ['Horace', 'Horatio'] and cheap_active }}"
 
     # Wake the planned car so Tesla API returns fresh plug/SOC data
+    - variables:
+        plug_entity: "{{ 'binary_sensor.horace_plugged' if plan_car == 'Horace' else 'binary_sensor.horatio_plugged' }}"
+        soc_entity: "{{ 'sensor.horace_battery_level' if plan_car == 'Horace' else 'sensor.horatio_battery_level' }}"
     - action: button.press
       target:
         entity_id: "{{ 'button.horace_wake' if plan_car == 'Horace' else 'button.horatio_wake' }}"
@@ -1708,10 +1711,45 @@
     - action: homeassistant.update_entity
       target:
         entity_id:
-          - "{{ 'binary_sensor.horace_plugged' if plan_car == 'Horace' else 'binary_sensor.horatio_plugged' }}"
-          - "{{ 'sensor.horace_battery_level' if plan_car == 'Horace' else 'sensor.horatio_battery_level' }}"
+          - "{{ plug_entity }}"
+          - "{{ soc_entity }}"
     - delay:
         seconds: 5
+
+    # If plug state still unknown, reload Tesla Fleet integration and retry
+    - if:
+        - condition: template
+          value_template: "{{ states(plug_entity) in ['unknown', 'unavailable'] }}"
+      then:
+        - action: homeassistant.reload_config_entry
+          target:
+            entity_id: "{{ plug_entity }}"
+        - delay:
+            seconds: 30
+        - action: homeassistant.update_entity
+          target:
+            entity_id:
+              - "{{ plug_entity }}"
+              - "{{ soc_entity }}"
+        - delay:
+            seconds: 5
+        # If still unknown after reload, try one more wake cycle
+        - if:
+            - condition: template
+              value_template: "{{ states(plug_entity) in ['unknown', 'unavailable'] }}"
+          then:
+            - action: button.press
+              target:
+                entity_id: "{{ 'button.horace_wake' if plan_car == 'Horace' else 'button.horatio_wake' }}"
+            - delay:
+                seconds: 45
+            - action: homeassistant.update_entity
+              target:
+                entity_id:
+                  - "{{ plug_entity }}"
+                  - "{{ soc_entity }}"
+            - delay:
+                seconds: 5
 
     # Now evaluate with fresh data
     - variables:
