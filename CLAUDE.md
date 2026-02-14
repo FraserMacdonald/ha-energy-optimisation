@@ -271,5 +271,46 @@ Full HA database loss on mini PC. Config rebuilt from GitHub.
 - **Deploy command**: `cd /homeassistant/ha-restore && git pull && cp -r config/* /homeassistant/ && ha core restart`
 - **Tesla public key repo**: `FraserMacdonald.github.io` (GitHub Pages, `.well-known/appspecific/com.tesla.3p.public-key.pem`)
 
+## What's Done (Phase 2A-2C – Solar Production Forecasting)
+Solar production forecast system: predicts 48-hour solar output using NOAA sun position, dual-slope clear-sky model (23kWp east/west at 35° tilt), Met.no cloud overlay, and auto-calibration.
+
+### New Files:
+- [x] `scripts/solar_forecast.py` — Core engine (5 subcommands: init_db, forecast, actual, compare, calibrate)
+  - NOAA solar position equations (manual, no pvlib)
+  - Dual-slope clear-sky model (east=90°, west=270°, tilt=35°, Meinel DNI + Kasten-Young AM)
+  - Kasten-Czeplak cloud scaling from Met.no `cloud_area_fraction`
+  - Auto-calibration via EWM (alpha=0.1) from clear-sky days
+  - Variance decomposition (model error vs weather error)
+  - 4 MariaDB tables: `solar_forecast_hourly`, `solar_actual_hourly`, `solar_forecast_comparison`, `solar_calibration_log`
+- [x] `config/packages/energy_solar_forecast_system.yaml` — 13 input_numbers, 1 input_boolean, 2 input_selects
+- [x] `config/automations/energy/energy_solar_forecast_automations.yaml` — 4 automations (020-023)
+  - 020: Forecast runner (every 30 min, 04:00-22:00)
+  - 021: Actual logger (every 30 min)
+  - 022: Forecast comparison (:05 past each hour)
+  - 023: Weekly calibration (Sunday 23:30)
+- [x] `config/templates/energy/energy_solar_forecast_sensors.yaml` — 2 template sensors (summary + quality)
+
+### Modified Files:
+- [x] `config/configuration.yaml` — Added `energy_solar_forecast` package + 4 shell_commands + uncommented `energy_orchestrator` package
+- [x] `config/dashboards/energy.yaml` — Added 4 cards (forecast overview, forecast vs actual graph, quality, controls)
+
+### Jacuzzi 6kW Heater Update:
+Jacuzzi heater power increased from 3.5kW to 6kW. All hardcoded 3500W references updated to 6000W across:
+- [x] `packages/jacuzzi_system.yaml` — `jacuzzi_heater_power_rated_kw` initial: 3.0 → 6.0
+- [x] `templates/energy/energy_shared_sensors.yaml` — production scenario jacuzzi_w, power_demand_w
+- [x] `automations/energy/energy_orchestrator_automations.yaml` — all jac_w and surplus threshold refs
+- [x] `automations/energy/energy_notification_automations.yaml` — contention notification jac_w
+- [x] `templates/jacuzzi/jacuzzi_binary_sensors.yaml` — solar_available jacuzzi_power
+- [x] `templates/jacuzzi/jacuzzi_sensors.yaml` — effective standby temp solar surplus thresholds
+- [x] `automations/jacuzzi/jacuzzi_automations.yaml` — solar-off fallback threshold + source detection
+- [x] `automations/jacuzzi/jacuzzi_notification_automations.yaml` — source detection + source changed thresholds
+- [x] yamllint passes on all modified files
+
+### Deployment:
+1. Deploy files: `cd /homeassistant/ha-restore && git pull && cp -r config/* /homeassistant/ && cp scripts/* /homeassistant/scripts/ && ha core restart`
+2. Initialize DB tables: SSH to HA → `python3 /homeassistant/scripts/solar_forecast.py init_db`
+3. Turn on `input_boolean.energy_solar_forecast_enabled` in HA UI
+4. Update `input_number.jacuzzi_heater_power_rated_kw` to 6.0 in HA UI (if not already)
+
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).

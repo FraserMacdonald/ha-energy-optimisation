@@ -264,7 +264,7 @@
   alias: "Jacuzzi 022 – Solar Off Fallback"
   description: >
     If jacuzzi is heating due to solar opportunistic mode and solar surplus
-    drops below 3500W for more than 10 minutes, reverts target to standby.
+    drops below 6000W for more than 10 minutes, reverts target to standby.
     Prevents grid heating when clouds appear.
   mode: single
   trace:
@@ -273,7 +273,7 @@
   triggers:
     - trigger: numeric_state
       entity_id: sensor.energy_solar_surplus_w
-      below: 3500
+      below: 6000
       for:
         minutes: 10
 
@@ -314,7 +314,7 @@
       data:
         name: "Jacuzzi Solar Fallback"
         message: >
-          Solar surplus dropped below 3500W for 10 min. Reverting to standby
+          Solar surplus dropped below 6000W for 10 min. Reverting to standby
           ({{ states('sensor.jacuzzi_effective_standby_temp') | float(states('input_number.jacuzzi_standby_temp') | float(15)) }}°C) to prevent grid heating.
 
     - action: shell_command.log_action
@@ -683,7 +683,7 @@
           {% endif %}
         surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
         source: >
-          {% if surplus | float > 3500 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
+          {% if surplus | float > 6000 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
             solar
           {% elif is_state('binary_sensor.energy_low_tariff_active', 'on') %}
             low tariff

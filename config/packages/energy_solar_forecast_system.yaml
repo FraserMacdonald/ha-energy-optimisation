@@ -1,0 +1,161 @@
+###############################################################################
+# ENERGY SOLAR FORECAST – SYSTEM PACKAGE
+# File: packages/energy_solar_forecast_system.yaml
+#
+# Phase 2A-2C: Helpers for the solar production forecast system.
+# 13 input_numbers, 1 input_boolean, 2 input_selects.
+#
+# The forecast engine (scripts/solar_forecast.py) writes to these helpers.
+# Automations in energy_solar_forecast_automations.yaml trigger the engine.
+###############################################################################
+
+
+# =============================================================================
+# INPUT BOOLEANS – Master switch
+# =============================================================================
+input_boolean:
+  energy_solar_forecast_enabled:
+    name: "Solar Forecast Enabled"
+    icon: mdi:weather-sunny
+
+
+# =============================================================================
+# INPUT NUMBERS – Forecast outputs and configuration
+# =============================================================================
+input_number:
+  # --- Forecast outputs (written by solar_forecast.py forecast) ---
+  energy_solar_forecast_today_kwh:
+    name: "Solar Forecast Today"
+    min: 0
+    max: 200
+    step: 0.01
+    unit_of_measurement: "kWh"
+    icon: mdi:solar-power-variant
+    mode: box
+
+  energy_solar_forecast_tomorrow_kwh:
+    name: "Solar Forecast Tomorrow"
+    min: 0
+    max: 200
+    step: 0.01
+    unit_of_measurement: "kWh"
+    icon: mdi:solar-power-variant-outline
+    mode: box
+
+  energy_solar_forecast_current_hour_w:
+    name: "Solar Forecast Current Hour"
+    min: 0
+    max: 25000
+    step: 1
+    unit_of_measurement: "W"
+    icon: mdi:flash
+    mode: box
+
+  energy_solar_forecast_next_hour_w:
+    name: "Solar Forecast Next Hour"
+    min: 0
+    max: 25000
+    step: 1
+    unit_of_measurement: "W"
+    icon: mdi:flash-outline
+    mode: box
+
+  energy_solar_forecast_peak_hour_w:
+    name: "Solar Forecast Peak Hour Power"
+    min: 0
+    max: 25000
+    step: 1
+    unit_of_measurement: "W"
+    icon: mdi:arrow-up-bold
+    mode: box
+
+  energy_solar_forecast_peak_hour:
+    name: "Solar Forecast Peak Hour"
+    min: 0
+    max: 23
+    step: 1
+    unit_of_measurement: "h"
+    icon: mdi:clock-outline
+    mode: box
+
+  energy_solar_forecast_clear_sky_today_kwh:
+    name: "Solar Clear-Sky Today"
+    min: 0
+    max: 200
+    step: 0.01
+    unit_of_measurement: "kWh"
+    icon: mdi:white-balance-sunny
+    mode: box
+
+  energy_solar_forecast_cloud_pct:
+    name: "Solar Forecast Cloud Cover"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:cloud-percent
+    mode: box
+
+  # --- Actual production (written by solar_forecast.py actual) ---
+  energy_solar_actual_today_kwh:
+    name: "Solar Actual Today"
+    min: 0
+    max: 200
+    step: 0.01
+    unit_of_measurement: "kWh"
+    icon: mdi:solar-panel-large
+    mode: box
+
+  # --- Error metrics (written by solar_forecast.py compare) ---
+  energy_solar_forecast_error_pct_t0:
+    name: "Solar Forecast Error (Nowcast)"
+    min: 0
+    max: 200
+    step: 0.1
+    unit_of_measurement: "%"
+    icon: mdi:target
+    mode: box
+
+  energy_solar_forecast_error_pct_t24:
+    name: "Solar Forecast Error (24h Ahead)"
+    min: 0
+    max: 200
+    step: 0.1
+    unit_of_measurement: "%"
+    icon: mdi:target-variant
+    mode: box
+
+  energy_solar_forecast_quality_score:
+    name: "Solar Forecast Quality Score"
+    min: 0
+    max: 100
+    step: 1
+    icon: mdi:gauge
+    mode: box
+
+  # --- Calibration (read/write by solar_forecast.py) ---
+  energy_solar_calibration_factor:
+    name: "Solar Calibration Factor"
+    min: 0.1
+    max: 2.0
+    step: 0.001
+    initial: 0.75
+    icon: mdi:tune-vertical
+    mode: box
+
+
+# =============================================================================
+# INPUT SELECTS – Text storage (HA 2026 input_text workaround)
+# =============================================================================
+input_select:
+  energy_solar_forecast_last_run:
+    name: "Solar Forecast Last Run"
+    icon: mdi:clock-check
+    options:
+      - "none"
+
+  energy_solar_forecast_quality_rating:
+    name: "Solar Forecast Quality"
+    icon: mdi:star-circle
+    options:
+      - "none"

@@ -450,7 +450,7 @@
         {% set boost_on = is_state('input_boolean.jacuzzi_standby_boost_enabled', 'on') %}
         {% set boosted = states('input_number.jacuzzi_boosted_standby_temp') | float(25) %}
         {% if boost_on %}
-          {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 3500 %}
+          {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 6000 %}
           {% set low_tariff = is_state('binary_sensor.energy_low_tariff_active', 'on') %}
           {% set base = boosted if (solar or low_tariff) else normal %}
         {% else %}
@@ -464,7 +464,7 @@
           {% set boost_on = is_state('input_boolean.jacuzzi_standby_boost_enabled', 'on') %}
           {% if min_ready > normal %}
             {% if boost_on %}
-              {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 3500 %}
+              {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 6000 %}
               {% set low_tariff = is_state('binary_sensor.energy_low_tariff_active', 'on') %}
               {% set boosted = states('input_number.jacuzzi_boosted_standby_temp') | float(25) %}
               {% if (solar or low_tariff) and boosted > min_ready %}
@@ -474,7 +474,7 @@
           {% elif not boost_on %}
             normal
           {% else %}
-            {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 3500 %}
+            {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 6000 %}
             {% set low_tariff = is_state('binary_sensor.energy_low_tariff_active', 'on') %}
             {% if solar %}solar_boost
             {% elif low_tariff %}tariff_boost
