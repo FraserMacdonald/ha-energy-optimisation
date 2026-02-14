@@ -194,6 +194,13 @@
         options:
           - "none"
 
+    # Stop any active charging from overnight session
+    - action: switch.turn_off
+      target:
+        entity_id:
+          - switch.horace_charge
+          - switch.horatio_charge
+
     - action: logbook.log
       data:
         name: "EV System"
@@ -1692,12 +1699,27 @@
         - sensor.horatio_battery_level
 
   actions:
-    # Pre-check: skip early if no car planned or outside cheap window
+    # Pre-check: determine plan state
     - variables:
         plan_car: "{{ states('input_select.ev_night_charge_car') }}"
         cheap_active: "{{ states('sensor.ev_cheap_tariff_active') == 'on' }}"
+        has_plan: "{{ plan_car in ['Horace', 'Horatio'] }}"
+
+    # If no car planned, stop any leftover charging and exit
+    - if:
+        - condition: template
+          value_template: "{{ not has_plan }}"
+      then:
+        - action: switch.turn_off
+          target:
+            entity_id:
+              - switch.horace_charge
+              - switch.horatio_charge
+        - stop: "No car planned — stopped any leftover charging"
+
+    # Skip if outside cheap window
     - condition: template
-      value_template: "{{ plan_car in ['Horace', 'Horatio'] and cheap_active }}"
+      value_template: "{{ cheap_active }}"
 
     # Wake the planned car so Tesla API returns fresh plug/SOC data
     - variables:
@@ -1770,13 +1792,6 @@
         should_charge: "{{ plan_car in ['Horace', 'Horatio'] and cheap_active and plan_car_plugged and plan_car_home and current_soc < target_soc }}"
 
     - choose:
-        # No planned charge
-        - conditions:
-            - condition: template
-              value_template: "{{ plan_car == 'None' }}"
-          sequence:
-            - stop: "No car planned for night charge"
-
         # Outside cheap window
         - conditions:
             - condition: template
