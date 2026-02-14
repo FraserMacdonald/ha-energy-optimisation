@@ -200,7 +200,7 @@
   actions:
     - variables:
         surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
-        jac_w: 3500
+        jac_w: 6000
         ev_w: >
           {{ (states('input_number.ev_min_amps') | int(5)
               * states('input_number.ev_voltage') | float(230)

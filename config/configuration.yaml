@@ -50,7 +50,8 @@ homeassistant:
   packages:
     jacuzzi: !include packages/jacuzzi_system.yaml
     ev_system: !include packages/ev_system.yaml
-    # energy_orchestrator: !include packages/energy_orchestrator_system.yaml  # Phase 1C
+    energy_orchestrator: !include packages/energy_orchestrator_system.yaml
+    energy_solar_forecast: !include packages/energy_solar_forecast_system.yaml
     # --- Grow Tent (6 package files) ---
     grow_tent_system: !include packages/grow_tent/grow_tent_system.yaml
     grow_tent_sensors: !include packages/grow_tent/grow_tent_sensors.yaml
@@ -90,6 +91,11 @@ shell_command:
   log_action: "python3 /homeassistant/scripts/log_to_db.py action '{{ system }}' '{{ action_type }}' '{{ target_entity }}' '{{ parameters }}'"
   log_feedback: "python3 /homeassistant/scripts/log_to_db.py feedback '{{ system }}' '{{ metric }}' '{{ predicted }}' '{{ actual }}' '{{ context }}'"
   log_cost: "python3 /homeassistant/scripts/log_to_db.py cost '{{ system }}' '{{ kwh_solar }}' '{{ kwh_grid_low }}' '{{ kwh_grid_high }}'"
+  # --- Solar Forecast Engine (Phase 2A-2C) ---
+  solar_forecast: "python3 /homeassistant/scripts/solar_forecast.py forecast"
+  solar_actual: "python3 /homeassistant/scripts/solar_forecast.py actual"
+  solar_compare: "python3 /homeassistant/scripts/solar_forecast.py compare"
+  solar_calibrate: "python3 /homeassistant/scripts/solar_forecast.py calibrate"
 
 # =============================================================================
 # REST COMMANDS

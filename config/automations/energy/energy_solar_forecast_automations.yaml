@@ -1,0 +1,141 @@
+###############################################################################
+# ENERGY SOLAR FORECAST – AUTOMATIONS
+# File: automations/energy/energy_solar_forecast_automations.yaml
+#
+# Phase 2A-2C: Automations that trigger the solar forecast engine.
+# All gated by input_boolean.energy_solar_forecast_enabled.
+#
+# Format: YAML list for automation: !include_dir_merge_list automations/
+#
+# Automations:
+#   020 – Solar Forecast Runner    (every 30 min, 04:00-22:00)
+#   021 – Solar Actual Logger      (every 30 min)
+#   022 – Solar Forecast Comparison (:05 past each hour)
+#   023 – Solar Calibration        (Sunday 23:30)
+###############################################################################
+
+
+# =============================================================================
+# 020 – SOLAR FORECAST RUNNER
+# Generates a 48-hour solar forecast every 30 minutes during daylight.
+# Uses Met.no cloud data + NOAA sun position + dual-slope clear-sky model.
+# =============================================================================
+- id: auto_energy_020_solar_forecast
+  alias: "Energy 020 – Solar Forecast Runner"
+  description: >
+    Triggers the solar forecast engine every 30 minutes between 04:00 and
+    22:00 local time. Generates a 48-hour forecast using clear-sky model
+    with Met.no cloud overlay and stores results in MariaDB + HA helpers.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/30"
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.energy_solar_forecast_enabled
+      state: "on"
+    - condition: template
+      value_template: >
+        {% set hour = now().hour %}
+        {{ 4 <= hour <= 22 }}
+
+  actions:
+    - action: shell_command.solar_forecast
+
+
+# =============================================================================
+# 021 – SOLAR ACTUAL LOGGER
+# Logs current SolarEdge production every 30 minutes (all hours).
+# Accumulates energy samples into hourly rows in MariaDB.
+# =============================================================================
+- id: auto_energy_021_solar_actual
+  alias: "Energy 021 – Solar Actual Logger"
+  description: >
+    Logs current SolarEdge production to MariaDB every 30 minutes.
+    Accumulates half-hourly samples into hourly energy totals.
+    Runs 24/7 to capture any production (even night = 0W baseline).
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/30"
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.energy_solar_forecast_enabled
+      state: "on"
+
+  actions:
+    - action: shell_command.solar_actual
+
+
+# =============================================================================
+# 022 – SOLAR FORECAST COMPARISON
+# Compares forecast vintages against actual production at :05 past each hour.
+# Runs slightly after the hour to ensure the actual logger has written data.
+# =============================================================================
+- id: auto_energy_022_solar_compare
+  alias: "Energy 022 – Solar Forecast Comparison"
+  description: >
+    At 5 minutes past each hour, compares all forecast vintages for completed
+    hours against actual production. Computes total error, error percentage,
+    and variance decomposition (model vs weather error). Updates quality
+    metrics in HA helpers.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      hours: "*"
+      minutes: "5"
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.energy_solar_forecast_enabled
+      state: "on"
+    - condition: template
+      value_template: >
+        {% set hour = now().hour %}
+        {{ 5 <= hour <= 22 }}
+
+  actions:
+    - action: shell_command.solar_compare
+
+
+# =============================================================================
+# 023 – SOLAR CALIBRATION
+# Weekly auto-calibration from clear-sky days. Runs Sunday at 23:30.
+# Updates the calibration factor using exponentially weighted mean of
+# actual/clear-sky ratios from the last 90 days of clear-sky days.
+# =============================================================================
+- id: auto_energy_023_solar_calibrate
+  alias: "Energy 023 – Solar Calibration"
+  description: >
+    Weekly calibration of the clear-sky model. Analyses clear-sky days
+    (avg cloud < 20%) from the last 90 days, computes actual-to-model
+    ratio, and updates the calibration factor via EWM (alpha=0.1).
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time
+      at: "23:30:00"
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.energy_solar_forecast_enabled
+      state: "on"
+    - condition: time
+      weekday:
+        - sun
+
+  actions:
+    - action: shell_command.solar_calibrate

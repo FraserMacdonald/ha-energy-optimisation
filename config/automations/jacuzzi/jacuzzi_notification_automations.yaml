@@ -216,7 +216,7 @@
           {% endif %}
         surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
         source: >
-          {% if surplus | float > 3500 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
+          {% if surplus | float > 6000 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
             solar ({{ surplus }}W)
           {% elif is_state('binary_sensor.energy_low_tariff_active', 'on') %}
             low tariff
@@ -297,7 +297,7 @@
   alias: "Jacuzzi 065 – Source Changed"
   description: >
     Notifies Fraser when the jacuzzi heating source switches as solar
-    surplus crosses the 3500W threshold while actively heating.
+    surplus crosses the 6000W threshold while actively heating.
   mode: single
   trace:
     stored_traces: 10
@@ -305,13 +305,13 @@
   triggers:
     - trigger: numeric_state
       entity_id: sensor.energy_solar_surplus_w
-      above: 3500
+      above: 6000
     - trigger: numeric_state
       entity_id: sensor.energy_solar_surplus_w
-      below: 3500
+      below: 6000
 
   conditions:
-    # DISABLED — too noisy (fires on every surplus crossing of 3500W)
+    # DISABLED — too noisy (fires on every surplus crossing of 6000W)
     - condition: template
       value_template: "{{ false }}"
     # Only when actively heating
@@ -322,8 +322,8 @@
   actions:
     - variables:
         surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
-        new_source: "{{ 'solar' if surplus | float >= 3500 else 'grid' }}"
-        old_source: "{{ 'grid' if surplus | float >= 3500 else 'solar' }}"
+        new_source: "{{ 'solar' if surplus | float >= 6000 else 'grid' }}"
+        old_source: "{{ 'grid' if surplus | float >= 6000 else 'solar' }}"
 
     - action: notify.mobile_app_fraser_s_iphone
       data:
@@ -718,7 +718,7 @@
         outdoor_temp: "{{ states('sensor.la_dole_temperature') | float(10) }}"
         surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
         source: >
-          {% if surplus | float > 3500 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
+          {% if surplus | float > 6000 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
             solar
           {% elif is_state('binary_sensor.energy_low_tariff_active', 'on') %}
             low_tariff

@@ -126,10 +126,10 @@
 #
 # Tier 1 – Insufficient:  surplus < minimum useful EV charge (~1380 W)
 # Tier 2 – One load:      surplus can power jacuzzi OR EV, not both
-# Tier 3 – Both loads:    surplus can power jacuzzi (3500 W) + minimum EV
+# Tier 3 – Both loads:    surplus can power jacuzzi (6000 W) + minimum EV
 #
 # EV minimum = min_amps * voltage * phases  (from ev_system helpers)
-# Jacuzzi heater = 3500 W fixed
+# Jacuzzi heater = 6000 W (6kW rated heater)
 # =============================================================================
 - sensor:
     - name: "Energy Production Scenario"
@@ -141,7 +141,7 @@
         {% set phases = states('input_number.ev_phases') | int(3) %}
         {% set min_amps = states('input_number.ev_min_amps') | int(5) %}
         {% set min_ev_w = min_amps * voltage * phases %}
-        {% set jacuzzi_w = 3500 %}
+        {% set jacuzzi_w = 6000 %}
         {% set one_load_w = [min_ev_w, jacuzzi_w] | min %}
         {% set both_w = jacuzzi_w + min_ev_w %}
         {% if surplus < one_load_w %}
@@ -157,7 +157,7 @@
           {{ (states('input_number.ev_min_amps') | int(5)
               * states('input_number.ev_voltage') | float(230)
               * states('input_number.ev_phases') | int(3)) | round(0) }}
-        jacuzzi_w: 3500
+        jacuzzi_w: 6000
         description: >
           {% set s = states('sensor.energy_production_scenario') %}
           {% if s == '1' %}Insufficient solar
@@ -248,7 +248,7 @@
           {% else %}99{% endif %}
         power_demand_w: >
           {% set s = states('sensor.energy_jacuzzi_demand_scenario') %}
-          {{ 3500 if s in ['A', 'B', 'C', 'D'] else 0 }}
+          {{ 6000 if s in ['A', 'B', 'C', 'D'] else 0 }}
         can_use_grid: >
           {% set s = states('sensor.energy_jacuzzi_demand_scenario') %}
           {{ s in ['A', 'B', 'D'] }}

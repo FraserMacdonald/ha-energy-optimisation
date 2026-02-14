@@ -76,7 +76,7 @@
           {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
           {% set jac_tier = state_attr('sensor.energy_jacuzzi_demand_scenario', 'priority_tier') | int(99) %}
           {% set ev_tier = state_attr('sensor.energy_ev_demand_scenario', 'priority_tier') | int(99) %}
-          {% set jac_w = 3500 %}
+          {% set jac_w = 6000 %}
           {% set ev_min_w = (states('input_number.ev_min_amps') | int(5))
                             * (states('input_number.ev_voltage') | float(230))
                             * (states('input_number.ev_phases') | int(3)) %}
@@ -101,7 +101,7 @@
           {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
           {% set jac_tier = state_attr('sensor.energy_jacuzzi_demand_scenario', 'priority_tier') | int(99) %}
           {% set ev_tier = state_attr('sensor.energy_ev_demand_scenario', 'priority_tier') | int(99) %}
-          {% set jac_w = 3500 %}
+          {% set jac_w = 6000 %}
           {% set ev_min_w = (states('input_number.ev_min_amps') | int(5))
                             * (states('input_number.ev_voltage') | float(230))
                             * (states('input_number.ev_phases') | int(3)) %}
@@ -125,7 +125,7 @@
           {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
           {% set jac_tier = state_attr('sensor.energy_jacuzzi_demand_scenario', 'priority_tier') | int(99) %}
           {% set ev_tier = state_attr('sensor.energy_ev_demand_scenario', 'priority_tier') | int(99) %}
-          {% set jac_w = 3500 %}
+          {% set jac_w = 6000 %}
           {% set voltage = states('input_number.ev_voltage') | float(230) %}
           {% set phases = states('input_number.ev_phases') | int(3) %}
           {% set min_amps = states('input_number.ev_min_amps') | int(5) %}
@@ -150,7 +150,7 @@
           {% set jac_text = '' %}
           {% set ev_text = '' %}
           {% if jacuzzi_allowed | bool and jac != 'E' %}
-            {% if surplus | float >= 3500 %}
+            {% if surplus | float >= 6000 %}
               {% set jac_text = 'Jacuzzi:solar' %}
             {% elif low_tariff | bool %}
               {% set jac_text = 'Jacuzzi:low-tariff' %}
