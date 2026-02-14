@@ -1820,6 +1820,12 @@
                   entity_id: input_boolean.energy_ev_tariff_charge_allowed
                   state: "on"
           sequence:
+            # Set Tesla charge limit to target SOC — car stops itself
+            - action: number.set_value
+              target:
+                entity_id: "{{ 'number.horace_charge_limit' if plan_car == 'Horace' else 'number.horatio_charge_limit' }}"
+              data:
+                value: "{{ target_soc | int }}"
             - action: switch.turn_on
               target:
                 entity_id: "{{ 'switch.horace_charge' if plan_car == 'Horace' else 'switch.horatio_charge' }}"
