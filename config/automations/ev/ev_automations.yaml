@@ -1692,10 +1692,30 @@
         - sensor.horatio_battery_level
 
   actions:
+    # Pre-check: skip early if no car planned or outside cheap window
     - variables:
         plan_car: "{{ states('input_select.ev_night_charge_car') }}"
-        target_soc: "{{ states('input_number.ev_night_charge_target_soc') | float(0) }}"
         cheap_active: "{{ states('sensor.ev_cheap_tariff_active') == 'on' }}"
+    - condition: template
+      value_template: "{{ plan_car in ['Horace', 'Horatio'] and cheap_active }}"
+
+    # Wake the planned car so Tesla API returns fresh plug/SOC data
+    - action: button.press
+      target:
+        entity_id: "{{ 'button.horace_wake' if plan_car == 'Horace' else 'button.horatio_wake' }}"
+    - delay:
+        seconds: 30
+    - action: homeassistant.update_entity
+      target:
+        entity_id:
+          - "{{ 'binary_sensor.horace_plugged' if plan_car == 'Horace' else 'binary_sensor.horatio_plugged' }}"
+          - "{{ 'sensor.horace_battery_level' if plan_car == 'Horace' else 'sensor.horatio_battery_level' }}"
+    - delay:
+        seconds: 5
+
+    # Now evaluate with fresh data
+    - variables:
+        target_soc: "{{ states('input_number.ev_night_charge_target_soc') | float(0) }}"
 
         soc_horace: "{{ states('sensor.horace_battery_level') | float(0) }}"
         soc_horatio: "{{ states('sensor.horatio_battery_level') | float(0) }}"
