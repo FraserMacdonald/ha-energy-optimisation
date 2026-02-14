@@ -232,5 +232,44 @@ Two enhancements to the jacuzzi thermal model:
 - [x] yamllint passes on all 4 modified files
 - [x] All entity cross-references verified
 
+## What's Done (Database Rebuild – 2026-02-13)
+Full HA database loss on mini PC. Config rebuilt from GitHub.
+
+### Infrastructure Restored:
+- [x] All config files deployed from git to `/homeassistant/`
+- [x] Tesla Fleet integration (Horace + Horatio) — new key pair, public key pushed to `FraserMacdonald.github.io`
+- [x] SolarEdge, CalDAV (calendars), Met.no weather, Waze Travel Time
+- [x] Mobile app notifications (Fraser + Heather iPhones)
+- [x] HACS + Mushroom + Mini Graph Card (frontend)
+- [x] Local Tuya (grow tent MarsHydro)
+- [x] MariaDB add-on + `ha_analytics` database with 4 tables (decisions, actions, feedback, costs)
+- [x] `scripts/log_to_db.py` restored to `/homeassistant/scripts/`
+- [x] `energy_orchestrator` package uncommented in `configuration.yaml`
+- [x] Git pull pipeline: `/homeassistant/ha-restore/` cloned, deploy via `cd /homeassistant/ha-restore && git pull && cp -r config/* /homeassistant/ && ha core restart`
+- [x] Nabu Casa remote access restored
+- [x] Entity renames: `sensor.horace_charger_current` → `sensor.horace_charge_amps` (and Horatio) via entity registry
+
+### Not yet restored:
+- Balboa Spa WiFi (jacuzzi `climate.jacuzzi` unavailable)
+- Grow tent Shelly device naming
+- Grow tent ESPHome devices
+- Reolink cameras
+- History/statistics data (permanently lost)
+
+### Bug Fixes (discovered during rebuild):
+- [x] **EV 030 planner**: SOC drop fallback — when elevation data unavailable (helpers at 0), now estimates SOC drop from `km × Wh/km / (battery_kWh × 10)` instead of using 0 (which caused planner to skip overnight charging)
+- [x] **EV 041 cheap tariff**: Tesla wake before plug check — wakes planned car + refreshes entities before evaluating plug state, preventing false `unknown` readings from sleeping Teslas
+- [x] **EV 041 cheap tariff**: Tesla API retry — if plug state still `unknown` after wake, reloads Tesla Fleet config entry and retries (up to 2 additional attempts)
+- [x] **EV 041 cheap tariff**: Set Tesla charge limit (`number.horace_charge_limit`) to planner target SOC before starting charge — car stops itself at target instead of charging to default 80%
+- [x] **EV 041 cheap tariff**: Safety stop — when `plan_car` is cleared (e.g. by daily reset), now turns off both charge switches instead of silently exiting
+- [x] **EV 002 daily reset**: Now turns off both charge switches at midnight as safety net
+- [x] yamllint passes on all modified files
+
+## Deployment
+- **Mini PC path**: `/homeassistant/` (HA OS config directory)
+- **Git repo on mini PC**: `/homeassistant/ha-restore/`
+- **Deploy command**: `cd /homeassistant/ha-restore && git pull && cp -r config/* /homeassistant/ && ha core restart`
+- **Tesla public key repo**: `FraserMacdonald.github.io` (GitHub Pages, `.well-known/appspecific/com.tesla.3p.public-key.pem`)
+
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
