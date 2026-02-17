@@ -11,6 +11,9 @@ config/python_scripts/trip_input.json
 # Source uploads (reference only, not deployed)
 source_uploads/
 
+# Python
+__pycache__/
+
 # OS
 .DS_Store
 *.swp
