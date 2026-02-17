@@ -439,50 +439,58 @@
           {% set normal = states('input_number.jacuzzi_standby_temp') | float(15) %}
           {{ min_standby > normal }}
 
-    # Effective Standby Temperature (dynamic: max of boost logic and readiness floor)
+    # Effective Standby Temperature (dynamic: banking > boost > normal, floored by readiness)
     - name: "Jacuzzi Effective Standby Temp"
       unique_id: jacuzzi_effective_standby_temp
       unit_of_measurement: "°C"
       icon: mdi:thermometer-auto
       state: >
-        {% set normal = states('input_number.jacuzzi_standby_temp') | float(15) %}
+        {% set normal = states('input_number.jacuzzi_standby_temp') | float(20) %}
         {% set min_ready = states('sensor.jacuzzi_minimum_standby_temp') | float(5) %}
+        {% set banking = states('input_number.jacuzzi_banking_target_temp') | float(0) %}
         {% set boost_on = is_state('input_boolean.jacuzzi_standby_boost_enabled', 'on') %}
-        {% set boosted = states('input_number.jacuzzi_boosted_standby_temp') | float(25) %}
-        {% if boost_on %}
-          {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 6000 %}
-          {% set low_tariff = is_state('binary_sensor.energy_low_tariff_active', 'on') %}
-          {% set base = boosted if (solar or low_tariff) else normal %}
+        {% set boosted = states('input_number.jacuzzi_boosted_standby_temp') | float(34) %}
+        {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 6000 %}
+        {% set low_tariff = is_state('binary_sensor.energy_low_tariff_active', 'on') %}
+        {% set cheap = solar or low_tariff %}
+        {# Banking target takes priority when active AND cheap energy available #}
+        {% if banking > 0 and cheap %}
+          {% set base = banking %}
+        {% elif banking > 0 and not cheap %}
+          {# During expensive periods, maintain at banking target minus small margin #}
+          {# This prevents grid heating to full banking target during peak #}
+          {% set base = [banking - 2, normal] | max %}
+        {% elif boost_on and cheap %}
+          {% set base = boosted %}
         {% else %}
           {% set base = normal %}
         {% endif %}
         {{ [base, min_ready] | max }}
       attributes:
         mode: >
-          {% set normal = states('input_number.jacuzzi_standby_temp') | float(15) %}
+          {% set normal = states('input_number.jacuzzi_standby_temp') | float(20) %}
           {% set min_ready = states('sensor.jacuzzi_minimum_standby_temp') | float(5) %}
+          {% set banking = states('input_number.jacuzzi_banking_target_temp') | float(0) %}
           {% set boost_on = is_state('input_boolean.jacuzzi_standby_boost_enabled', 'on') %}
-          {% if min_ready > normal %}
-            {% if boost_on %}
-              {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 6000 %}
-              {% set low_tariff = is_state('binary_sensor.energy_low_tariff_active', 'on') %}
-              {% set boosted = states('input_number.jacuzzi_boosted_standby_temp') | float(25) %}
-              {% if (solar or low_tariff) and boosted > min_ready %}
-                {% if solar %}solar_boost{% else %}tariff_boost{% endif %}
-              {% else %}readiness{% endif %}
-            {% else %}readiness{% endif %}
-          {% elif not boost_on %}
-            normal
+          {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 6000 %}
+          {% set low_tariff = is_state('binary_sensor.energy_low_tariff_active', 'on') %}
+          {% set cheap = solar or low_tariff %}
+          {% if banking > 0 and cheap %}
+            banking
+          {% elif banking > 0 and not cheap %}
+            banking_hold
+          {% elif min_ready > normal %}
+            readiness
+          {% elif boost_on and cheap %}
+            {% if solar %}solar_boost{% else %}tariff_boost{% endif %}
           {% else %}
-            {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 6000 %}
-            {% set low_tariff = is_state('binary_sensor.energy_low_tariff_active', 'on') %}
-            {% if solar %}solar_boost
-            {% elif low_tariff %}tariff_boost
-            {% else %}normal{% endif %}
+            normal
           {% endif %}
-        normal_temp: "{{ states('input_number.jacuzzi_standby_temp') | float(15) }}"
-        boosted_temp: "{{ states('input_number.jacuzzi_boosted_standby_temp') | float(25) }}"
+        normal_temp: "{{ states('input_number.jacuzzi_standby_temp') | float(20) }}"
+        boosted_temp: "{{ states('input_number.jacuzzi_boosted_standby_temp') | float(34) }}"
         minimum_readiness_temp: "{{ states('sensor.jacuzzi_minimum_standby_temp') | float(5) }}"
+        banking_target: "{{ states('input_number.jacuzzi_banking_target_temp') | float(0) }}"
+        banking_strategy: "{{ states('input_select.jacuzzi_banking_strategy') }}"
 
     # Cost Savings Tracker (Daily)
     - name: "Jacuzzi Daily Savings"

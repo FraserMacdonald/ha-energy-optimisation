@@ -106,6 +106,39 @@ views:
             {% else %}grey{% endif %}
 
       # =======================================================================
+      # BANKING STATUS (conditional – only shows when banking active)
+      # =======================================================================
+      - type: conditional
+        conditions:
+          - condition: numeric_state
+            entity: input_number.jacuzzi_banking_target_temp
+            above: 0
+        card:
+          type: custom:mushroom-template-card
+          primary: >
+            Banking: {{ states('input_number.jacuzzi_banking_target_temp') }}°C
+            ({{ states('input_select.jacuzzi_banking_strategy') }})
+          secondary: >
+            {% set solar_h = states('input_number.jacuzzi_expected_solar_hours') | float(0) %}
+            {% set solar_g = states('input_number.jacuzzi_expected_solar_gain_c') | float(0) %}
+            Effective: {{ states('sensor.jacuzzi_effective_standby_temp') }}°C
+            {% if solar_h > 0 %}| Solar: {{ solar_h }}h (+{{ solar_g | round(1) }}°C){% endif %}
+            {% set cal = states.calendar.jacuzzi_schedule %}
+            {% if cal is not none and cal.attributes.start_time is defined %}
+              | Event: {{ as_timestamp(cal.attributes.start_time) | timestamp_custom('%a %H:%M') }}
+            {% endif %}
+          icon: mdi:thermometer-chevron-up
+          icon_color: >
+            {% set strategy = states('input_select.jacuzzi_banking_strategy') %}
+            {% if strategy == 'solar' %}amber
+            {% elif strategy == 'combined' %}deep-orange
+            {% elif strategy == 'low_tariff' %}green
+            {% else %}grey{% endif %}
+          tap_action:
+            action: more-info
+            entity: input_number.jacuzzi_banking_target_temp
+
+      # =======================================================================
       # FORECAST STATUS (conditional – only shows when forecast active)
       # =======================================================================
       - type: conditional

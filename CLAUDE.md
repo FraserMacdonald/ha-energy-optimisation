@@ -312,5 +312,59 @@ Jacuzzi heater power increased from 3.5kW to 6kW. All hardcoded 3500W references
 3. Turn on `input_boolean.energy_solar_forecast_enabled` in HA UI
 4. Update `input_number.jacuzzi_heater_power_rated_kw` to 6.0 in HA UI (if not already)
 
+## What's Done (Phase 2D – Smart Thermal Banking)
+Jacuzzi pre-heating during cheap energy periods using solar forecast + tariff schedule + calendar events.
+
+### Banking Algorithm:
+- `cmd_banking()` subcommand in `scripts/solar_forecast.py` runs every 30 min
+- Fetches next calendar event within 48h from HA calendar API
+- Builds hourly timeline with cheap/expensive flags (solar >6kW or low tariff)
+- Uses Met.no ambient forecast + solar forecast from DB for each hour
+- Backward induction from event: inverts cooling through expensive gaps to find banking target
+- Cost check: only banks if cheap energy cost < alternative high tariff cost
+- Caps banking at 37°C (diminishing returns above this)
+
+### New/Modified Files:
+- [x] `scripts/solar_forecast.py` — Added `banking` subcommand + 5 helper functions (`_is_low_tariff_hour`, `_fetch_calendar_events`, `_fetch_solar_forecast_db`, `_clear_banking`, `fetch_metno_temps`, `ha_select_option`)
+- [x] `config/packages/jacuzzi_system.yaml` — 3 new input_numbers (banking_target_temp, expected_solar_hours, expected_solar_gain_c), 1 new input_select (banking_strategy). Updated defaults: standby 15→20°C, boosted 25→34°C, max_heat_up 8→6h
+- [x] `config/templates/jacuzzi/jacuzzi_sensors.yaml` — Rewrote `sensor.jacuzzi_effective_standby_temp` with banking-aware logic (banking > boost > normal, with expensive period hold at banking-2)
+- [x] `config/templates/energy/energy_shared_sensors.yaml` — Changed demand scenario state B from `input_number.jacuzzi_standby_temp` to `sensor.jacuzzi_effective_standby_temp`
+- [x] `config/configuration.yaml` — Added `solar_banking` shell command
+- [x] `config/automations/energy/energy_solar_forecast_automations.yaml` — Added auto_energy_024 (banking calculator, every 30 min)
+- [x] `config/dashboards/jacuzzi.yaml` — Added conditional banking status card
+- [x] yamllint passes on all modified files
+
+### Deployment:
+1. Deploy: `cd /homeassistant/ha-restore && git pull && cp -r config/* /homeassistant/ && cp scripts/* /homeassistant/scripts/ && ha core restart`
+2. Set updated defaults in HA UI (if not auto-applied):
+   - `input_number.jacuzzi_standby_temp` → 20
+   - `input_number.jacuzzi_boosted_standby_temp` → 34
+   - `input_number.jacuzzi_max_heat_up_hours` → 6
+3. Verify: run `solar_banking` manually, check helpers update
+
+## What's Done (EV Maintenance Charging)
+Ensures at least one car always has minimum SOC (50%) for unplanned trips, regardless of tariff or planner state.
+
+### Problem:
+Cars were sitting at 0% SOC because EV 041 only charges when the planner flags a trip-critical need via `night_charge_car`. With no trips planned, no charging occurred.
+
+### Changes:
+- [x] `config/packages/ev_system.yaml` — Added `ev_minimum_soc` helper (min 10, max 80, step 5, default 50%)
+- [x] `config/automations/ev/ev_automations.yaml` — **EV 041**: Removed switch-off from "no plan" branch (was conflicting with maintenance charging)
+- [x] `config/automations/ev/ev_automations.yaml` — **EV 044** (NEW): Maintenance charging automation
+  - Triggers every 30 min
+  - Skips when EV 041 planner is active (night_charge_car set + cheap tariff)
+  - Picks lowest-SOC home car below `ev_minimum_soc`
+  - Wakes car, checks plug, charges to minimum SOC
+  - No orchestrator gate (readiness priority)
+  - Works regardless of tariff
+- [x] `config/templates/energy/energy_shared_sensors.yaml` — Updated EV demand scenario state Y: `can_use_grid` and `can_use_low_tariff` now return true when any car SOC < `ev_minimum_soc`
+- [x] yamllint passes on all modified files
+
+### Deployment:
+1. Deploy: `cd /homeassistant/ha-restore && git pull && cp -r config/* /homeassistant/ && ha core restart`
+2. Set `input_number.ev_minimum_soc` to 50 in HA UI (if not auto-applied)
+3. Verify: check `sensor.energy_ev_demand_scenario` attributes show maintenance logic, EV 044 traces show runs every 30 min
+
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
