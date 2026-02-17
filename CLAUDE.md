@@ -250,7 +250,7 @@ Full HA database loss on mini PC. Config rebuilt from GitHub.
 - [x] Entity renames: `sensor.horace_charger_current` → `sensor.horace_charge_amps` (and Horatio) via entity registry
 
 ### Not yet restored:
-- Balboa Spa WiFi (jacuzzi `climate.jacuzzi` unavailable)
+- ~~Balboa Spa WiFi~~ (restored — `climate.jacuzzi` available, `current_temperature` working)
 - Grow tent Shelly device naming
 - Grow tent ESPHome devices
 - Reolink cameras
@@ -268,7 +268,9 @@ Full HA database loss on mini PC. Config rebuilt from GitHub.
 ## Deployment
 - **Mini PC path**: `/homeassistant/` (HA OS config directory)
 - **Git repo on mini PC**: `/homeassistant/ha-restore/`
-- **Deploy command**: `cd /homeassistant/ha-restore && git pull && cp -r config/* /homeassistant/ && ha core restart`
+- **Manual deploy** (from web terminal): `cd /homeassistant/ha-restore && git pull && cp -r config/* /homeassistant/ && cp scripts/* /homeassistant/scripts/ && ha core restart`
+- **Remote deploy** (via HA API): `shell_command.deploy_from_git` pulls git and copies config+scripts. Restart via `homeassistant.restart` service (separate call).
+- **API URL**: `http://homeassistant.local:8123`
 - **Tesla public key repo**: `FraserMacdonald.github.io` (GitHub Pages, `.well-known/appspecific/com.tesla.3p.public-key.pem`)
 
 ## What's Done (Phase 2A-2C – Solar Production Forecasting)
@@ -365,6 +367,31 @@ Cars were sitting at 0% SOC because EV 041 only charges when the planner flags a
 1. Deploy: `cd /homeassistant/ha-restore && git pull && cp -r config/* /homeassistant/ && ha core restart`
 2. Set `input_number.ev_minimum_soc` to 50 in HA UI (if not auto-applied)
 3. Verify: check `sensor.energy_ev_demand_scenario` attributes show maintenance logic, EV 044 traces show runs every 30 min
+
+## What's Done (User Guide + Bug Fixes – 2026-02-17)
+
+### User Guide:
+- [x] `docs/USER_GUIDE.md` created (~393 lines) — plain-language guide covering all three subsystems
+  - Overview, tariff schedule, solar setup
+  - Jacuzzi: scheduling, smart start, solar/low-tariff heating, thermal banking, standby boost, weather forecast, freeze protection
+  - EV: Horace/Horatio specs, trip planning, car assignment, overnight/solar/maintenance charging, climate prep
+  - Energy orchestrator: priority tiers, scenario codes, shadow vs active mode
+  - Solar forecast: predictions, calibration, banking integration
+  - Full notification reference (grouped by system, with recipients and triggers)
+  - Dashboard descriptions, settings tables, quick actions
+  - Written for Fraser and Heather, no YAML or code
+
+### Bug Fixes (3 notification bugs):
+- [x] **Jacuzzi 061/063/068**: Added `current_temperature is not none` guard — skips warning notifications when `climate.jacuzzi` temperature attribute is unavailable (was defaulting to 0°C/20°C and triggering false warnings)
+- [x] **EV 044 maintenance charging**: Skip if another car is already actively charging (`switch.horace_charge` / `switch.horatio_charge` on) — was nagging to plug in Horace while Horatio was already charging to 50%
+- [x] **EV 044 + EV 080 plug-in nag**: Fraser's notification now guarded with `device_tracker.fraser_s_iphone` at-home check — was sending regardless of location (Heather already had this guard)
+- [x] **EV 044 car selection logic**: Changed from "pick lowest SOC" to "pick car closest to min_soc" — fastest path to having one car at 50%. Cars below hard floor (10%) still take priority as safety override.
+- [x] yamllint passes on all modified files
+
+### Deployment Infrastructure:
+- [x] `configuration.yaml` — Added `deploy_from_git` shell command (git pull + copy config + scripts)
+- [x] `.gitignore` — Added `__pycache__/`
+- [x] Remote deploy workflow: `shell_command.deploy_from_git` via HA API, then `homeassistant.restart` separately
 
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
