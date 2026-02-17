@@ -99,8 +99,8 @@ shell_command:
   solar_banking: "python3 /homeassistant/scripts/solar_forecast.py banking"
   # --- Deploy from Git ---
   deploy_from_git: "cd /homeassistant/ha-restore && git pull && cp -r config/* /homeassistant/ && cp scripts/* /homeassistant/scripts/"
-  # --- Backup to iCloud (via /config/www/) ---
-  ha_backup: "python3 /homeassistant/scripts/ha_backup.py"
+  # --- Backup: copy newest backup to /config/www/ for external download ---
+  ha_backup_copy: "python3 /homeassistant/scripts/ha_backup.py"
 
 # =============================================================================
 # REST COMMANDS
