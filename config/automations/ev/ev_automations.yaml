@@ -1964,11 +1964,32 @@
         fresh_soc: "{{ states(soc_entity) | float(100) }}"
         is_plugged: "{{ is_state(plug_entity, 'on') }}"
 
-    # Skip if not plugged
+    # Skip if not plugged — notify to plug in
     - if:
         - condition: template
           value_template: "{{ not is_plugged }}"
       then:
+        - action: notify.mobile_app_fraser_s_iphone
+          data:
+            title: "Plug In {{ maint_car }}"
+            message: >
+              {{ maint_car }} is at {{ fresh_soc | round(0) }}% (minimum {{ min_soc | round(0) }}%). Please plug in to charge.
+            data:
+              push:
+                interruption-level: time-sensitive
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ is_state('device_tracker.heather_s_iphone', 'home') }}"
+              sequence:
+                - action: notify.mobile_app_heather_s_iphone
+                  data:
+                    title: "Plug In {{ maint_car }}"
+                    message: >
+                      {{ maint_car }} is at {{ fresh_soc | round(0) }}% (minimum {{ min_soc | round(0) }}%). Please plug in to charge.
+                    data:
+                      push:
+                        interruption-level: time-sensitive
         - action: logbook.log
           data:
             name: "EV Maintenance"
