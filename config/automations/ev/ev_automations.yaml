@@ -1902,16 +1902,23 @@
         horace_soc: "{{ states('sensor.horace_battery_level') | float(100) }}"
         horatio_soc: "{{ states('sensor.horatio_battery_level') | float(100) }}"
 
-        # Pick lowest-SOC home car below minimum
-        horace_needs: "{{ horace_home and horace_soc < min_soc }}"
-        horatio_needs: "{{ horatio_home and horatio_soc < min_soc }}"
+        # Check if either car is already actively charging
+        horace_charging: "{{ is_state('switch.horace_charge', 'on') }}"
+        horatio_charging: "{{ is_state('switch.horatio_charge', 'on') }}"
 
-    # Exit if no car needs maintenance charging
+        # Pick lowest-SOC home car below minimum, but skip cars already charging
+        horace_needs: "{{ horace_home and horace_soc < min_soc and not horace_charging }}"
+        horatio_needs: "{{ horatio_home and horatio_soc < min_soc and not horatio_charging }}"
+
+    # Exit if no car needs maintenance charging, or if a car is already
+    # charging toward the minimum (goal is at least one car at min_soc)
     - if:
         - condition: template
-          value_template: "{{ not horace_needs and not horatio_needs }}"
+          value_template: >
+            {{ (not horace_needs and not horatio_needs)
+               or (horace_charging or horatio_charging) }}
       then:
-        - stop: "No home car below minimum SOC — nothing to do"
+        - stop: "No action needed — car already charging or no home car below minimum SOC"
 
     # Pick car: lowest SOC wins; if only one needs it, pick that one
     - variables:
@@ -1964,19 +1971,24 @@
         fresh_soc: "{{ states(soc_entity) | float(100) }}"
         is_plugged: "{{ is_state(plug_entity, 'on') }}"
 
-    # Skip if not plugged — notify to plug in
+    # Skip if not plugged — notify whoever is at home to plug in
     - if:
         - condition: template
           value_template: "{{ not is_plugged }}"
       then:
-        - action: notify.mobile_app_fraser_s_iphone
-          data:
-            title: "Plug In {{ maint_car }}"
-            message: >
-              {{ maint_car }} is at {{ fresh_soc | round(0) }}% (minimum {{ min_soc | round(0) }}%). Please plug in to charge.
-            data:
-              push:
-                interruption-level: time-sensitive
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ is_state('device_tracker.fraser_s_iphone', 'home') }}"
+              sequence:
+                - action: notify.mobile_app_fraser_s_iphone
+                  data:
+                    title: "Plug In {{ maint_car }}"
+                    message: >
+                      {{ maint_car }} is at {{ fresh_soc | round(0) }}% (minimum {{ min_soc | round(0) }}%). Please plug in to charge.
+                    data:
+                      push:
+                        interruption-level: time-sensitive
         - choose:
             - conditions:
                 - condition: template
