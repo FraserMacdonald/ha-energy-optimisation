@@ -108,6 +108,10 @@
       entity_id: sensor.jacuzzi_smart_start_time
 
   conditions:
+    # Skip if climate.jacuzzi is unavailable (no valid temperature reading)
+    - condition: template
+      value_template: >
+        {{ state_attr('climate.jacuzzi', 'current_temperature') is not none }}
     - condition: template
       value_template: >
         {% set cal = states.calendar.jacuzzi_schedule %}
@@ -504,6 +508,10 @@
         {% endif %}
 
   conditions:
+    # Skip if climate.jacuzzi is unavailable (no valid temperature reading)
+    - condition: template
+      value_template: >
+        {{ state_attr('climate.jacuzzi', 'current_temperature') is not none }}
     - condition: template
       value_template: >
         {{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) < 37 }}
