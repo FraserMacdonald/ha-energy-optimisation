@@ -392,6 +392,20 @@ Cars were sitting at 0% SOC because EV 041 only charges when the planner flags a
 - [x] `configuration.yaml` — Added `deploy_from_git` shell command (git pull + copy config + scripts)
 - [x] `.gitignore` — Added `__pycache__/`
 - [x] Remote deploy workflow: `shell_command.deploy_from_git` via HA API, then `homeassistant.restart` separately
+- [x] Note: deploy_from_git may not pull latest changes if git repo on mini PC has conflicts — manual `git pull` from web terminal may be needed
+
+### Automated Backups to iCloud:
+- [x] `~/ha-backup.sh` on Mac — fully self-contained backup pipeline
+  - Creates backup via `hassio.backup_full` HA service (no HA-side script needed)
+  - Polls `sensor.backup_backup_manager_state` until idle
+  - Extracts backup slug from `/api/hassio/supervisor/logs`
+  - Downloads via `/api/hassio/backups/{slug}/download` (hassio proxy, works with long-lived token)
+  - Saves to `~/Library/Mobile Documents/com~apple~CloudDocs/HA-Backups/` (iCloud Drive)
+  - Cleans up local backups older than 7 days
+- [x] `~/Library/LaunchAgents/com.fraser.ha-backup.plist` — runs daily at 02:00
+- [x] Note: hassio proxy listing (`/api/hassio/backups`) returns 401 with long-lived tokens, but individual backup download works
+- [x] Note: `backup.create_automatic` service returns 500 — use `hassio.backup_full` instead
+- [x] Removed HA-side `scripts/ha_backup.py` and `shell_command.ha_backup_copy` — not needed
 
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
