@@ -1705,17 +1705,12 @@
         cheap_active: "{{ states('sensor.ev_cheap_tariff_active') == 'on' }}"
         has_plan: "{{ plan_car in ['Horace', 'Horatio'] }}"
 
-    # If no car planned, stop any leftover charging and exit
+    # If no car planned, exit (don't stop switches — EV 044 maintenance may be active)
     - if:
         - condition: template
           value_template: "{{ not has_plan }}"
       then:
-        - action: switch.turn_off
-          target:
-            entity_id:
-              - switch.horace_charge
-              - switch.horatio_charge
-        - stop: "No car planned — stopped any leftover charging"
+        - stop: "No car planned — deferring to maintenance charging (EV 044)"
 
     # Skip if outside cheap window
     - condition: template
@@ -1872,6 +1867,151 @@
                       'target_soc': target_soc | float,
                       'reason': 'target_reached'
                   } | tojson }}
+
+- id: auto_ev_044_maintenance_charging
+  alias: "EV 044 – Maintenance Charging"
+  description: >
+    Ensures at least one car always has minimum SOC for unplanned trips.
+    Runs every 30 min. Picks the lowest-SOC home+plugged car below ev_minimum_soc
+    and charges it to that level regardless of tariff or planner state.
+    Skips if EV 041 planner is active (night_charge_car set AND cheap tariff).
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/30"
+
+  conditions:
+    # Don't interfere when planner + cheap tariff is handling it
+    - condition: not
+      conditions:
+        - condition: template
+          value_template: >
+            {{ states('input_select.ev_night_charge_car') in ['Horace', 'Horatio']
+               and states('sensor.ev_cheap_tariff_active') == 'on' }}
+
+  actions:
+    - variables:
+        min_soc: "{{ states('input_number.ev_minimum_soc') | float(50) }}"
+
+        horace_home: "{{ is_state('device_tracker.horace_location', 'home') }}"
+        horatio_home: "{{ is_state('device_tracker.horatio_location', 'home') }}"
+
+        horace_soc: "{{ states('sensor.horace_battery_level') | float(100) }}"
+        horatio_soc: "{{ states('sensor.horatio_battery_level') | float(100) }}"
+
+        # Pick lowest-SOC home car below minimum
+        horace_needs: "{{ horace_home and horace_soc < min_soc }}"
+        horatio_needs: "{{ horatio_home and horatio_soc < min_soc }}"
+
+    # Exit if no car needs maintenance charging
+    - if:
+        - condition: template
+          value_template: "{{ not horace_needs and not horatio_needs }}"
+      then:
+        - stop: "No home car below minimum SOC — nothing to do"
+
+    # Pick car: lowest SOC wins; if only one needs it, pick that one
+    - variables:
+        maint_car: >
+          {% if horace_needs and horatio_needs %}
+            {{ 'Horace' if horace_soc <= horatio_soc else 'Horatio' }}
+          {% elif horace_needs %}
+            Horace
+          {% else %}
+            Horatio
+          {% endif %}
+
+    # Wake the car so Tesla API returns fresh plug/SOC data
+    - variables:
+        plug_entity: "{{ 'binary_sensor.horace_plugged' if maint_car == 'Horace' else 'binary_sensor.horatio_plugged' }}"
+        soc_entity: "{{ 'sensor.horace_battery_level' if maint_car == 'Horace' else 'sensor.horatio_battery_level' }}"
+    - action: button.press
+      target:
+        entity_id: "{{ 'button.horace_wake' if maint_car == 'Horace' else 'button.horatio_wake' }}"
+    - delay:
+        seconds: 30
+    - action: homeassistant.update_entity
+      target:
+        entity_id:
+          - "{{ plug_entity }}"
+          - "{{ soc_entity }}"
+    - delay:
+        seconds: 5
+
+    # If plug state still unknown, reload Tesla Fleet and retry
+    - if:
+        - condition: template
+          value_template: "{{ states(plug_entity) in ['unknown', 'unavailable'] }}"
+      then:
+        - action: homeassistant.reload_config_entry
+          target:
+            entity_id: "{{ plug_entity }}"
+        - delay:
+            seconds: 30
+        - action: homeassistant.update_entity
+          target:
+            entity_id:
+              - "{{ plug_entity }}"
+              - "{{ soc_entity }}"
+        - delay:
+            seconds: 5
+
+    # Re-evaluate with fresh data
+    - variables:
+        fresh_soc: "{{ states(soc_entity) | float(100) }}"
+        is_plugged: "{{ is_state(plug_entity, 'on') }}"
+
+    # Skip if not plugged
+    - if:
+        - condition: template
+          value_template: "{{ not is_plugged }}"
+      then:
+        - action: logbook.log
+          data:
+            name: "EV Maintenance"
+            message: "{{ maint_car }} needs charging ({{ fresh_soc | round(0) }}% < {{ min_soc | round(0) }}%) but is not plugged in"
+        - stop: "Car not plugged in"
+
+    # Skip if SOC already at or above minimum (stale data was low)
+    - if:
+        - condition: template
+          value_template: "{{ fresh_soc >= min_soc }}"
+      then:
+        - stop: "Fresh SOC {{ fresh_soc }}% ≥ minimum {{ min_soc }}% — no charging needed"
+
+    # Charge: set limit to minimum SOC and start
+    - action: number.set_value
+      target:
+        entity_id: "{{ 'number.horace_charge_limit' if maint_car == 'Horace' else 'number.horatio_charge_limit' }}"
+      data:
+        value: "{{ min_soc | int }}"
+    - action: switch.turn_on
+      target:
+        entity_id: "{{ 'switch.horace_charge' if maint_car == 'Horace' else 'switch.horatio_charge' }}"
+    # Ensure only one car charges at a time
+    - action: switch.turn_off
+      target:
+        entity_id: "{{ 'switch.horatio_charge' if maint_car == 'Horace' else 'switch.horace_charge' }}"
+
+    - action: logbook.log
+      data:
+        name: "EV Maintenance"
+        message: "{{ maint_car }} maintenance charge started: {{ fresh_soc | round(0) }}% → {{ min_soc | round(0) }}%"
+
+    - action: shell_command.log_action
+      data:
+        system: ev
+        action_type: charge_start
+        target_entity: "{{ 'switch.' ~ maint_car | lower ~ '_charge' }}"
+        parameters: >
+          {{ {'source': 'maintenance',
+              'car': maint_car,
+              'current_soc': fresh_soc | float,
+              'target_soc': min_soc | float
+          } | tojson }}
 
 - id: auto_ev_042_solar_surplus_alert
   alias: "EV 042 – Solar Surplus Plug-In Alert"

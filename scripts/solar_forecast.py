@@ -7,6 +7,7 @@ Subcommands:
   actual     - Log current SolarEdge production for the hour
   compare    - Compare forecasts against actuals, compute errors
   calibrate  - Weekly auto-calibration from clear-sky days
+  banking    - Compute optimal jacuzzi thermal banking target
 
 Called via shell_command from HA automations.
 System: 23kWp split 50:50 on east/west slopes at ~35 deg tilt.
@@ -114,6 +115,21 @@ def ha_set(entity_id, value, token):
             payload = {"entity_id": entity_id}
         else:
             return False
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(url, data=data, method="POST")
+        req.add_header("Authorization", f"Bearer {token}")
+        req.add_header("Content-Type", "application/json")
+        urllib.request.urlopen(req, timeout=5)
+        return True
+    except Exception:
+        return False
+
+
+def ha_select_option(entity_id, option, token):
+    """Select an option on an input_select with predefined options."""
+    try:
+        url = "http://supervisor/core/api/services/input_select/select_option"
+        payload = {"entity_id": entity_id, "option": str(option)}
         data = json.dumps(payload).encode()
         req = urllib.request.Request(url, data=data, method="POST")
         req.add_header("Authorization", f"Bearer {token}")
@@ -378,6 +394,37 @@ def fetch_metno_forecast(lat, lon):
         details = entry.get("data", {}).get("instant", {}).get("details", {})
         cloud_pct = details.get("cloud_area_fraction", 50)
         result[hour_key] = cloud_pct
+
+    return result
+
+
+def fetch_metno_temps(lat, lon):
+    """Fetch hourly temperature forecast from Met.no API.
+
+    Returns dict of {datetime_utc_hour: air_temperature_c}.
+    """
+    url = (
+        f"https://api.met.no/weatherapi/locationforecast/2.0/compact"
+        f"?lat={lat:.4f}&lon={lon:.4f}"
+    )
+    req = urllib.request.Request(url)
+    req.add_header(
+        "User-Agent",
+        "ha-energy-optimisation/1.0 github.com/FraserMacdonald"
+    )
+    resp = urllib.request.urlopen(req, timeout=15)
+    data = json.loads(resp.read().decode())
+
+    result = {}
+    for entry in data.get("properties", {}).get("timeseries", []):
+        time_str = entry["time"]
+        dt = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+        dt_naive = dt.replace(tzinfo=None)
+        hour_key = dt_naive.replace(minute=0, second=0, microsecond=0)
+        details = entry.get("data", {}).get("instant", {}).get("details", {})
+        temp_c = details.get("air_temperature", None)
+        if temp_c is not None:
+            result[hour_key] = temp_c
 
     return result
 
@@ -947,6 +994,341 @@ def cmd_calibrate(token):
 
 
 # =============================================================================
+# Subcommand: banking
+# =============================================================================
+
+def _is_low_tariff_hour(local_dt):
+    """Check if a local datetime falls in low tariff period.
+
+    Schedule: Mon-Thu 22:00-06:00, Fri 22:00 through Sun = low.
+    """
+    dow = local_dt.weekday()
+    hour = local_dt.hour
+    return (
+        dow in [5, 6]
+        or (dow in [0, 1, 2, 3] and (hour >= 22 or hour < 6))
+        or (dow == 4 and hour >= 22)
+    )
+
+
+def _fetch_calendar_events(entity_id, start_utc, end_utc, token):
+    """Fetch events from HA calendar API within time range.
+
+    Returns list of dicts with 'start' (naive UTC datetime) and 'summary'.
+    """
+    start_iso = start_utc.strftime("%Y-%m-%dT%H:%M:%S")
+    end_iso = end_utc.strftime("%Y-%m-%dT%H:%M:%S")
+    url = (
+        f"http://supervisor/core/api/calendars/{entity_id}"
+        f"?start={start_iso}&end={end_iso}"
+    )
+    req = urllib.request.Request(url)
+    req.add_header("Authorization", f"Bearer {token}")
+    resp = urllib.request.urlopen(req, timeout=10)
+    data = json.loads(resp.read().decode())
+
+    events = []
+    for e in data:
+        start = e.get("start", {})
+        if isinstance(start, dict):
+            dt_str = start.get("dateTime", start.get("date", ""))
+        else:
+            dt_str = str(start)
+        try:
+            dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+            # Convert to naive UTC
+            if dt.tzinfo is not None:
+                dt = dt - dt.utcoffset()
+                dt = dt.replace(tzinfo=None)
+            events.append({
+                "start": dt,
+                "summary": e.get("summary", ""),
+            })
+        except (ValueError, TypeError):
+            continue
+
+    events.sort(key=lambda x: x["start"])
+    return events
+
+
+def _fetch_solar_forecast_db(start_utc, end_utc):
+    """Read latest solar forecast vintage from DB.
+
+    Returns dict of {datetime_utc_hour: forecast_wh}.
+    """
+    c = conn()
+    cur = c.cursor(dictionary=True)
+    cur.execute(
+        """SELECT target_hour, forecast_wh
+           FROM solar_forecast_hourly
+           WHERE forecast_made_at = (
+               SELECT MAX(forecast_made_at) FROM solar_forecast_hourly
+           )
+           AND target_hour >= %s AND target_hour < %s""",
+        (start_utc, end_utc)
+    )
+    result = {}
+    for row in cur.fetchall():
+        result[row["target_hour"]] = row["forecast_wh"]
+    c.close()
+    return result
+
+
+def _clear_banking(token):
+    """Reset all banking helpers to inactive state."""
+    ha_set("input_number.jacuzzi_banking_target_temp", 0, token)
+    ha_set("input_number.jacuzzi_expected_solar_hours", 0, token)
+    ha_set("input_number.jacuzzi_expected_solar_gain_c", 0, token)
+    ha_select_option("input_select.jacuzzi_banking_strategy", "none", token)
+
+
+def cmd_banking(token):
+    """Compute optimal thermal banking target for jacuzzi.
+
+    Uses calendar events, solar forecast, tariff schedule, and Met.no
+    ambient forecast to determine the best temperature to pre-heat to
+    during cheap energy periods.
+    """
+    BANKING_CAP = 37.0
+    SOLAR_THRESHOLD_W = 6000
+    RATE_HIGH = 0.35
+    RATE_LOW = 0.25
+    RATE_SOLAR = 0.10
+
+    lat, lon = get_location(token)
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    # --- Read current state from HA ---
+    t_water = ha_attr("climate.jacuzzi", "current_temperature", token)
+    t_water = float(t_water) if t_water is not None else 20.0
+
+    standby = float(ha_state("input_number.jacuzzi_standby_temp", token) or 20)
+    p_net = float(ha_state("input_number.jacuzzi_effective_power_kw", token) or 5.7)
+    c_thermal = float(ha_state("sensor.jacuzzi_thermal_capacity", token) or 3.72)
+    t_ambient = float(ha_state("sensor.la_dole_temperature", token) or 10)
+    min_standby_str = ha_state("sensor.jacuzzi_minimum_standby_temp", token)
+    min_standby = float(min_standby_str) if min_standby_str and min_standby_str not in (
+        "unknown", "unavailable"
+    ) else standby
+
+    # k values per ambient temperature band
+    k_cold = float(ha_state("input_number.jacuzzi_k_cold", token) or 0.040)
+    k_mild = float(ha_state("input_number.jacuzzi_k_mild", token) or 0.035)
+    k_warm = float(ha_state("input_number.jacuzzi_k_warm", token) or 0.025)
+
+    def k_for_ambient(amb):
+        if amb < 5:
+            return k_cold
+        elif amb <= 15:
+            return k_mild
+        else:
+            return k_warm
+
+    # --- Fetch calendar events within 48h ---
+    end_utc = now_utc + timedelta(hours=48)
+    try:
+        events = _fetch_calendar_events(
+            "calendar.jacuzzi_schedule", now_utc, end_utc, token
+        )
+    except Exception as e:
+        print(f"Banking: Calendar fetch failed ({e}). Clearing.")
+        _clear_banking(token)
+        return
+
+    if not events:
+        _clear_banking(token)
+        print("Banking: No events within 48h. Cleared.")
+        return
+
+    event = events[0]
+    event_start = event["start"]
+    hours_to_event = (event_start - now_utc).total_seconds() / 3600
+
+    if hours_to_event < 1:
+        _clear_banking(token)
+        print(f"Banking: Event in <1h ({event['summary']}). Cleared.")
+        return
+
+    # --- Fetch Met.no ambient temperature forecast ---
+    try:
+        metno_temps = fetch_metno_temps(lat, lon)
+    except Exception as e:
+        print(f"WARNING: Met.no temp fetch failed ({e}), using current ambient")
+        metno_temps = {}
+
+    # --- Fetch solar forecast from DB ---
+    try:
+        solar_fc = _fetch_solar_forecast_db(now_utc, event_start)
+    except Exception as e:
+        print(f"WARNING: Solar forecast DB read failed ({e})")
+        solar_fc = {}
+
+    # --- Build hourly timeline from now to event ---
+    current_hour = now_utc.replace(minute=0, second=0, microsecond=0)
+    timeline = []
+    while current_hour < event_start:
+        local = utc_to_local(current_hour.replace(tzinfo=timezone.utc))
+        amb = metno_temps.get(current_hour, t_ambient)
+        solar_w = solar_fc.get(current_hour, 0)
+        is_solar = solar_w > SOLAR_THRESHOLD_W
+        is_low = _is_low_tariff_hour(local)
+        is_cheap = is_solar or is_low
+
+        timeline.append({
+            "utc": current_hour,
+            "ambient": amb,
+            "is_cheap": is_cheap,
+            "is_solar": is_solar,
+            "is_low_tariff": is_low,
+            "solar_w": solar_w,
+            "k": k_for_ambient(amb),
+        })
+        current_hour += timedelta(hours=1)
+
+    if not timeline:
+        _clear_banking(token)
+        print("Banking: No hours to analyse. Cleared.")
+        return
+
+    # --- Compute expected solar hours and gain ---
+    solar_hours_list = [h for h in timeline if h["is_solar"]]
+    expected_solar_hours = len(solar_hours_list)
+
+    expected_solar_gain = 0.0
+    if expected_solar_hours > 0:
+        avg_amb_solar = sum(h["ambient"] for h in solar_hours_list) / expected_solar_hours
+        avg_k_solar = sum(h["k"] for h in solar_hours_list) / expected_solar_hours
+        delta = max(0, standby - avg_amb_solar)
+        net_p = p_net - avg_k_solar * delta
+        if net_p > 0:
+            expected_solar_gain = (net_p / c_thermal) * expected_solar_hours
+
+    # --- Build segments of consecutive cheap/expensive hours ---
+    segments = []
+    for h in timeline:
+        if not segments or segments[-1][0] != h["is_cheap"]:
+            segments.append((h["is_cheap"], [h]))
+        else:
+            segments[-1][1].append(h)
+
+    # --- Backward induction: compute banking target ---
+    # Walk backward from event. For expensive hours, invert cooling to find
+    # needed start temperature. For cheap segments, record the target and
+    # reset (the cheap window can reheat).
+    t_required = min_standby
+    target_per_cheap = {}  # segment_index -> target_temp
+
+    for i in range(len(segments) - 1, -1, -1):
+        is_cheap, hours = segments[i]
+        if not is_cheap:
+            # Expensive: invert cooling for each hour (backward)
+            for h in reversed(hours):
+                amb = h["ambient"]
+                k = h["k"]
+                # T_start = T_amb + (T_end - T_amb) * e^(k/C)
+                t_required = amb + (t_required - amb) * math.exp(k / c_thermal)
+        else:
+            # Cheap: this segment can heat to t_required
+            target_per_cheap[i] = min(t_required, BANKING_CAP)
+            # Earlier segments only need to deliver standby
+            t_required = standby
+
+    # Find the first (current or next) cheap segment's target
+    banking_target = standby
+    for i in range(len(segments)):
+        if segments[i][0] and i in target_per_cheap:
+            banking_target = target_per_cheap[i]
+            break
+
+    # Floor at standby, cap at BANKING_CAP
+    banking_target = min(BANKING_CAP, max(standby, banking_target))
+
+    # --- Cost check: is banking worth it? ---
+    if banking_target > standby + 0.5:
+        # Find the expensive gap after the first cheap segment
+        first_cheap_idx = None
+        for i in range(len(segments)):
+            if segments[i][0]:
+                first_cheap_idx = i
+                break
+
+        if first_cheap_idx is not None:
+            # Find the following expensive gap
+            expensive_hours = []
+            for i in range(first_cheap_idx + 1, len(segments)):
+                if not segments[i][0]:
+                    expensive_hours = segments[i][1]
+                    break
+
+            if expensive_hours:
+                gap_hours = len(expensive_hours)
+                avg_amb = sum(h["ambient"] for h in expensive_hours) / gap_hours
+                avg_k = sum(h["k"] for h in expensive_hours) / gap_hours
+
+                # Cheapest rate in current cheap window
+                cheap_hours = segments[first_cheap_idx][1]
+                has_solar = any(h["is_solar"] for h in cheap_hours)
+                cheap_rate = RATE_SOLAR if has_solar else RATE_LOW
+
+                # Cost of banking energy
+                banking_energy = c_thermal * (banking_target - standby)
+                banking_cost = banking_energy * cheap_rate
+
+                # Temperature preserved after cooling through expensive gap
+                decay = math.exp(-avg_k * gap_hours / c_thermal)
+                t_end_bank = avg_amb + (banking_target - avg_amb) * decay
+                t_end_standby = avg_amb + (standby - avg_amb) * decay
+                preserved = max(0, t_end_bank - t_end_standby)
+
+                # Value of preserved temp at high tariff
+                alternative_cost = c_thermal * preserved * RATE_HIGH
+
+                if banking_cost >= alternative_cost:
+                    banking_target = standby
+                    print(f"Banking: Cost check failed "
+                          f"(bank={banking_cost:.2f} >= alt={alternative_cost:.2f} CHF). "
+                          f"Skipping.")
+
+    # --- Determine strategy ---
+    if banking_target <= standby + 0.5:
+        strategy = "none"
+        banking_target = 0  # Signal no active banking
+    else:
+        # Determine from what's available in the current cheap window
+        first_cheap_hours = []
+        for is_cheap, hours in segments:
+            if is_cheap:
+                first_cheap_hours = hours
+                break
+        has_solar = any(h["is_solar"] for h in first_cheap_hours)
+        has_low_tariff = any(h["is_low_tariff"] for h in first_cheap_hours)
+        if has_solar and has_low_tariff:
+            strategy = "combined"
+        elif has_solar:
+            strategy = "solar"
+        else:
+            strategy = "low_tariff"
+
+    # --- Write results to HA ---
+    ha_set("input_number.jacuzzi_banking_target_temp",
+           round(banking_target, 1), token)
+    ha_set("input_number.jacuzzi_expected_solar_hours",
+           round(expected_solar_hours, 1), token)
+    ha_set("input_number.jacuzzi_expected_solar_gain_c",
+           round(expected_solar_gain, 1), token)
+    ha_select_option("input_select.jacuzzi_banking_strategy",
+                     strategy, token)
+
+    tz_offset = get_tz_offset(now_utc.replace(tzinfo=timezone.utc))
+    event_local = event_start + timedelta(hours=tz_offset)
+
+    print(f"Banking: target={banking_target:.1f}°C, strategy={strategy}, "
+          f"solar={expected_solar_hours:.0f}h(+{expected_solar_gain:.1f}°C), "
+          f"event={event_local.strftime('%a %H:%M')} ({hours_to_event:.1f}h), "
+          f"water={t_water:.1f}°C, min_standby={min_standby:.1f}°C")
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -969,7 +1351,9 @@ if __name__ == "__main__":
             cmd_compare(token)
         elif cmd == "calibrate":
             cmd_calibrate(token)
+        elif cmd == "banking":
+            cmd_banking(token)
         else:
             print(f"Unknown command: {cmd}")
-            print("Usage: solar_forecast.py [init_db|forecast|actual|compare|calibrate]")
+            print("Usage: solar_forecast.py [init_db|forecast|actual|compare|calibrate|banking]")
             sys.exit(1)

@@ -139,3 +139,33 @@
 
   actions:
     - action: shell_command.solar_calibrate
+
+
+# =============================================================================
+# 024 – SOLAR BANKING CALCULATOR
+# Computes optimal thermal banking target for the jacuzzi every 30 minutes.
+# Uses calendar events, solar forecast, tariff schedule, and Met.no ambient
+# forecast to determine when to pre-heat during cheap energy periods.
+# =============================================================================
+- id: auto_energy_024_solar_banking
+  alias: "Energy 024 – Solar Banking Calculator"
+  description: >
+    Runs every 30 minutes to compute the optimal jacuzzi banking target
+    temperature. Uses backward induction from the next calendar event through
+    cheap/expensive energy windows to determine how much to pre-heat during
+    low-cost periods (solar surplus or low tariff).
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/30"
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.energy_solar_forecast_enabled
+      state: "on"
+
+  actions:
+    - action: shell_command.solar_banking

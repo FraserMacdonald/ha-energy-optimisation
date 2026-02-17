@@ -26,7 +26,7 @@ input_number:
     min: 10
     max: 30
     step: 0.5
-    initial: 15
+    initial: 20
     unit_of_measurement: "°C"
     icon: mdi:thermometer-low
 
@@ -90,7 +90,7 @@ input_number:
     min: 0.5
     max: 12
     step: 0.01
-    initial: 3.7
+    initial: 5.7
     unit_of_measurement: "kW"
     icon: mdi:lightning-bolt-circle
 
@@ -188,7 +188,7 @@ input_number:
     min: 2
     max: 24
     step: 0.5
-    initial: 8
+    initial: 6
     unit_of_measurement: "h"
     icon: mdi:clock-alert-outline
 
@@ -198,7 +198,35 @@ input_number:
     min: 15
     max: 35
     step: 0.5
-    initial: 25
+    initial: 34
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-plus
+
+  # --- Smart Thermal Banking ---
+  jacuzzi_banking_target_temp:
+    name: "Jacuzzi Banking Target Temperature"
+    min: 0
+    max: 40
+    step: 0.5
+    initial: 0
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-chevron-up
+
+  jacuzzi_expected_solar_hours:
+    name: "Jacuzzi Expected Solar Hours"
+    min: 0
+    max: 24
+    step: 0.5
+    initial: 0
+    unit_of_measurement: "h"
+    icon: mdi:weather-sunny-alert
+
+  jacuzzi_expected_solar_gain_c:
+    name: "Jacuzzi Expected Solar Gain"
+    min: 0
+    max: 25
+    step: 0.5
+    initial: 0
     unit_of_measurement: "°C"
     icon: mdi:thermometer-plus
 
@@ -271,6 +299,16 @@ input_select:
       - "unknown"
     initial: "unknown"
     icon: mdi:fire-alert
+
+  jacuzzi_banking_strategy:
+    name: "Jacuzzi Banking Strategy"
+    options:
+      - "none"
+      - "low_tariff"
+      - "solar"
+      - "combined"
+    initial: "none"
+    icon: mdi:strategy
 
   jacuzzi_calendar_entity:
     name: "Jacuzzi Calendar Entity"

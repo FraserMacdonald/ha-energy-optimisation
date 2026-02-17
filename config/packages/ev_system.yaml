@@ -114,6 +114,16 @@ input_number:
     icon: mdi:solar-power
     initial: 500
 
+  # --- Minimum SOC (maintenance charging threshold) ---
+  ev_minimum_soc:
+    name: "EV Minimum SOC (Maintenance)"
+    min: 10
+    max: 80
+    step: 5
+    initial: 50
+    unit_of_measurement: "%"
+    icon: mdi:battery-alert-variant-outline
+
   # --- Charge Limits (synced to Tesla) ---
   ev_horace_charge_limit:
     name: "Horace Charge Limit"

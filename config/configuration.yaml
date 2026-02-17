@@ -96,6 +96,7 @@ shell_command:
   solar_actual: "python3 /homeassistant/scripts/solar_forecast.py actual"
   solar_compare: "python3 /homeassistant/scripts/solar_forecast.py compare"
   solar_calibrate: "python3 /homeassistant/scripts/solar_forecast.py calibrate"
+  solar_banking: "python3 /homeassistant/scripts/solar_forecast.py banking"
 
 # =============================================================================
 # REST COMMANDS
