@@ -1906,25 +1906,40 @@
         horace_charging: "{{ is_state('switch.horace_charge', 'on') }}"
         horatio_charging: "{{ is_state('switch.horatio_charge', 'on') }}"
 
-        # Pick lowest-SOC home car below minimum, but skip cars already charging
+        hard_floor: 10
+
+        # A car needs attention if it's home, below min_soc, and not already charging
         horace_needs: "{{ horace_home and horace_soc < min_soc and not horace_charging }}"
         horatio_needs: "{{ horatio_home and horatio_soc < min_soc and not horatio_charging }}"
+
+        # A car is critically low if below hard floor (10%)
+        horace_critical: "{{ horace_home and horace_soc < hard_floor }}"
+        horatio_critical: "{{ horatio_home and horatio_soc < hard_floor }}"
 
     # Exit if no car needs maintenance charging, or if a car is already
     # charging toward the minimum (goal is at least one car at min_soc)
     - if:
         - condition: template
           value_template: >
-            {{ (not horace_needs and not horatio_needs)
+            {{ (not horace_needs and not horatio_needs
+                and not horace_critical and not horatio_critical)
                or (horace_charging or horatio_charging) }}
       then:
         - stop: "No action needed — car already charging or no home car below minimum SOC"
 
-    # Pick car: lowest SOC wins; if only one needs it, pick that one
+    # Pick car:
+    #   1. Critical car (below hard floor 10%) always wins — safety first
+    #   2. Otherwise pick the car closest to min_soc — fastest path to goal
     - variables:
         maint_car: >
-          {% if horace_needs and horatio_needs %}
+          {% if horace_critical and not horatio_critical %}
+            Horace
+          {% elif horatio_critical and not horace_critical %}
+            Horatio
+          {% elif horace_critical and horatio_critical %}
             {{ 'Horace' if horace_soc <= horatio_soc else 'Horatio' }}
+          {% elif horace_needs and horatio_needs %}
+            {{ 'Horace' if horace_soc >= horatio_soc else 'Horatio' }}
           {% elif horace_needs %}
             Horace
           {% else %}
