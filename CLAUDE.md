@@ -392,7 +392,7 @@ Cars were sitting at 0% SOC because EV 041 only charges when the planner flags a
 - [x] `configuration.yaml` — Added `deploy_from_git` shell command (git pull + copy config + scripts)
 - [x] `.gitignore` — Added `__pycache__/`
 - [x] Remote deploy workflow: `shell_command.deploy_from_git` via HA API, then `homeassistant.restart` separately
-- [x] Note: deploy_from_git may not pull latest changes if git repo on mini PC has conflicts — manual `git pull` from web terminal may be needed
+- [x] `deploy_from_git` now uses `git fetch --all && git reset --hard origin/main` to avoid stale deploys from local conflicts
 
 ### Automated Backups to iCloud:
 - [x] `~/ha-backup.sh` on Mac — fully self-contained backup pipeline
@@ -406,6 +406,32 @@ Cars were sitting at 0% SOC because EV 041 only charges when the planner flags a
 - [x] Note: hassio proxy listing (`/api/hassio/backups`) returns 401 with long-lived tokens, but individual backup download works
 - [x] Note: `backup.create_automatic` service returns 500 — use `hassio.backup_full` instead
 - [x] Removed HA-side `scripts/ha_backup.py` and `shell_command.ha_backup_copy` — not needed
+
+## What's Done (Tuya Water Monitor — Grow Tent)
+LocalTuya couldn't rediscover the water quality monitor after the server failure. Replaced with direct Tuya Cloud API polling.
+
+### New Files:
+- [x] `/config/tuya.py` — Tuya Cloud API client (HMAC-SHA256 auth, EU endpoint `openapi.tuyaeu.com`)
+  - Called with `python3 /config/tuya.py <device_id>`
+  - Returns 8 properties: temp, pH, ORP, TDS, EC, salinity, CF, PRO
+
+### Modified Files:
+- [x] `packages/grow_tent/grow_tent_sensors.yaml` — Added `command_line:` block with 8 sensors
+  - Water Temperature (`temp_current / 10`, °C)
+  - Water pH (`ph_current / 100`, pH) — divisor may need adjusting to /1000 after calibration
+  - Water ORP (`orp_current`, mV)
+  - Water TDS (`tds_current`, ppm)
+  - Water EC (`ec_current`, µS/cm)
+  - Water Salinity (`salinity_current`, ppt)
+  - Water CF (`cf_current`, CF)
+  - Water PRO (`pro_current`, unit TBC)
+  - Scan interval: 900s (15 min) — Tuya blocks API if polled faster
+
+### Known Follow-ups:
+- [ ] Calibrate probes once reservoir is filled
+- [ ] Verify pH divisor (currently /100, may need /1000)
+- [ ] Identify unit of measurement for `pro_current`
+- [ ] Consider alert automations for out-of-range pH/EC/ORP values
 
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
