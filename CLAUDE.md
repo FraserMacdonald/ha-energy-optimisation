@@ -433,5 +433,30 @@ LocalTuya couldn't rediscover the water quality monitor after the server failure
 - [ ] Identify unit of measurement for `pro_current`
 - [ ] Consider alert automations for out-of-range pH/EC/ORP values
 
+## What's Done (Tariff Update, High-Tariff Avoidance, EV Logic Fix & Solar Optimisation)
+
+### Tariff Schedule Change:
+**Old:** Mon-Fri 06:00-22:00 = main (0.35 CHF/kWh), rest = low (0.25 CHF/kWh), solar opportunity 0.10 CHF/kWh
+**New:** Mon-Fri 17:00-22:00 = high (0.38 CHF/kWh), rest = low (0.26 CHF/kWh), solar opportunity 0.06 CHF/kWh (changing to market price June 2026)
+
+### Files Modified:
+- [x] `templates/energy/energy_shared_sensors.yaml` — Tariff schedule+rates updated, `next_low_start` replaced with `next_high_start`/`next_high_end`/`is_high` attrs, opportunity_cost 0.10→0.06, added `binary_sensor.energy_high_tariff_active`, demand scenario state C 24h→48h
+- [x] `templates/ev/ev_templates.yaml` — `sensor.ev_cheap_tariff_active` schedule updated (high = Mon-Fri 17:00-22:00), simplified attrs
+- [x] `templates/jacuzzi/jacuzzi_sensors.yaml` — Deprecated `sensor.electricity_tariff` updated to new schedule+rates, `sensor.jacuzzi_smart_start_time` now shifts start earlier to complete before 17:00 peak, peak_rate fallback 0.35→0.38
+- [x] `automations/jacuzzi/jacuzzi_automations.yaml` — `jacuzzi_020` solar window 24h→48h, `jacuzzi_021` trigger migrated from `sensor.electricity_tariff` to `binary_sensor.energy_low_tariff_active` + window 12h→48h, `jacuzzi_040` preheat branch: added high-tariff guard (blocks new grid heating during peak unless solar >6kW or already heating)
+- [x] `automations/ev/ev_automations.yaml` — EV 044: added `any_home_car_at_target` variable, changed `_needs` logic (if any home car at target: only charge critical <10% cars), suppressed plug-in nag when target met
+- [x] `automations/ev/ev_notification_automations.yaml` — EV 080: suppressed nag when any home car >= `ev_minimum_soc`, unless any home car < 10% hard floor
+- [x] `scripts/solar_forecast.py` — `_is_low_tariff_hour()` updated to new schedule, RATE_HIGH=0.38, RATE_LOW=0.26, RATE_SOLAR=0.06
+- [x] `packages/grow_tent/grow_tent_energy.yaml` — avg_rate 0.30→0.28, fallback rates 0.35→0.38
+- [x] `docs/USER_GUIDE.md` — Tariff table, solar feed-in rate, 48h window, high-tariff avoidance, EV maintenance "one car at 50%" rule clarified
+- [x] yamllint passes on all modified files
+
+### Key Behaviour Changes:
+- Tariff state value changed from `main` to `high` — no downstream code checks `== 'main'`
+- Low tariff is now the default (19 hours/day on weekdays, all weekend), high tariff is the 5-hour exception
+- Smart start time shifts heating earlier to avoid Mon-Fri 17:00-22:00 peak
+- Jacuzzi 040 blocks new grid heating during peak (safety net for edge cases)
+- EV maintenance only nags for second car when first car hasn't reached 50% target, or when any car is critically low (<10%)
+
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).

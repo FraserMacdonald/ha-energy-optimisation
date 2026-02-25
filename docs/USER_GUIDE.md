@@ -30,9 +30,9 @@ The system has three subsystems that work together:
 
 | Period | Rate |
 |--------|------|
-| **Low tariff** — Mon-Thu 22:00-06:00, Fri from 22:00 through entire weekend until Mon 06:00 | 0.25 CHF/kWh |
-| **Main tariff** — all other hours | 0.35 CHF/kWh |
-| **Solar** — when panels produce more than the house uses | ~0.10 CHF/kWh opportunity cost |
+| **High tariff** — Mon-Fri 17:00-22:00 | 0.38 CHF/kWh |
+| **Low tariff** — all other hours (weekday daytime, nights, weekends) | 0.26 CHF/kWh |
+| **Solar** — when panels produce more than the house uses | ~0.06 CHF/kWh opportunity cost (changing to market price June 2026) |
 
 ### Solar Setup
 
@@ -64,12 +64,13 @@ The first week uses conservative estimates. After about 20 heating sessions, the
 
 ### Solar and Low-Tariff Heating
 
-When a jacuzzi event is coming up within 24 hours:
+When a jacuzzi event is coming up within 48 hours:
 
 - **Solar heating** kicks in when the panels produce more than 6 kW of surplus. If clouds roll in and surplus drops for more than 10 minutes, the system stops heating (it won't quietly switch to expensive grid power).
 - **Low-tariff heating** starts automatically at the beginning of cheap-rate windows if there's enough time to finish before the event.
+- **High-tariff avoidance** — the system shifts heating earlier so it completes before the Mon-Fri 17:00-22:00 peak window. If heating would normally start during peak hours, the smart start time moves earlier to finish by 17:00. The system also blocks new grid heating during peak unless there's solar surplus above 6 kW.
 
-Both of these can be toggled with the **Solar Priority** setting. When solar priority is on, the system tries to wait for sun before using overnight power.
+Both solar and low-tariff heating can be toggled with the **Solar Priority** setting. When solar priority is on, the system tries to wait for sun before using overnight power.
 
 ### Thermal Banking
 
@@ -165,7 +166,11 @@ During the day, when solar panels produce more than the house uses:
 
 Regardless of trips, tariffs, or time of day, the system ensures at least one car has **50% charge** at all times. This guarantees about 100-150 km of range for unplanned trips or emergencies.
 
-Every 30 minutes, it checks whether any home car is below 50%. If so, it picks the car with the lowest charge, wakes it, and tops it up. If the car isn't plugged in, you'll get a notification asking you to plug it in.
+The rule is "at least one home car at 50%". Once one car meets that threshold, the system only intervenes for the other car if it drops below the **hard floor of 10%** (critical safety level). This means:
+
+- If Horatio is at 50% and Horace is at 26%, no nag fires — the rule is already satisfied.
+- If both cars are below 50%, the system picks the one closest to 50% (fastest path to the goal) and asks you to plug it in.
+- If any car is below 10%, it always triggers a plug-in request regardless of the other car's level.
 
 ### Climate Prep
 

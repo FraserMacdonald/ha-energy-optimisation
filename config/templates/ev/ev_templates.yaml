@@ -134,25 +134,24 @@
       state: >
         {% set dow = now().weekday() %}
         {% set hour = now().hour %}
-        {% if dow == 4 %}{{ 'on' if hour >= 22 else 'off' }}
-        {% elif dow in [5, 6] %}on
-        {% elif dow == 0 %}{{ 'on' if hour < 6 else 'off' }}
-        {% elif dow in [1, 2, 3] %}{{ 'on' if (hour >= 22 or hour < 6) else 'off' }}
-        {% else %}off{% endif %}
+        {% set is_high = dow in [0, 1, 2, 3, 4] and 17 <= hour < 22 %}
+        {{ 'off' if is_high else 'on' }}
       attributes:
-        window_type: >
-          {% set dow = now().weekday() %}
-          {% if dow in [4, 5, 6, 0] %}weekend
-          {% else %}weekday{% endif %}
-        next_window_start: >
+        is_high_tariff: >
           {% set dow = now().weekday() %}
           {% set hour = now().hour %}
-          {% if dow == 4 and hour < 22 %}
-            {{ (now().replace(hour=22, minute=0, second=0)).isoformat() }}
-          {% elif dow in [1, 2, 3] and hour >= 6 and hour < 22 %}
-            {{ (now().replace(hour=22, minute=0, second=0)).isoformat() }}
+          {{ dow in [0, 1, 2, 3, 4] and 17 <= hour < 22 }}
+        next_high_start: >
+          {% set dow = now().weekday() %}
+          {% set hour = now().hour %}
+          {% if dow in [0, 1, 2, 3, 4] and hour < 17 %}
+            {{ (now().replace(hour=17, minute=0, second=0)).isoformat() }}
+          {% elif dow in [5, 6] %}
+            {{ (now() + timedelta(days=(7 - dow))).replace(hour=17, minute=0, second=0).isoformat() }}
+          {% elif dow == 4 and hour >= 22 %}
+            {{ (now() + timedelta(days=(7 - dow))).replace(hour=17, minute=0, second=0).isoformat() }}
           {% else %}
-            Currently active
+            {{ (now() + timedelta(days=1)).replace(hour=17, minute=0, second=0).isoformat() }}
           {% endif %}
 
 

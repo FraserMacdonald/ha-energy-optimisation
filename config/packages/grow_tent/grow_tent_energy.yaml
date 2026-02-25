@@ -151,7 +151,7 @@ template:
         unit_of_measurement: "CHF"
         state: >
           {% set kwh = states('sensor.grow_tent_total_energy_daily') | float(0) %}
-          {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.35) %}
+          {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.38) %}
           {{ (kwh * rate) | round(2) }}
 
       # -----------------------------------------------------------------
@@ -163,7 +163,7 @@ template:
         unit_of_measurement: "CHF"
         state: >
           {% set kwh = states('sensor.grow_tent_total_energy_monthly') | float(0) %}
-          {% set avg_rate = 0.30 %}
+          {% set avg_rate = 0.28 %}
           {{ (kwh * avg_rate) | round(2) }}
 
       # -----------------------------------------------------------------
@@ -175,7 +175,7 @@ template:
         unit_of_measurement: "CHF"
         state: >
           {% set kwh = states('sensor.grow_tent_light_energy_daily') | float(0) %}
-          {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.35) %}
+          {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.38) %}
           {{ (kwh * rate) | round(2) }}
 
       - name: "Grow Tent Heater Daily Cost"
@@ -184,7 +184,7 @@ template:
         unit_of_measurement: "CHF"
         state: >
           {% set kwh = states('sensor.grow_tent_heater_energy_daily') | float(0) %}
-          {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.35) %}
+          {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.38) %}
           {{ (kwh * rate) | round(2) }}
 
       - name: "Grow Tent Aquatic Heater Daily Cost"
@@ -193,7 +193,7 @@ template:
         unit_of_measurement: "CHF"
         state: >
           {% set kwh = states('sensor.grow_tent_aquatic_heater_energy_daily') | float(0) %}
-          {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.35) %}
+          {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.38) %}
           {{ (kwh * rate) | round(2) }}
 
       # -----------------------------------------------------------------

@@ -86,7 +86,7 @@
 - id: auto_jacuzzi_020_solar_opportunistic
   alias: "Jacuzzi 020 – Solar Opportunistic Heating"
   description: >
-    Uses excess solar to pre-heat jacuzzi when event is scheduled within 24h.
+    Uses excess solar to pre-heat jacuzzi when event is scheduled within 48h.
     RETIRE in Phase 1C – orchestrator will handle solar dispatch.
   mode: single
   trace:
@@ -126,7 +126,7 @@
         {% if cal is not none and cal.attributes.start_time is defined %}
           {% set event_start = as_timestamp(cal.attributes.start_time) %}
           {% set now_ts = now().timestamp() %}
-          {{ (event_start - now_ts) < 86400 and (event_start - now_ts) > 0 }}
+          {{ (event_start - now_ts) < 172800 and (event_start - now_ts) > 0 }}
         {% else %}
           false
         {% endif %}
@@ -185,8 +185,8 @@
 
   triggers:
     - trigger: state
-      entity_id: sensor.electricity_tariff
-      to: "low"
+      entity_id: binary_sensor.energy_low_tariff_active
+      to: "on"
 
   conditions:
     - condition: state
@@ -212,7 +212,7 @@
           {% set now_ts = now().timestamp() %}
           {% set heat_time = states('sensor.jacuzzi_heat_up_time_required') | float(3) * 3600 %}
           {% set time_available = event_start - now_ts %}
-          {{ time_available > heat_time and time_available < 43200 }}
+          {{ time_available > heat_time and time_available < 172800 }}
         {% else %}
           false
         {% endif %}
@@ -385,6 +385,14 @@
                 - condition: state
                   entity_id: input_boolean.energy_jacuzzi_heat_allowed
                   state: "on"
+            # High-tariff guard: block new grid heating during peak unless
+            # solar surplus >6kW or heater already running (target already 40)
+            - condition: template
+              value_template: >
+                {% set is_high = is_state('binary_sensor.energy_high_tariff_active', 'on') %}
+                {% set solar_surplus = states('sensor.energy_solar_surplus_w') | float(0) > 6000 %}
+                {% set already_heating = states('input_number.jacuzzi_target_temp') | float(15) >= 40 %}
+                {{ not is_high or solar_surplus or already_heating }}
           sequence:
             - action: input_number.set_value
               target:
