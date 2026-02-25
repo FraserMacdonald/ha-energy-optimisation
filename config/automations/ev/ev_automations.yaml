@@ -1908,24 +1908,40 @@
 
         hard_floor: 10
 
-        # A car needs attention if it's home, below min_soc, and not already charging
-        horace_needs: "{{ horace_home and horace_soc < min_soc and not horace_charging }}"
-        horatio_needs: "{{ horatio_home and horatio_soc < min_soc and not horatio_charging }}"
+        # Key check: is ANY home car already at or above the minimum SOC target?
+        any_home_car_at_target: >
+          {{ (horace_home and horace_soc >= min_soc)
+             or (horatio_home and horatio_soc >= min_soc) }}
 
         # A car is critically low if below hard floor (10%)
-        horace_critical: "{{ horace_home and horace_soc < hard_floor }}"
-        horatio_critical: "{{ horatio_home and horatio_soc < hard_floor }}"
+        horace_critical: "{{ horace_home and horace_soc < hard_floor and not horace_charging }}"
+        horatio_critical: "{{ horatio_home and horatio_soc < hard_floor and not horatio_charging }}"
+
+        # Needs logic depends on whether the "one car at target" rule is met:
+        # - If any home car is at target: only critical cars (below 10%) need charging
+        # - If no home car is at target: any car below min_soc needs charging
+        horace_needs: >
+          {% if any_home_car_at_target %}
+            {{ horace_critical }}
+          {% else %}
+            {{ horace_home and horace_soc < min_soc and not horace_charging }}
+          {% endif %}
+        horatio_needs: >
+          {% if any_home_car_at_target %}
+            {{ horatio_critical }}
+          {% else %}
+            {{ horatio_home and horatio_soc < min_soc and not horatio_charging }}
+          {% endif %}
 
     # Exit if no car needs maintenance charging, or if a car is already
     # charging toward the minimum (goal is at least one car at min_soc)
     - if:
         - condition: template
           value_template: >
-            {{ (not horace_needs and not horatio_needs
-                and not horace_critical and not horatio_critical)
+            {{ (not horace_needs and not horatio_needs)
                or (horace_charging or horatio_charging) }}
       then:
-        - stop: "No action needed — car already charging or no home car below minimum SOC"
+        - stop: "No action needed — car already charging or target met"
 
     # Pick car:
     #   1. Critical car (below hard floor 10%) always wins — safety first
@@ -1987,36 +2003,44 @@
         is_plugged: "{{ is_state(plug_entity, 'on') }}"
 
     # Skip if not plugged — notify whoever is at home to plug in
+    # Suppress nag if any home car is at target and this car isn't critical
     - if:
         - condition: template
           value_template: "{{ not is_plugged }}"
       then:
-        - choose:
-            - conditions:
-                - condition: template
-                  value_template: "{{ is_state('device_tracker.fraser_s_iphone', 'home') }}"
-              sequence:
-                - action: notify.mobile_app_fraser_s_iphone
-                  data:
-                    title: "Plug In {{ maint_car }}"
-                    message: >
-                      {{ maint_car }} is at {{ fresh_soc | round(0) }}% (minimum {{ min_soc | round(0) }}%). Please plug in to charge.
-                    data:
-                      push:
-                        interruption-level: time-sensitive
-        - choose:
-            - conditions:
-                - condition: template
-                  value_template: "{{ is_state('device_tracker.heather_s_iphone', 'home') }}"
-              sequence:
-                - action: notify.mobile_app_heather_s_iphone
-                  data:
-                    title: "Plug In {{ maint_car }}"
-                    message: >
-                      {{ maint_car }} is at {{ fresh_soc | round(0) }}% (minimum {{ min_soc | round(0) }}%). Please plug in to charge.
-                    data:
-                      push:
-                        interruption-level: time-sensitive
+        - variables:
+            is_critical: "{{ fresh_soc < hard_floor }}"
+            should_nag: "{{ not any_home_car_at_target or is_critical }}"
+        - if:
+            - condition: template
+              value_template: "{{ should_nag }}"
+          then:
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ is_state('device_tracker.fraser_s_iphone', 'home') }}"
+                  sequence:
+                    - action: notify.mobile_app_fraser_s_iphone
+                      data:
+                        title: "Plug In {{ maint_car }}"
+                        message: >
+                          {{ maint_car }} is at {{ fresh_soc | round(0) }}% (minimum {{ min_soc | round(0) }}%). Please plug in to charge.
+                        data:
+                          push:
+                            interruption-level: time-sensitive
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ is_state('device_tracker.heather_s_iphone', 'home') }}"
+                  sequence:
+                    - action: notify.mobile_app_heather_s_iphone
+                      data:
+                        title: "Plug In {{ maint_car }}"
+                        message: >
+                          {{ maint_car }} is at {{ fresh_soc | round(0) }}% (minimum {{ min_soc | round(0) }}%). Please plug in to charge.
+                        data:
+                          push:
+                            interruption-level: time-sensitive
         - action: logbook.log
           data:
             name: "EV Maintenance"

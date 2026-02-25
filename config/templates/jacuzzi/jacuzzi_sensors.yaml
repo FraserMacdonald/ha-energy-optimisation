@@ -10,34 +10,23 @@
 # NON-TRIGGER SENSORS (polled)
 # =============================================================================
 - sensor:
-    # Current Electricity Tariff
+    # Current Electricity Tariff (deprecated — use sensor.energy_tariff_current)
+    # Kept for jacuzzi_021 trigger compatibility
     - name: "Electricity Tariff"
       unique_id: electricity_tariff
       state: >
         {% set now_time = now() %}
         {% set hour = now_time.hour %}
         {% set day = now_time.weekday() %}
-
-        {# Monday=0, Thursday=3, Friday=4, Sunday=6 #}
-        {% if (day >= 0 and day <= 3 and hour >= 22) or (day >= 0 and day <= 3 and hour < 6) %}
-          low
-        {% elif day == 4 and hour >= 22 %}
-          low
-        {% elif (day == 5 or day == 6) %}
-          low
-        {% elif day == 0 and hour < 6 %}
-          low
-        {% else %}
-          main
-        {% endif %}
+        {% set is_high = day in [0, 1, 2, 3, 4] and 17 <= hour < 22 %}
+        {{ 'high' if is_high else 'low' }}
       attributes:
         rate_chf_kwh: >
-          {% if is_state('sensor.electricity_tariff', 'low') %}
-            0.25
-          {% else %}
-            0.35
-          {% endif %}
-        opportunity_cost: 0.10
+          {% set hour = now().hour %}
+          {% set day = now().weekday() %}
+          {% set is_high = day in [0, 1, 2, 3, 4] and 17 <= hour < 22 %}
+          {{ 0.38 if is_high else 0.26 }}
+        opportunity_cost: 0.06
 
     # Next Low Tariff Period Start
     - name: "Next Low Tariff Start"
@@ -245,6 +234,8 @@
           {{ t_current | round(1) }}°C → 40°C. P_net={{ p }}kW, k={{ k }}kW/°C, C={{ c | round(2) }}kWh/°C. Rate@current={{ rate }}°C/h. T_max={{ (t_ambient + p / k) | round(1) }}°C{% if use_fc and fc_temp > -999 %} [forecast]{% endif %}
 
     # Smart Start Time Calculator (uses physics-based heat_up_time)
+    # Includes high-tariff avoidance: shifts start earlier so heating
+    # completes before Mon–Fri 17:00 peak window when possible.
     - name: "Jacuzzi Smart Start Time"
       unique_id: jacuzzi_smart_start_time
       state: >
@@ -257,22 +248,33 @@
           {% set start_time = event_start - total_seconds %}
           {% set solar_priority = is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
           {% set now_ts = now().timestamp() %}
+          {# Solar priority: delay start to 09:00 if event is >8h away #}
           {% if solar_priority and (event_start - now_ts) > 28800 %}
             {% set start_hour = start_time | timestamp_custom('%H') | int %}
             {% if start_hour < 9 %}
               {% set proposed_start = start_time | timestamp_custom('%Y-%m-%d') + ' 09:00:00' %}
               {% set proposed_ts = as_timestamp(proposed_start) %}
               {% if proposed_ts + total_seconds <= event_start %}
-                {{ proposed_ts | timestamp_custom('%Y-%m-%d %H:%M') }}
-              {% else %}
-                {{ start_time | timestamp_custom('%Y-%m-%d %H:%M') }}
+                {% set start_time = proposed_ts %}
               {% endif %}
-            {% else %}
-              {{ start_time | timestamp_custom('%Y-%m-%d %H:%M') }}
             {% endif %}
-          {% else %}
-            {{ start_time | timestamp_custom('%Y-%m-%d %H:%M') }}
           {% endif %}
+          {# High-tariff avoidance: if start falls in Mon-Fri 17:00-22:00, #}
+          {# shift earlier so heating completes before 17:00 #}
+          {% set start_dt = start_time | timestamp_custom('%Y-%m-%d %H:%M:%S') | as_datetime %}
+          {% set start_dow = start_dt.weekday() %}
+          {% set start_hour = start_dt.hour %}
+          {% if start_dow in [0, 1, 2, 3, 4] and 17 <= start_hour < 22 %}
+            {# Compute 17:00 on the same day #}
+            {% set peak_start_str = start_time | timestamp_custom('%Y-%m-%d') + ' 17:00:00' %}
+            {% set peak_start_ts = as_timestamp(peak_start_str) %}
+            {% set shifted = peak_start_ts - total_seconds %}
+            {# Only shift if the shifted time is not in the past #}
+            {% if shifted >= now_ts %}
+              {% set start_time = shifted %}
+            {% endif %}
+          {% endif %}
+          {{ start_time | timestamp_custom('%Y-%m-%d %H:%M') }}
         {% else %}
           unavailable
         {% endif %}
@@ -499,8 +501,8 @@
         {# Savings = what energy would cost at peak rate minus actual cost #}
         {# Captures low-tariff savings; solar savings need per-device tracking #}
         {% set actual_cost = states('sensor.jacuzzi_daily_cost') | float(0) %}
-        {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.35) %}
-        {% set peak_rate = 0.35 %}
+        {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.38) %}
+        {% set peak_rate = 0.38 %}
         {% if actual_cost > 0 and rate > 0 %}
           {% set actual_kwh = actual_cost / rate %}
           {% set baseline = actual_kwh * peak_rate %}

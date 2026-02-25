@@ -1000,15 +1000,12 @@ def cmd_calibrate(token):
 def _is_low_tariff_hour(local_dt):
     """Check if a local datetime falls in low tariff period.
 
-    Schedule: Mon-Thu 22:00-06:00, Fri 22:00 through Sun = low.
+    Schedule: Mon-Fri 17:00-22:00 = high; everything else = low.
     """
     dow = local_dt.weekday()
     hour = local_dt.hour
-    return (
-        dow in [5, 6]
-        or (dow in [0, 1, 2, 3] and (hour >= 22 or hour < 6))
-        or (dow == 4 and hour >= 22)
-    )
+    is_high = dow in [0, 1, 2, 3, 4] and 17 <= hour < 22
+    return not is_high
 
 
 def _fetch_calendar_events(entity_id, start_utc, end_utc, token):
@@ -1091,9 +1088,9 @@ def cmd_banking(token):
     """
     BANKING_CAP = 37.0
     SOLAR_THRESHOLD_W = 6000
-    RATE_HIGH = 0.35
-    RATE_LOW = 0.25
-    RATE_SOLAR = 0.10
+    RATE_HIGH = 0.38
+    RATE_LOW = 0.26
+    RATE_SOLAR = 0.06
 
     lat, lon = get_location(token)
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)

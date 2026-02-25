@@ -710,6 +710,21 @@
         {% set h = states('binary_sensor.horace_charge_cable') %}
         {% set r = states('binary_sensor.horatio_charge_cable') %}
         {{ h == 'off' and r == 'off' }}
+    # Suppress nag when at least one home car is at/above minimum SOC,
+    # UNLESS any home car is below the hard floor (10%) — always nag for critical
+    - condition: template
+      value_template: >
+        {% set min_soc = states('input_number.ev_minimum_soc') | float(50) %}
+        {% set hard_floor = 10 %}
+        {% set horace_home = is_state('device_tracker.horace_location', 'home') %}
+        {% set horatio_home = is_state('device_tracker.horatio_location', 'home') %}
+        {% set horace_soc = states('sensor.horace_battery_level') | float(0) %}
+        {% set horatio_soc = states('sensor.horatio_battery_level') | float(0) %}
+        {% set any_at_target = (horace_home and horace_soc >= min_soc)
+                               or (horatio_home and horatio_soc >= min_soc) %}
+        {% set any_critical = (horace_home and horace_soc < hard_floor)
+                              or (horatio_home and horatio_soc < hard_floor) %}
+        {{ not any_at_target or any_critical }}
 
   actions:
     - variables:

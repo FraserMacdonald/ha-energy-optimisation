@@ -21,8 +21,8 @@
 # =============================================================================
 # 1. TARIFF SENSOR
 # Shared replacement for sensor.electricity_tariff (jacuzzi_sensors.yaml).
-# Schedule: Mon–Thu 22:00–06:00 = low, Fri from 22:00 through entire weekend
-# until Mon 06:00 = low. All other hours = main.
+# Schedule: Mon–Fri 17:00–22:00 = high (0.38 CHF/kWh).
+# All other hours (nights, weekends, weekday daytime) = low (0.26 CHF/kWh).
 # =============================================================================
 - sensor:
     - name: "Energy Tariff Current"
@@ -31,40 +31,51 @@
       state: >
         {% set hour = now().hour %}
         {% set dow = now().weekday() %}
-        {% if dow in [5, 6] %}
-          low
-        {% elif dow in [0, 1, 2, 3] and (hour >= 22 or hour < 6) %}
-          low
-        {% elif dow == 4 and hour >= 22 %}
-          low
-        {% else %}
-          main
-        {% endif %}
+        {% set is_high = dow in [0, 1, 2, 3, 4] and 17 <= hour < 22 %}
+        {{ 'high' if is_high else 'low' }}
       attributes:
         rate_chf_kwh: >
           {% set hour = now().hour %}
           {% set dow = now().weekday() %}
-          {% set is_low = dow in [5, 6]
-                          or (dow in [0, 1, 2, 3] and (hour >= 22 or hour < 6))
-                          or (dow == 4 and hour >= 22) %}
-          {{ 0.25 if is_low else 0.35 }}
-        opportunity_cost: 0.10
-        next_low_start: >
+          {% set is_high = dow in [0, 1, 2, 3, 4] and 17 <= hour < 22 %}
+          {{ 0.38 if is_high else 0.26 }}
+        opportunity_cost: 0.06
+        is_high: >
+          {% set hour = now().hour %}
+          {% set dow = now().weekday() %}
+          {{ dow in [0, 1, 2, 3, 4] and 17 <= hour < 22 }}
+        next_high_start: >
           {% set now_time = now() %}
           {% set hour = now_time.hour %}
           {% set dow = now_time.weekday() %}
-          {% if dow in [0, 1, 2, 3] %}
-            {{ now_time.replace(hour=22, minute=0, second=0) }}
-          {% elif dow == 4 %}
-            {{ now_time.replace(hour=22, minute=0, second=0) }}
+          {% if dow in [0, 1, 2, 3, 4] and hour < 17 %}
+            {{ now_time.replace(hour=17, minute=0, second=0) }}
+          {% elif dow == 4 and hour >= 22 %}
+            {{ (now_time + timedelta(days=(7 - dow))).replace(hour=17, minute=0, second=0) }}
+          {% elif dow in [5, 6] %}
+            {{ (now_time + timedelta(days=(7 - dow))).replace(hour=17, minute=0, second=0) }}
           {% else %}
+            {{ (now_time + timedelta(days=1)).replace(hour=17, minute=0, second=0) }}
+          {% endif %}
+        next_high_end: >
+          {% set now_time = now() %}
+          {% set hour = now_time.hour %}
+          {% set dow = now_time.weekday() %}
+          {% if dow in [0, 1, 2, 3, 4] and hour < 22 %}
+            {{ now_time.replace(hour=22, minute=0, second=0) }}
+          {% elif dow == 4 and hour >= 22 %}
             {{ (now_time + timedelta(days=(7 - dow))).replace(hour=22, minute=0, second=0) }}
+          {% elif dow in [5, 6] %}
+            {{ (now_time + timedelta(days=(7 - dow))).replace(hour=22, minute=0, second=0) }}
+          {% else %}
+            {{ (now_time + timedelta(days=1)).replace(hour=22, minute=0, second=0) }}
           {% endif %}
 
 
 # =============================================================================
 # 2. LOW TARIFF BINARY SENSOR
-# Simple boolean for condition blocks — avoids template duplication.
+# Simple boolean for condition blocks — low is the default, high is exception.
+# Low = NOT in high tariff window (Mon–Fri 17:00–22:00).
 # =============================================================================
 - binary_sensor:
     - name: "Energy Low Tariff Active"
@@ -74,9 +85,22 @@
       state: >
         {% set hour = now().hour %}
         {% set dow = now().weekday() %}
-        {{ dow in [5, 6]
-           or (dow in [0, 1, 2, 3] and (hour >= 22 or hour < 6))
-           or (dow == 4 and hour >= 22) }}
+        {{ not (dow in [0, 1, 2, 3, 4] and 17 <= hour < 22) }}
+
+
+# =============================================================================
+# 2b. HIGH TARIFF BINARY SENSOR
+# True during Mon–Fri 17:00–22:00 peak window. Used by jacuzzi avoidance.
+# =============================================================================
+- binary_sensor:
+    - name: "Energy High Tariff Active"
+      unique_id: energy_high_tariff_active
+      device_class: power
+      icon: mdi:transmission-tower-export
+      state: >
+        {% set hour = now().hour %}
+        {% set dow = now().weekday() %}
+        {{ dow in [0, 1, 2, 3, 4] and 17 <= hour < 22 }}
 
 
 # =============================================================================
@@ -173,7 +197,7 @@
 # State A – Safety:      water temp < 5 °C (freeze risk)        → Tier 1
 # State D – Imminent:    event within heat-up window, below      → Tier 2
 #                        target and smart-start time reached
-# State C – Solar heat:  event within 24 h, below target         → Tier 3
+# State C – Solar heat:  event within 48 h, below target         → Tier 3
 # State B – Standby gap: below standby temp, no imminent event   → Tier 3
 # State E – Satisfied:   at target or no demand                  → No load
 #
@@ -218,8 +242,8 @@
             {# State D — event imminent, within preheat window, not at target #}
             {% if in_heat_window and current_temp < (target_temp - 0.5) and hours_to_event > 0 %}
               D
-            {# State C — event within 24 h, below target, solar opportunity #}
-            {% elif hours_to_event > 0 and hours_to_event <= 24 and current_temp < (target_temp - 0.5) %}
+            {# State C — event within 48 h, below target, solar opportunity #}
+            {% elif hours_to_event > 0 and hours_to_event <= 48 and current_temp < (target_temp - 0.5) %}
               C
             {# Below standby with no imminent pressure #}
             {% elif current_temp < (standby_temp - 0.5) %}
@@ -259,7 +283,7 @@
           {% set s = states('sensor.energy_jacuzzi_demand_scenario') %}
           {% if s == 'A' %}Below minimum – freeze risk (Tier 1)
           {% elif s == 'B' %}Below standby temp (Tier 2)
-          {% elif s == 'C' %}Event <24h, solar preheat (Tier 3)
+          {% elif s == 'C' %}Event <48h, solar preheat (Tier 3)
           {% elif s == 'D' %}Event imminent, preheat active (Tier 2)
           {% elif s == 'E' %}Satisfied – no demand
           {% else %}Unknown{% endif %}
