@@ -1,0 +1,293 @@
+###############################################################################
+# HOME DASHBOARD – Clean User View (Heather-friendly)
+# File: dashboards/home.yaml
+# Path: lovelace-home
+#
+# Status + controls only. No admin tuning or debug info.
+# Requires: custom:mushroom cards
+###############################################################################
+
+views:
+  - title: Home
+    path: home
+    icon: mdi:home
+    cards:
+
+      # =====================================================================
+      # AT A GLANCE
+      # =====================================================================
+
+      # ── SYSTEM STATUS ──
+      - type: custom:mushroom-template-card
+        primary: >
+          {% set h = states('sensor.watchdog_system_health') %}
+          {% if h == 'healthy' %}All Systems Online
+          {% elif h == 'degraded' %}Some Systems Degraded
+          {% else %}Systems Down{% endif %}
+        secondary: >
+          {{ states('sensor.energy_tariff_current') | title }} Tariff
+          · {% set surplus = states('sensor.energy_solar_surplus_w') | int(0) %}
+          {% if surplus > 0 %}{{ surplus }}W surplus
+          {% elif surplus == 0 %}Balanced
+          {% else %}Importing {{ surplus | abs }}W{% endif %}
+        icon: >
+          {% set h = states('sensor.watchdog_system_health') %}
+          {% if h == 'healthy' %}mdi:check-circle
+          {% elif h == 'degraded' %}mdi:alert-circle
+          {% else %}mdi:close-circle{% endif %}
+        icon_color: >
+          {% set h = states('sensor.watchdog_system_health') %}
+          {% if h == 'healthy' %}green
+          {% elif h == 'degraded' %}orange
+          {% else %}red{% endif %}
+
+      # ── SOLAR ──
+      - type: custom:mushroom-template-card
+        primary: >
+          Solar: {{ states('input_number.energy_solar_actual_today_kwh') | float(0) | round(1) }} / {{ states('input_number.energy_solar_forecast_today_kwh') | float(0) | round(1) }}kWh
+        secondary: >
+          {% set current = states('input_number.energy_solar_forecast_current_hour_w') | float(0) %}
+          {% set peak = states('input_number.energy_solar_forecast_peak_hour_w') | float(0) %}
+          {% set peak_h = states('input_number.energy_solar_forecast_peak_hour') | int(0) %}
+          {% set cloud = states('input_number.energy_solar_forecast_cloud_pct') | float(0) %}
+          Now: {{ (current / 1000) | round(1) }}kW · Peak: {{ (peak / 1000) | round(1) }}kW@{{ peak_h }}h · Cloud: {{ cloud | int }}%
+        icon: mdi:solar-power-variant
+        icon_color: >
+          {% set cloud = states('input_number.energy_solar_forecast_cloud_pct') | float(50) %}
+          {% if cloud < 30 %}amber
+          {% elif cloud < 70 %}orange
+          {% else %}grey{% endif %}
+
+      # ── TODAY'S SAVINGS ──
+      - type: custom:mushroom-template-card
+        primary: "Today's Savings"
+        secondary: >
+          Jacuzzi: {{ states('sensor.jacuzzi_daily_savings') }} CHF
+        icon: mdi:piggy-bank
+        icon_color: green
+
+      # =====================================================================
+      # JACUZZI
+      # =====================================================================
+
+      # ── CLIMATE CARD ──
+      - type: custom:mushroom-climate-card
+        entity: climate.jacuzzi
+        icon: mdi:hot-tub
+        show_temperature_control: false
+        fill_container: true
+        layout: horizontal
+        collapsible_controls: true
+
+      # ── STATUS SUMMARY ──
+      - type: custom:mushroom-template-card
+        primary: "{{ states('sensor.jacuzzi_current_mode') | title }}"
+        secondary: >
+          {{ state_attr('climate.jacuzzi', 'current_temperature') }}°C
+          → {{ states('input_number.jacuzzi_target_temp') }}°C
+          {% if states('sensor.jacuzzi_current_mode') == 'heating' %}
+          · {{ states('sensor.jacuzzi_net_heating_rate') }}°C/h
+          {% endif %}
+        icon: mdi:thermometer-water
+        icon_color: >
+          {% set mode = states('sensor.jacuzzi_current_mode') %}
+          {% if mode == 'heating' %}orange
+          {% elif mode == 'standby' %}blue
+          {% elif mode == 'event' %}green
+          {% else %}grey{% endif %}
+
+      # ── EVENT / PREDICTION (conditional) ──
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: calendar.jacuzzi_schedule
+            state: "on"
+        card:
+          type: custom:mushroom-template-card
+          primary: >
+            {% set pred = states('sensor.jacuzzi_predicted_temp_at_event') | float(0) %}
+            Event Active
+            {% if pred >= 39.0 %} · On Track
+            {% elif pred >= 37.0 %} · Marginal
+            {% else %} · At Risk{% endif %}
+          secondary: >
+            Smart start: {{ states('sensor.jacuzzi_smart_start_time') }}
+            · Predicted: {{ states('sensor.jacuzzi_predicted_temp_at_event') }}°C
+          icon: >
+            {% set pred = states('sensor.jacuzzi_predicted_temp_at_event') | float(0) %}
+            {% if pred >= 39.0 %}mdi:check-circle
+            {% elif pred >= 37.0 %}mdi:alert-circle
+            {% else %}mdi:close-circle{% endif %}
+          icon_color: >
+            {% set pred = states('sensor.jacuzzi_predicted_temp_at_event') | float(0) %}
+            {% if pred >= 39.0 %}green
+            {% elif pred >= 37.0 %}orange
+            {% else %}red{% endif %}
+
+      # ── QUICK ACTIONS ──
+      - type: grid
+        square: false
+        columns: 3
+        cards:
+          - type: custom:mushroom-template-card
+            primary: "4h Override"
+            icon: mdi:timer-outline
+            icon_color: amber
+            layout: vertical
+            tap_action:
+              action: perform-action
+              perform_action: script.jacuzzi_quick_override
+            card_mod:
+              style: "ha-card { --ha-card-border-width: 0; }"
+
+          - type: custom:mushroom-template-card
+            primary: "Heat Now"
+            icon: mdi:fire
+            icon_color: red
+            layout: vertical
+            tap_action:
+              action: perform-action
+              perform_action: script.jacuzzi_emergency_heat
+            card_mod:
+              style: "ha-card { --ha-card-border-width: 0; }"
+
+          - type: custom:mushroom-template-card
+            primary: "Standby"
+            icon: mdi:power-sleep
+            icon_color: blue
+            layout: vertical
+            tap_action:
+              action: perform-action
+              perform_action: script.jacuzzi_reset_to_standby
+            card_mod:
+              style: "ha-card { --ha-card-border-width: 0; }"
+
+      # ── TOGGLE CHIPS ──
+      - type: custom:mushroom-chips-card
+        chips:
+          - type: entity
+            entity: input_boolean.jacuzzi_automation_enabled
+            icon: mdi:auto-mode
+            tap_action:
+              action: toggle
+          - type: entity
+            entity: input_boolean.jacuzzi_solar_priority
+            icon: mdi:solar-power
+            tap_action:
+              action: toggle
+          - type: entity
+            entity: input_boolean.jacuzzi_manual_override
+            icon: mdi:hand-back-right
+            tap_action:
+              action: toggle
+        alignment: center
+
+      # =====================================================================
+      # CARS
+      # =====================================================================
+
+      # ── HORACE STATUS ──
+      - type: custom:mushroom-template-card
+        primary: "Horace — {{ states('input_number.ev_horace_current_soc') | int }}%"
+        secondary: >
+          {{ states('device_tracker.horace_location') | title }}
+          {% if is_state('binary_sensor.horace_plugged', 'on') %}· Plugged{% endif %}
+        icon: mdi:car-electric
+        icon_color: >
+          {% if states('input_number.ev_horace_current_soc') | int > 50 %}green
+          {% elif states('input_number.ev_horace_current_soc') | int > 20 %}orange
+          {% else %}red{% endif %}
+
+      # ── HORATIO STATUS ──
+      - type: custom:mushroom-template-card
+        primary: "Horatio — {{ states('input_number.ev_horatio_current_soc') | int }}%"
+        secondary: >
+          {{ states('device_tracker.horatio_location') | title }}
+          {% if is_state('binary_sensor.horatio_plugged', 'on') %}· Plugged{% endif %}
+        icon: mdi:car-electric
+        icon_color: >
+          {% if states('input_number.ev_horatio_current_soc') | int > 50 %}green
+          {% elif states('input_number.ev_horatio_current_soc') | int > 20 %}orange
+          {% else %}red{% endif %}
+
+      # ── FRASER'S TRIP TODAY ──
+      - type: conditional
+        conditions:
+          - condition: numeric_state
+            entity: input_number.ev_trip_km_fraser_today
+            above: 0
+        card:
+          type: custom:mushroom-template-card
+          primary: "Fraser's Trip Today"
+          secondary: >
+            {{ states('input_number.ev_trip_km_fraser_today') | int }}km
+            · Take {{ states('input_select.ev_fraser_assigned_car') }}
+            · Depart {{ states('input_datetime.ev_fraser_departure_time').split(' ')[1][:5] if states('input_datetime.ev_fraser_departure_time') not in ['unknown','unavailable'] else '—' }}
+          icon: mdi:account-arrow-right
+          icon_color: blue
+
+      # ── HEATHER'S TRIP TODAY ──
+      - type: conditional
+        conditions:
+          - condition: numeric_state
+            entity: input_number.ev_trip_km_heather_today
+            above: 0
+        card:
+          type: custom:mushroom-template-card
+          primary: "Heather's Trip Today"
+          secondary: >
+            {{ states('input_number.ev_trip_km_heather_today') | int }}km
+            · Take {{ states('input_select.ev_heather_assigned_car') }}
+            · Depart {{ states('input_datetime.ev_heather_departure_time').split(' ')[1][:5] if states('input_datetime.ev_heather_departure_time') not in ['unknown','unavailable'] else '—' }}
+          icon: mdi:account-arrow-right
+          icon_color: pink
+
+      # ── EV CONTROLS ──
+      - type: entities
+        title: EV Controls
+        entities:
+          - entity: input_boolean.ev_horace_allow_charging
+            name: Horace Allow Charging
+          - entity: input_boolean.ev_horatio_allow_charging
+            name: Horatio Allow Charging
+          - entity: input_boolean.ev_horace_trip_mode
+            name: Horace Trip Mode (100%)
+          - entity: input_boolean.ev_horatio_trip_mode
+            name: Horatio Trip Mode (100%)
+          - type: divider
+          - entity: input_select.ev_requested_vehicle
+            name: Request Specific Car
+          - entity: input_boolean.ev_solar_mode_enabled
+            name: Solar Charging Mode
+          - entity: input_boolean.ev_external_charge_required
+            name: External Charge Needed
+
+      # =====================================================================
+      # GROW TENT (conditional – hidden when idle)
+      # =====================================================================
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: input_select.grow_tent_mode
+            state_not: idle
+        card:
+          type: custom:mushroom-template-card
+          primary: >
+            Grow Tent: {{ states('sensor.grow_tent_stage_display') }}
+          secondary: >
+            Day {{ states('sensor.grow_tent_days_in_stage') | int }}
+            · {{ states('sensor.marshydro_temperature') | float(0) | round(1) }}°C
+            · {{ states('sensor.marshydro_humidity') | float(0) | round(0) }}% RH
+            · VPD {{ states('sensor.grow_tent_vpd') }} kPa
+            · pH {{ states('sensor.water_ph') | float(0) | round(1) }}
+          icon: mdi:sprout
+          icon_color: >
+            {% set stage = states('input_select.grow_tent_stage') %}
+            {% if 'veg' in stage %}green
+            {% elif 'flower' in stage %}purple
+            {% elif 'flush' in stage %}blue
+            {% elif stage == 'harvest' %}amber
+            {% else %}grey{% endif %}
+          tap_action:
+            action: navigate
+            navigation_path: /lovelace-admin/grow-tent

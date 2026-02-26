@@ -1,0 +1,152 @@
+###############################################################################
+# DEBUG DASHBOARD – Troubleshooting & Broken Entities
+# File: dashboards/debug.yaml
+# Path: lovelace-debug
+#
+# Everything broken or suspect. Watchdog canaries, offline devices, settings.
+# Requires: custom:mushroom cards
+###############################################################################
+
+views:
+  - title: Debug
+    path: debug
+    icon: mdi:bug
+    cards:
+
+      # =====================================================================
+      # SYSTEM HEALTH
+      # =====================================================================
+
+      # ── WATCHDOG SUMMARY ──
+      - type: custom:mushroom-template-card
+        primary: >
+          Health: {{ states('sensor.watchdog_system_health') | title }}
+        secondary: >
+          {% set count = state_attr('sensor.watchdog_system_health', 'count_down') | int(0) %}
+          {% if count == 0 %}All 12 canaries healthy
+          {% else %}{{ count }} down: {{ state_attr('sensor.watchdog_system_health', 'groups_down') | join(', ') }}{% endif %}
+        icon: >
+          {% set h = states('sensor.watchdog_system_health') %}
+          {% if h == 'healthy' %}mdi:shield-check
+          {% elif h == 'degraded' %}mdi:shield-alert
+          {% else %}mdi:shield-off{% endif %}
+        icon_color: >
+          {% set h = states('sensor.watchdog_system_health') %}
+          {% if h == 'healthy' %}green
+          {% elif h == 'degraded' %}orange
+          {% else %}red{% endif %}
+
+      # ── ALL 12 WATCHDOG CANARIES ──
+      - type: entities
+        title: Watchdog Canaries
+        entities:
+          - entity: binary_sensor.watchdog_solaredge_healthy
+            name: SolarEdge
+          - entity: binary_sensor.watchdog_tesla_fleet_healthy
+            name: Tesla Fleet
+          - entity: binary_sensor.watchdog_balboa_spa_healthy
+            name: Balboa Spa (Jacuzzi)
+          - entity: binary_sensor.watchdog_epex_spot_healthy
+            name: EPEX Spot
+          - entity: binary_sensor.watchdog_caldav_healthy
+            name: CalDAV (Calendars)
+          - entity: binary_sensor.watchdog_metno_healthy
+            name: Met.no (Weather)
+          - type: divider
+          - entity: binary_sensor.watchdog_grow_water_heater_healthy
+            name: Grow - Water Heater
+          - entity: binary_sensor.watchdog_grow_water_pump_healthy
+            name: Grow - Water Pump
+          - entity: binary_sensor.watchdog_grow_light_healthy
+            name: Grow - Light
+          - entity: binary_sensor.watchdog_grow_fans_healthy
+            name: Grow - Fans
+          - entity: binary_sensor.watchdog_grow_water_sensors_healthy
+            name: Grow - Water Sensors
+          - entity: binary_sensor.watchdog_grow_electronics_healthy
+            name: Grow - Electronics
+
+      # =====================================================================
+      # GROW TENT — BROKEN DEVICES
+      # =====================================================================
+
+      # ── SHELLY PLUGS ──
+      - type: entities
+        title: "Grow Tent: Shelly Plugs"
+        entities:
+          - entity: switch.shellyplug_water_pump
+            name: Water Pump
+          - entity: switch.shellyplug_marshydro_led
+            name: MarsHydro LED
+          - entity: switch.shellyplug_marshydro_ihub
+            name: MarsHydro iHub
+          - entity: switch.shellyplug_air_fan
+            name: Air Fan
+          - entity: switch.shellyplug_extraction_fan
+            name: Extraction Fan
+
+      # ── MEROSS PLUGS ──
+      - type: entities
+        title: "Grow Tent: Meross Plugs"
+        entities:
+          - entity: sensor.meross_plug_water_heater_power
+            name: Water Heater Power
+          - entity: sensor.meross_plug_electronics_power
+            name: Electronics Power
+
+      # ── LOCAL TUYA ──
+      - type: entities
+        title: "Grow Tent: LocalTuya"
+        entities:
+          - entity: light.marshydro_light
+            name: MarsHydro Light
+
+      # ── ESPHOME ──
+      - type: entities
+        title: "Grow Tent: ESPHome"
+        entities:
+          - entity: switch.esphome_pump_1_base
+            name: Pump 1 - Base
+          - entity: switch.esphome_pump_2_grow
+            name: Pump 2 - Grow
+          - entity: switch.esphome_pump_3_early_flower
+            name: Pump 3 - Early Flower
+          - entity: switch.esphome_pump_4_late_flower
+            name: Pump 4 - Late Flower
+          - entity: switch.esphome_pump_5_sanacan
+            name: Pump 5 - SanaCan
+          - entity: switch.esphome_pump_6_kalican
+            name: Pump 6 - KaliCan
+          - entity: switch.esphome_pump_7_ph_minus
+            name: Pump 7 - pH Minus
+          - entity: switch.esphome_pump_8_ph_plus
+            name: Pump 8 - pH Plus
+          - entity: fan.grow_node_01_extractor
+            name: Extractor Fan
+
+      # ── AUTOMATION TODOs (placeholder entity_ids) ──
+      - type: entities
+        title: "Grow Tent: Automation TODOs"
+        show_header_toggle: false
+        entities:
+          - entity: switch.shelly_heater
+            name: Heater (placeholder entity_id)
+          - entity: switch.shelly_humidifier
+            name: Humidifier (placeholder entity_id)
+
+      # =====================================================================
+      # WATCHDOG SETTINGS
+      # =====================================================================
+      - type: entities
+        title: Watchdog Settings
+        entities:
+          - entity: input_boolean.watchdog_enabled
+            name: Watchdog Enabled
+          - entity: input_number.watchdog_cooldown_minutes
+            name: Cooldown Minutes
+          - entity: input_datetime.watchdog_last_alert_time
+            name: Last Alert Time
+          - entity: input_datetime.watchdog_ha_start_time
+            name: HA Start Time
+          - entity: input_select.watchdog_last_failure
+            name: Last Failure

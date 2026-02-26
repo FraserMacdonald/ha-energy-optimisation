@@ -14,33 +14,26 @@ frontend:
 lovelace:
   mode: storage
   dashboards:
-    lovelace-jacuzzi:
+    lovelace-home:
       mode: yaml
-      filename: dashboards/jacuzzi.yaml
-      title: Jacuzzi
-      icon: mdi:hot-tub
+      filename: dashboards/home.yaml
+      title: Home
+      icon: mdi:home
       require_admin: false
       show_in_sidebar: true
-    lovelace-ev:
+    lovelace-admin:
       mode: yaml
-      filename: dashboards/ev.yaml
-      title: EVs
-      icon: mdi:car-electric
-      require_admin: false
+      filename: dashboards/admin.yaml
+      title: Admin
+      icon: mdi:shield-crown
+      require_admin: true
       show_in_sidebar: true
-    lovelace-energy:
+    lovelace-debug:
       mode: yaml
-      filename: dashboards/energy.yaml
-      title: Energy
-      icon: mdi:flash
-      require_admin: false
-      show_in_sidebar: true
-    lovelace-grow-tent:
-      mode: yaml
-      filename: dashboards/grow_tent.yaml
-      title: Grow Tent
-      icon: mdi:sprout
-      require_admin: false
+      filename: dashboards/debug.yaml
+      title: Debug
+      icon: mdi:bug
+      require_admin: true
       show_in_sidebar: true
 
 # =============================================================================
