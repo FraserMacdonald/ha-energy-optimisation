@@ -32,6 +32,16 @@ input_boolean:
     name: "Energy EV Tariff Charge Allowed"
     icon: mdi:currency-usd
 
+  energy_battery_installed:
+    name: "Energy Battery Installed"
+    icon: mdi:battery-check
+    initial: false
+
+  energy_greenhouse_online:
+    name: "Energy Greenhouse Online"
+    icon: mdi:greenhouse
+    initial: false
+
 
 # =============================================================================
 # INPUT NUMBERS – Orchestrator output values
@@ -73,6 +83,55 @@ input_number:
     icon: mdi:timer-outline
     mode: box
 
+  energy_battery_capacity_kwh:
+    name: "Energy Battery Capacity kWh"
+    min: 0
+    max: 500
+    step: 1
+    unit_of_measurement: "kWh"
+    icon: mdi:battery-high
+    mode: box
+    initial: 0
+
+  energy_battery_min_soc_pct:
+    name: "Energy Battery Min SOC %"
+    min: 5
+    max: 30
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-low
+    mode: box
+    initial: 10
+
+  energy_battery_evening_target_kwh:
+    name: "Energy Battery Evening Target kWh"
+    min: 0
+    max: 50
+    step: 1
+    unit_of_measurement: "kWh"
+    icon: mdi:battery-clock
+    mode: box
+    initial: 8
+
+  energy_ev_buffer_target_soc:
+    name: "Energy EV Buffer Target SOC"
+    min: 50
+    max: 100
+    step: 5
+    unit_of_measurement: "%"
+    icon: mdi:car-battery
+    mode: box
+    initial: 80
+
+  energy_orchestrator_active_tier:
+    name: "Energy Orchestrator Active Tier"
+    min: 0
+    max: 8
+    step: 1
+    icon: mdi:stairs
+    mode: box
+    initial: 8
+
 
 # =============================================================================
 # INPUT DATETIMES – Progress tracking timestamps
@@ -90,6 +149,12 @@ input_datetime:
     has_date: true
     has_time: true
 
+  energy_orchestrator_last_heartbeat:
+    name: "Energy Orchestrator Last Heartbeat"
+    icon: mdi:heart-pulse
+    has_date: true
+    has_time: true
+
 
 # =============================================================================
 # INPUT SELECTS – Text storage (HA 2026 input_text workaround)
@@ -100,3 +165,9 @@ input_select:
     icon: mdi:clipboard-text-clock
     options:
       - "none"
+
+  energy_orchestrator_allocation_json:
+    name: "Energy Orchestrator Allocation JSON"
+    icon: mdi:code-json
+    options:
+      - "{}"

@@ -2,39 +2,41 @@
 # ENERGY ORCHESTRATOR – AUTOMATIONS
 # File: automations/energy/energy_orchestrator_automations.yaml
 #
-# Phase 1C Stage 1 (Shadow Mode): The orchestrator evaluates scenario sensors,
-# applies the priority queue algorithm (arch review section 5.2), sets output
-# helpers, and logs decisions. No existing automations are modified.
+# Minimax Regret Priority Waterfall: Replaces the old 3×5×3 scenario matrix
+# with a tiered priority waterfall. Each 30s cycle walks tiers 0–8, allocating
+# surplus from highest priority down.
 #
 # Format: YAML list for automation: !include_dir_merge_list automations/
 #
 # Automations:
-#   001 – Evaluate Scenario     (core loop, every 30 s)
-#   060 – Decision Logger       (logbook audit trail)
-#   061 – Conflict Alert        (solar contention notification)
+#   001 – Priority Waterfall     (core loop, every 30 s)
+#   026 – Pre-Peak Readiness     (15:00 weekdays)
+#   060 – Decision Logger        (logbook audit trail)
+#   061 – Conflict Alert         (solar contention notification)
 ###############################################################################
 
 
 # =============================================================================
-# 001 – EVALUATE SCENARIO
-# Main orchestrator loop. Reads the three scenario sensors (production 1/2/3,
-# jacuzzi A–E, EV X/Y/idle), applies the generalised priority queue, sets the
-# output helpers, and logs the decision.
+# 001 – PRIORITY WATERFALL
+# Main orchestrator loop. Walks tiers 0–8, allocating solar surplus from
+# highest priority down. Sets legacy gate booleans for backward compatibility.
 #
-# Priority queue algorithm (from architectural review section 5.2):
-#   1. Build load list from demand sensor attributes (tier, power, grid/tariff)
-#   2. Sort by priority tier (lower = higher priority)
-#   3. Allocate solar surplus from highest priority down
-#   4. Unmet Tier 1 loads get grid allocation
-#   5. Tier 2 loads get grid if low tariff active
-#   6. Tier 3+ loads wait for solar
+# Tier 0: Safety (freeze/low SOC) + Greenhouse photoperiod
+# Tier 1: Trip-critical car (EV state X)
+# Tier 2: Battery evening charge (weekday before 17:00)
+# Tier 3: Jacuzzi event (states C/D)
+# Tier 4: Greenhouse LED dimming (future)
+# Tier 5: Car buffer to 80% (EV state Y + below buffer target)
+# Tier 6: Jacuzzi standby/banking (state B)
+# Tier 7: Battery additional (below 100%)
+# Tier 8: Export (no allocation)
 # =============================================================================
 - id: auto_energy_001_evaluate_scenario
-  alias: "Energy 001 – Evaluate Scenario"
+  alias: "Energy 001 – Priority Waterfall"
   description: >
-    Main orchestrator evaluation loop. Reads scenario sensors every 30 seconds,
-    applies the priority queue algorithm, sets output helpers, and logs the
-    decision. Shadow mode — sets helpers only, does not control subsystems.
+    Main orchestrator loop. Walks tiers 0–8 every 30s, allocating solar
+    surplus from highest priority down. Sets legacy gate booleans and new
+    tier/allocation outputs. Updates heartbeat for subsystem fallback.
   mode: single
   trace:
     stored_traces: 10
@@ -46,131 +48,272 @@
   conditions:
     - condition: template
       value_template: >
-        {{ states('sensor.energy_production_scenario') not in ['unknown', 'unavailable']
-           and states('sensor.energy_jacuzzi_demand_scenario') not in ['unknown', 'unavailable']
+        {{ states('sensor.energy_jacuzzi_demand_scenario') not in ['unknown', 'unavailable']
            and states('sensor.energy_ev_demand_scenario') not in ['unknown', 'unavailable'] }}
 
   actions:
     # -----------------------------------------------------------------
-    # Phase 1: Read inputs and compute priority queue decisions
-    # Each decision template is self-contained, reading directly from
-    # sensors to avoid type-coercion issues between variable blocks.
+    # Block 1: Read all inputs
     # -----------------------------------------------------------------
     - variables:
-        prod: "{{ states('sensor.energy_production_scenario') }}"
         jac: "{{ states('sensor.energy_jacuzzi_demand_scenario') }}"
         ev: "{{ states('sensor.energy_ev_demand_scenario') }}"
-        surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) }}"
-        low_tariff: "{{ is_state('binary_sensor.energy_low_tariff_active', 'on') }}"
-        scenario_code: >
-          {{ states('sensor.energy_production_scenario') }}-{{ states('sensor.energy_jacuzzi_demand_scenario') }}-{{ states('sensor.energy_ev_demand_scenario') }}
+        prod: "{{ states('sensor.energy_production_scenario') }}"
 
-        # --- Priority queue: Jacuzzi heating decision ---
-        # Tier 1 (A): always allow — mandatory (freeze risk)
-        # Tier 2 (B/D): always allow — mandatory (below standby / imminent event)
-        # Tier 3 (C): solar only
-        # If surplus covers both loads, allow regardless of priority
-        # If surplus covers one load, higher priority wins
-        jacuzzi_allowed: >
-          {% set jac = states('sensor.energy_jacuzzi_demand_scenario') %}
-          {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
-          {% set jac_tier = state_attr('sensor.energy_jacuzzi_demand_scenario', 'priority_tier') | int(99) %}
-          {% set ev_tier = state_attr('sensor.energy_ev_demand_scenario', 'priority_tier') | int(99) %}
-          {% set jac_w = 6000 %}
-          {% set ev_min_w = (states('input_number.ev_min_amps') | int(5))
-                            * (states('input_number.ev_voltage') | float(230))
-                            * (states('input_number.ev_phases') | int(3)) %}
-          {% if jac == 'E' %}
-            {{ false }}
-          {% elif jac in ['A', 'B', 'D'] %}
-            {{ true }}
-          {% elif surplus >= (jac_w + ev_min_w) %}
-            {{ true }}
-          {% elif surplus >= jac_w and jac_tier <= ev_tier %}
-            {{ true }}
+        # Solar surplus — if sensor unavailable, treat as 0
+        surplus_raw: "{{ states('sensor.energy_solar_surplus_w') }}"
+        solar_available: "{{ surplus_raw not in ['unknown', 'unavailable'] }}"
+        surplus: "{{ surplus_raw | float(0) if solar_available else 0 }}"
+
+        low_tariff: "{{ is_state('binary_sensor.energy_low_tariff_active', 'on') }}"
+        high_tariff: "{{ is_state('binary_sensor.energy_high_tariff_active', 'on') }}"
+
+        # EV parameters
+        voltage: "{{ states('input_number.ev_voltage') | float(230) }}"
+        phases: "{{ states('input_number.ev_phases') | int(3) }}"
+        min_amps: "{{ states('input_number.ev_min_amps') | int(5) }}"
+        max_amps: "{{ states('input_number.ev_charger_max_amps') | int(16) }}"
+        ev_min_w: "{{ min_amps | int * voltage | float * phases | int }}"
+
+        jac_w: 6000
+        buffer_target: "{{ states('input_number.energy_ev_buffer_target_soc') | float(80) }}"
+
+        # Battery
+        battery_installed: "{{ is_state('input_boolean.energy_battery_installed', 'on') }}"
+        battery_needs_evening: "{{ is_state('binary_sensor.energy_battery_needs_evening_charge', 'on') }}"
+        battery_soc: "{{ states('sensor.energy_battery_soc') | float(100) }}"
+
+        # Greenhouse
+        greenhouse_online: "{{ is_state('input_boolean.energy_greenhouse_online', 'on') }}"
+        photoperiod_active: "{{ is_state('binary_sensor.energy_greenhouse_photoperiod_active', 'on') }}"
+
+        # Watchdog
+        watchdog: "{{ states('sensor.watchdog_system_health') }}"
+
+        # Car SOCs for buffer check
+        horace_soc: "{{ states('input_number.ev_horace_current_soc') | float(100) }}"
+        horatio_soc: "{{ states('input_number.ev_horatio_current_soc') | float(100) }}"
+        horace_home: "{{ is_state('device_tracker.horace_location', 'home') }}"
+        horatio_home: "{{ is_state('device_tracker.horatio_location', 'home') }}"
+        any_car_below_buffer: >
+          {{ (horace_home and horace_soc < buffer_target | float)
+             or (horatio_home and horatio_soc < buffer_target | float) }}
+
+    # -----------------------------------------------------------------
+    # Block 2: Walk tiers 0–8, decrement remaining surplus
+    # Each tier checks its condition, claims surplus if available,
+    # and determines whether grid is allowed.
+    # -----------------------------------------------------------------
+    - variables:
+        remaining_0: "{{ surplus | float }}"
+
+        # -- Tier 0: Safety --
+        # Freeze risk (jac==A) or car SOC <10% — runs independently, no surplus claim
+        tier0_safety: "{{ jac == 'A' or horace_soc | float < 10 or horatio_soc | float < 10 }}"
+        tier0_greenhouse: "{{ greenhouse_online | bool and photoperiod_active | bool }}"
+
+    - variables:
+        # -- Tier 1: Trip-critical car --
+        tier1_active: "{{ ev == 'X' }}"
+        tier1_solar_w: >
+          {% if ev == 'X' and remaining_0 | float >= ev_min_w | float %}
+            {{ [remaining_0 | float, max_amps | int * voltage | float * phases | int] | min }}
           {% else %}
-            {{ false }}
+            0
+          {% endif %}
+        tier1_grid: "{{ ev == 'X' }}"
+        remaining_1: "{{ remaining_0 | float - tier1_solar_w | float }}"
+
+    - variables:
+        # -- Tier 2: Battery evening charge --
+        tier2_active: "{{ battery_needs_evening | bool and not high_tariff | bool }}"
+        tier2_solar_w: >
+          {% if tier2_active and remaining_1 | float > 0 %}
+            {{ remaining_1 | float }}
+          {% else %}
+            0
+          {% endif %}
+        tier2_grid: "{{ tier2_active and low_tariff | bool }}"
+        remaining_2: "{{ remaining_1 | float - tier2_solar_w | float }}"
+
+    - variables:
+        # -- Tier 3: Jacuzzi event (states C or D) --
+        tier3_active: "{{ jac in ['C', 'D'] }}"
+        tier3_solar_w: >
+          {% if tier3_active and remaining_2 | float >= jac_w | float %}
+            {{ jac_w }}
+          {% else %}
+            0
+          {% endif %}
+        # Grid allowed during low tariff; during peak only if already heating AND event ≤2h away
+        tier3_grid: >
+          {% if not tier3_active %}
+            false
+          {% elif low_tariff | bool %}
+            true
+          {% elif high_tariff | bool %}
+            {% set cal = states.calendar.jacuzzi_schedule %}
+            {% set already_heating = states('input_number.jacuzzi_target_temp') | float(15) >= 40 %}
+            {% set event_close = false %}
+            {% if cal is not none and cal.attributes.start_time is defined %}
+              {% set hours = (as_timestamp(cal.attributes.start_time) - as_timestamp(now())) / 3600 %}
+              {% set event_close = hours > 0 and hours <= 2 %}
+            {% endif %}
+            {{ already_heating and event_close }}
+          {% else %}
+            false
+          {% endif %}
+        remaining_3: "{{ remaining_2 | float - tier3_solar_w | float }}"
+
+    - variables:
+        # -- Tier 4: Greenhouse dimming (future placeholder) --
+        tier4_active: "{{ greenhouse_online | bool }}"
+        remaining_4: "{{ remaining_3 | float }}"
+
+    - variables:
+        # -- Tier 5: Car buffer to 80% --
+        tier5_active: "{{ ev == 'Y' and any_car_below_buffer | bool }}"
+        tier5_solar_w: >
+          {% if tier5_active and remaining_4 | float >= ev_min_w | float %}
+            {{ [remaining_4 | float, max_amps | int * voltage | float * phases | int] | min }}
+          {% else %}
+            0
+          {% endif %}
+        tier5_grid: "{{ tier5_active and low_tariff | bool }}"
+        remaining_5: "{{ remaining_4 | float - tier5_solar_w | float }}"
+
+    - variables:
+        # -- Tier 6: Jacuzzi standby/banking (state B) --
+        tier6_active: "{{ jac == 'B' }}"
+        tier6_solar_w: >
+          {% if tier6_active and remaining_5 | float >= jac_w | float %}
+            {{ jac_w }}
+          {% else %}
+            0
+          {% endif %}
+        tier6_grid: "{{ tier6_active and low_tariff | bool }}"
+        remaining_6: "{{ remaining_5 | float - tier6_solar_w | float }}"
+
+    - variables:
+        # -- Tier 7: Battery additional --
+        tier7_active: "{{ battery_installed | bool and battery_soc | float < 100 }}"
+        tier7_solar_w: >
+          {% if tier7_active and remaining_6 | float > 0 %}
+            {{ remaining_6 | float }}
+          {% else %}
+            0
+          {% endif %}
+        remaining_7: "{{ remaining_6 | float - tier7_solar_w | float }}"
+
+    # -----------------------------------------------------------------
+    # Block 3: Derive legacy gate values + active tier
+    # -----------------------------------------------------------------
+    - variables:
+        # Jacuzzi allowed: tier 0 safety OR tier 3 (solar or grid) OR tier 6 (solar or grid)
+        jacuzzi_allowed: >
+          {% if jac == 'E' %}
+            false
+          {% elif jac == 'A' %}
+            true
+          {% elif jac in ['C', 'D'] %}
+            {{ tier3_solar_w | float > 0 or tier3_grid | bool }}
+          {% elif jac == 'B' %}
+            {{ tier6_solar_w | float > 0 or tier6_grid | bool }}
+          {% else %}
+            false
           {% endif %}
 
-        # --- Priority queue: EV solar charging decision ---
-        # Deduct jacuzzi from surplus if jacuzzi has equal/higher priority
-        # and is using solar. Then check if remaining covers minimum EV.
+        # EV solar allowed: tier 1 or tier 5 has solar
         ev_solar_allowed: >
-          {% set ev = states('sensor.energy_ev_demand_scenario') %}
-          {% set jac = states('sensor.energy_jacuzzi_demand_scenario') %}
-          {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
-          {% set jac_tier = state_attr('sensor.energy_jacuzzi_demand_scenario', 'priority_tier') | int(99) %}
-          {% set ev_tier = state_attr('sensor.energy_ev_demand_scenario', 'priority_tier') | int(99) %}
-          {% set jac_w = 6000 %}
-          {% set ev_min_w = (states('input_number.ev_min_amps') | int(5))
-                            * (states('input_number.ev_voltage') | float(230))
-                            * (states('input_number.ev_phases') | int(3)) %}
-          {% set jac_solar = jac not in ['E', 'unknown', 'unavailable']
-                             and jac_tier <= ev_tier
-                             and surplus >= jac_w %}
-          {% set ev_surplus = (surplus - jac_w) if jac_solar else surplus %}
-          {{ ev in ['X', 'Y'] and ev_surplus >= ev_min_w }}
+          {{ tier1_solar_w | float > 0 or tier5_solar_w | float > 0 }}
 
-        # --- Priority queue: EV tariff charging decision ---
-        # Trip-critical (state X) always gets low-tariff/grid permission
+        # EV tariff allowed: tier 1 grid (trip-critical) or tier 5 grid (buffer low tariff)
         ev_tariff_allowed: >
-          {{ states('sensor.energy_ev_demand_scenario') == 'X' }}
+          {{ tier1_grid | bool or tier5_grid | bool }}
 
-        # --- EV max solar amps ---
-        # Calculate from surplus available to EV (after jacuzzi allocation).
-        # Clamp between min_amps and charger_max_amps.
+        # EV max solar amps: from whichever tier is active
         ev_solar_amps: >
-          {% set ev = states('sensor.energy_ev_demand_scenario') %}
-          {% set jac = states('sensor.energy_jacuzzi_demand_scenario') %}
-          {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
-          {% set jac_tier = state_attr('sensor.energy_jacuzzi_demand_scenario', 'priority_tier') | int(99) %}
-          {% set ev_tier = state_attr('sensor.energy_ev_demand_scenario', 'priority_tier') | int(99) %}
-          {% set jac_w = 6000 %}
-          {% set voltage = states('input_number.ev_voltage') | float(230) %}
-          {% set phases = states('input_number.ev_phases') | int(3) %}
-          {% set min_amps = states('input_number.ev_min_amps') | int(5) %}
-          {% set max_amps = states('input_number.ev_charger_max_amps') | int(16) %}
-          {% set ev_min_w = min_amps * voltage * phases %}
-          {% set jac_solar = jac not in ['E', 'unknown', 'unavailable']
-                             and jac_tier <= ev_tier
-                             and surplus >= jac_w %}
-          {% set ev_surplus = (surplus - jac_w) if jac_solar else surplus %}
-          {% if ev in ['X', 'Y'] and ev_surplus >= ev_min_w %}
-            {% set raw = (ev_surplus / (voltage * phases)) | int %}
-            {{ [[raw, min_amps] | max, max_amps] | min }}
+          {% set solar_w = tier1_solar_w | float if tier1_solar_w | float > 0 else tier5_solar_w | float %}
+          {% if solar_w > 0 %}
+            {% set raw = (solar_w / (voltage | float * phases | int)) | int %}
+            {{ [[raw, min_amps | int] | max, max_amps | int] | min }}
           {% else %}
             0
           {% endif %}
 
+        # Active tier = lowest tier with activity
+        active_tier: >
+          {% if tier0_safety or tier0_greenhouse %}0
+          {% elif tier1_active %}1
+          {% elif tier2_active %}2
+          {% elif tier3_active %}3
+          {% elif tier4_active and greenhouse_online | bool %}4
+          {% elif tier5_active %}5
+          {% elif tier6_active %}6
+          {% elif tier7_active %}7
+          {% else %}8{% endif %}
+
+        # Allocation JSON
+        allocation: >
+          {{ {'surplus_w': surplus | float | round(0),
+              'remaining_w': remaining_7 | float | round(0),
+              'solar_available': solar_available,
+              'tier0_safety': tier0_safety,
+              'tier0_greenhouse': tier0_greenhouse,
+              'tier1_ev_trip_w': tier1_solar_w | float | round(0),
+              'tier2_battery_w': tier2_solar_w | float | round(0),
+              'tier3_jac_event_w': tier3_solar_w | float | round(0),
+              'tier5_ev_buffer_w': tier5_solar_w | float | round(0),
+              'tier6_jac_standby_w': tier6_solar_w | float | round(0),
+              'tier7_battery_w': tier7_solar_w | float | round(0)
+          } | tojson }}
+
     # -----------------------------------------------------------------
-    # Phase 2: Build decision log string
+    # Block 4: Build decision summary
     # -----------------------------------------------------------------
     - variables:
         decision_summary: >
-          {% set jac_text = '' %}
-          {% set ev_text = '' %}
-          {% if jacuzzi_allowed | bool and jac != 'E' %}
-            {% if surplus | float >= 6000 %}
-              {% set jac_text = 'Jacuzzi:solar' %}
-            {% elif low_tariff | bool %}
-              {% set jac_text = 'Jacuzzi:low-tariff' %}
-            {% else %}
-              {% set jac_text = 'Jacuzzi:grid' %}
+          {% set parts = [] %}
+          {% if tier0_safety %}{% set parts = parts + ['T0:Safety'] %}{% endif %}
+          {% if tier0_greenhouse %}{% set parts = parts + ['T0:Photoperiod'] %}{% endif %}
+          {% if tier1_active %}
+            {% if tier1_solar_w | float > 0 %}
+              {% set parts = parts + ['T1:EV-trip@' ~ ev_solar_amps ~ 'A'] %}
+            {% elif tier1_grid | bool %}
+              {% set parts = parts + ['T1:EV-trip:grid'] %}
             {% endif %}
           {% endif %}
-          {% if ev_solar_allowed | bool %}
-            {% set ev_text = 'EV:solar@' ~ (ev_solar_amps | int) ~ 'A' %}
-          {% elif ev_tariff_allowed | bool %}
-            {% set ev_text = 'EV:low-tariff' %}
+          {% if tier2_active %}{% set parts = parts + ['T2:Battery'] %}{% endif %}
+          {% if tier3_active %}
+            {% if tier3_solar_w | float > 0 %}
+              {% set parts = parts + ['T3:Jac-event:solar'] %}
+            {% elif tier3_grid | bool %}
+              {% set parts = parts + ['T3:Jac-event:grid'] %}
+            {% endif %}
           {% endif %}
-          {% set parts = [jac_text, ev_text] | reject('eq', '') | list %}
-          {{ parts | join(', ') if parts else 'No action' }}
+          {% if tier5_active %}
+            {% if tier5_solar_w | float > 0 %}
+              {% set parts = parts + ['T5:EV-buf@' ~ ev_solar_amps ~ 'A'] %}
+            {% elif tier5_grid | bool %}
+              {% set parts = parts + ['T5:EV-buf:grid'] %}
+            {% endif %}
+          {% endif %}
+          {% if tier6_active %}
+            {% if tier6_solar_w | float > 0 %}
+              {% set parts = parts + ['T6:Jac-standby:solar'] %}
+            {% elif tier6_grid | bool %}
+              {% set parts = parts + ['T6:Jac-standby:grid'] %}
+            {% endif %}
+          {% endif %}
+          {% if tier7_active %}{% set parts = parts + ['T7:Battery+'] %}{% endif %}
+          {{ parts | join(', ') if parts else 'T8:Export' }}
         decision_log: >
-          {{ scenario_code }}: {{ decision_summary }} @ {{ now().strftime('%H:%M:%S') }}
+          T{{ active_tier }}: {{ decision_summary }}{{ ' [solar-unavail]' if not solar_available else '' }} @ {{ now().strftime('%H:%M:%S') }}
 
     # -----------------------------------------------------------------
-    # Phase 3: Set output helpers
+    # Block 5: Set output helpers
     # -----------------------------------------------------------------
+    # Legacy gates (backward compat)
     - if:
         - condition: template
           value_template: "{{ jacuzzi_allowed | bool }}"
@@ -213,12 +356,161 @@
       data:
         value: "{{ ev_solar_amps | int }}"
 
+    # New waterfall outputs
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.energy_orchestrator_active_tier
+      data:
+        value: "{{ active_tier | int }}"
+
+    - action: input_select.set_options
+      target:
+        entity_id: input_select.energy_orchestrator_allocation_json
+      data:
+        options:
+          - "{{ allocation[:255] }}"
+
+    # Heartbeat
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.energy_orchestrator_last_heartbeat
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+    # Decision log
     - action: input_select.set_options
       target:
         entity_id: input_select.energy_last_decision
       data:
         options:
           - "{{ decision_log[:255] }}"
+
+    # Watchdog integration: log degraded but don't block
+    - if:
+        - condition: template
+          value_template: "{{ watchdog == 'critical' }}"
+      then:
+        - action: shell_command.log_decision
+          data:
+            system: orchestrator
+            automation_id: auto_energy_001
+            decision_code: watchdog_degraded
+            decision_text: "Waterfall running with degraded watchdog"
+            context: >
+              {{ {'watchdog': watchdog,
+                  'solar_available': solar_available,
+                  'active_tier': active_tier | int
+              } | tojson }}
+
+
+# =============================================================================
+# 026 – PRE-PEAK READINESS CHECK
+# At 15:00 on weekdays, checks if systems are ready for the 17:00–22:00 peak.
+# Logs readiness to MariaDB and alerts Fraser if not ready.
+# =============================================================================
+- id: auto_energy_026_pre_peak_readiness
+  alias: "Energy 026 – Pre-Peak Readiness Check"
+  description: >
+    At 15:00 weekdays, checks battery at evening target, jacuzzi at event temp,
+    cars at buffer target. Logs readiness and alerts Fraser if not ready.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time
+      at: "15:00:00"
+
+  conditions:
+    - condition: template
+      value_template: "{{ now().weekday() in [0, 1, 2, 3, 4] }}"
+
+  actions:
+    - variables:
+        # Battery readiness
+        battery_installed: "{{ is_state('input_boolean.energy_battery_installed', 'on') }}"
+        battery_ready: >
+          {% if not battery_installed %}
+            true
+          {% else %}
+            {% set available = states('sensor.energy_battery_available_kwh') | float(0) %}
+            {% set target = states('input_number.energy_battery_evening_target_kwh') | float(8) %}
+            {{ available >= target }}
+          {% endif %}
+
+        # Jacuzzi readiness — check if event tonight and at temp
+        jac_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) }}"
+        jac_event_tonight: >
+          {% set cal = states.calendar.jacuzzi_schedule %}
+          {% if cal is not none and cal.attributes.start_time is defined %}
+            {% set event_ts = as_timestamp(cal.attributes.start_time) %}
+            {% set now_ts = as_timestamp(now()) %}
+            {{ event_ts > now_ts and event_ts < (now_ts + 32400) }}
+          {% else %}
+            false
+          {% endif %}
+        jac_ready: >
+          {% if not jac_event_tonight %}
+            true
+          {% else %}
+            {{ jac_temp | float >= 38 }}
+          {% endif %}
+
+        # EV readiness — both home cars at buffer target
+        buffer_target: "{{ states('input_number.energy_ev_buffer_target_soc') | float(80) }}"
+        horace_soc: "{{ states('input_number.ev_horace_current_soc') | float(0) }}"
+        horatio_soc: "{{ states('input_number.ev_horatio_current_soc') | float(0) }}"
+        horace_home: "{{ is_state('device_tracker.horace_location', 'home') }}"
+        horatio_home: "{{ is_state('device_tracker.horatio_location', 'home') }}"
+        ev_ready: >
+          {{ (not horace_home or horace_soc | float >= buffer_target | float)
+             and (not horatio_home or horatio_soc | float >= buffer_target | float) }}
+
+        all_ready: "{{ battery_ready | bool and jac_ready | bool and ev_ready | bool }}"
+
+    - variables:
+        issues: >
+          {% set items = [] %}
+          {% if not battery_ready | bool %}{% set items = items + ['Battery below evening target'] %}{% endif %}
+          {% if not jac_ready | bool %}{% set items = items + ['Jacuzzi at ' ~ jac_temp ~ '°C (event tonight)'] %}{% endif %}
+          {% if not ev_ready | bool %}
+            {% if horace_home and horace_soc | float < buffer_target | float %}
+              {% set items = items + ['Horace at ' ~ horace_soc ~ '% (target ' ~ buffer_target ~ '%)'] %}
+            {% endif %}
+            {% if horatio_home and horatio_soc | float < buffer_target | float %}
+              {% set items = items + ['Horatio at ' ~ horatio_soc ~ '% (target ' ~ buffer_target ~ '%)'] %}
+            {% endif %}
+          {% endif %}
+          {{ items | join(', ') if items else 'All systems ready' }}
+
+    - action: shell_command.log_decision
+      data:
+        system: orchestrator
+        automation_id: auto_energy_026
+        decision_code: "{{ 'pre_peak_ready' if all_ready | bool else 'pre_peak_not_ready' }}"
+        decision_text: "Pre-peak check: {{ 'READY' if all_ready | bool else 'NOT READY — ' ~ issues }}"
+        context: >
+          {{ {'battery_ready': battery_ready | bool,
+              'jac_ready': jac_ready | bool,
+              'jac_event_tonight': jac_event_tonight | bool,
+              'jac_temp': jac_temp | float,
+              'ev_ready': ev_ready | bool,
+              'horace_soc': horace_soc | float,
+              'horatio_soc': horatio_soc | float,
+              'buffer_target': buffer_target | float
+          } | tojson }}
+
+    - if:
+        - condition: template
+          value_template: "{{ not all_ready | bool }}"
+      then:
+        - action: notify.mobile_app_fraser_s_iphone
+          data:
+            title: "Pre-Peak Not Ready"
+            message: "{{ issues }}. Peak starts at 17:00."
+            data:
+              push:
+                interruption-level: time-sensitive
 
 
 # =============================================================================
@@ -265,6 +557,8 @@
         decision_text: "{{ decision_state }}"
         context: >
           {{ {'scenario': decision_code,
+              'active_tier': states('input_number.energy_orchestrator_active_tier') | int(8),
+              'tier_name': state_attr('sensor.energy_orchestrator_tier', 'tier_name') | default('Unknown'),
               'surplus': states('sensor.energy_solar_surplus_w') | float(0) | round(0),
               'low_tariff': is_state('binary_sensor.energy_low_tariff_active', 'on'),
               'jac_state': states('sensor.energy_jacuzzi_demand_scenario'),
@@ -272,7 +566,8 @@
               'prod_state': states('sensor.energy_production_scenario'),
               'jac_allowed': is_state('input_boolean.energy_jacuzzi_heat_allowed', 'on'),
               'ev_solar_allowed': is_state('input_boolean.energy_ev_solar_charge_allowed', 'on'),
-              'ev_tariff_allowed': is_state('input_boolean.energy_ev_tariff_charge_allowed', 'on')
+              'ev_tariff_allowed': is_state('input_boolean.energy_ev_tariff_charge_allowed', 'on'),
+              'allocation': states('input_select.energy_orchestrator_allocation_json')
           } | tojson }}
 
 

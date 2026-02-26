@@ -267,13 +267,71 @@
   actions:
     - variables:
         surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
+        buffer_target: "{{ states('input_number.energy_ev_buffer_target_soc') | float(80) }}"
 
-    - action: notify.mobile_app_fraser_s_iphone
-      data:
-        title: "Solar Surplus Unused"
-        message: >
-          {{ surplus }}W surplus going to grid for 30+ min.
-          No car plugged, jacuzzi satisfied. Plug in a car?
+        # Check for a plugged home car below buffer target
+        horace_home: "{{ is_state('device_tracker.horace_location', 'home') }}"
+        horatio_home: "{{ is_state('device_tracker.horatio_location', 'home') }}"
+        horace_plugged: "{{ is_state('binary_sensor.horace_plugged', 'on') }}"
+        horatio_plugged: "{{ is_state('binary_sensor.horatio_plugged', 'on') }}"
+        horace_soc: "{{ states('input_number.ev_horace_current_soc') | float(100) }}"
+        horatio_soc: "{{ states('input_number.ev_horatio_current_soc') | float(100) }}"
+
+        horace_needs: "{{ horace_home and horace_plugged and horace_soc < buffer_target | float }}"
+        horatio_needs: "{{ horatio_home and horatio_plugged and horatio_soc < buffer_target | float }}"
+
+        auto_charge_car: >
+          {% if horace_needs and horatio_needs %}
+            {{ 'Horace' if horace_soc <= horatio_soc else 'Horatio' }}
+          {% elif horace_needs %}
+            Horace
+          {% elif horatio_needs %}
+            Horatio
+          {% else %}
+            none
+          {% endif %}
+
+    - choose:
+        # Auto-charge a plugged car below buffer target
+        - conditions:
+            - condition: template
+              value_template: "{{ auto_charge_car != 'none' }}"
+          sequence:
+            - action: switch.turn_on
+              target:
+                entity_id: "{{ 'switch.horace_charge' if auto_charge_car == 'Horace' else 'switch.horatio_charge' }}"
+            - action: number.set_value
+              target:
+                entity_id: "{{ 'number.horace_charge_limit' if auto_charge_car == 'Horace' else 'number.horatio_charge_limit' }}"
+              data:
+                value: "{{ buffer_target | int }}"
+            - action: shell_command.log_decision
+              data:
+                system: energy
+                automation_id: auto_energy_066
+                decision_code: surplus_auto_charge
+                decision_text: "Auto-started {{ auto_charge_car }} charging on surplus"
+                context: >
+                  {{ {'surplus_w': surplus | int,
+                      'car': auto_charge_car,
+                      'car_soc': (horace_soc if auto_charge_car == 'Horace' else horatio_soc) | float,
+                      'buffer_target': buffer_target | float
+                  } | tojson }}
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                title: "Solar Surplus → Auto-Charge"
+                message: >
+                  {{ surplus }}W surplus. Auto-started {{ auto_charge_car }} charging
+                  ({{ (horace_soc if auto_charge_car == 'Horace' else horatio_soc) | round(0) }}% → {{ buffer_target | round(0) }}%).
+
+      # No car available — send existing alert
+      default:
+        - action: notify.mobile_app_fraser_s_iphone
+          data:
+            title: "Solar Surplus Unused"
+            message: >
+              {{ surplus }}W surplus going to grid for 30+ min.
+              No car plugged, jacuzzi satisfied. Plug in a car?
 
     # Cooldown — don't re-alert for 2 hours
     - delay:

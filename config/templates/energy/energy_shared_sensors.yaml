@@ -270,6 +270,13 @@
           {% elif s in ['B', 'D'] %}2
           {% elif s == 'C' %}3
           {% else %}99{% endif %}
+        waterfall_tier: >
+          {% set s = states('sensor.energy_jacuzzi_demand_scenario') %}
+          {% if s == 'A' %}0
+          {% elif s == 'D' %}3
+          {% elif s == 'C' %}3
+          {% elif s == 'B' %}6
+          {% else %}99{% endif %}
         power_demand_w: >
           {% set s = states('sensor.energy_jacuzzi_demand_scenario') %}
           {{ 6000 if s in ['A', 'B', 'C', 'D'] else 0 }}
@@ -364,6 +371,11 @@
           {% if s == 'X' %}1
           {% elif s == 'Y' %}3
           {% else %}99{% endif %}
+        waterfall_tier: >
+          {% set s = states('sensor.energy_ev_demand_scenario') %}
+          {% if s == 'X' %}1
+          {% elif s == 'Y' %}5
+          {% else %}99{% endif %}
         power_demand_w: >
           {% set s = states('sensor.energy_ev_demand_scenario') %}
           {% if s in ['X', 'Y'] %}
@@ -441,3 +453,120 @@
         ev_tariff_allowed: "{{ is_state('input_boolean.energy_ev_tariff_charge_allowed', 'on') }}"
         ev_max_solar_amps: "{{ states('input_number.energy_ev_max_solar_amps') | int(0) }}"
         last_decision: "{{ states('input_select.energy_last_decision') }}"
+
+
+# =============================================================================
+# 8. BATTERY PLACEHOLDER SENSORS
+# Return safe defaults when no battery installed (waterfall skips them).
+# =============================================================================
+- sensor:
+    - name: "Energy Battery SOC"
+      unique_id: energy_battery_soc
+      unit_of_measurement: "%"
+      device_class: battery
+      icon: mdi:battery
+      state: >
+        {% if is_state('input_boolean.energy_battery_installed', 'on') %}
+          {{ states('sensor.battery_soc_actual') | float(100) }}
+        {% else %}
+          100
+        {% endif %}
+
+    - name: "Energy Battery Available kWh"
+      unique_id: energy_battery_available_kwh
+      unit_of_measurement: "kWh"
+      icon: mdi:battery-charging
+      state: >
+        {% if is_state('input_boolean.energy_battery_installed', 'on') %}
+          {% set cap = states('input_number.energy_battery_capacity_kwh') | float(0) %}
+          {% set soc = states('sensor.energy_battery_soc') | float(100) %}
+          {% set min_soc = states('input_number.energy_battery_min_soc_pct') | float(10) %}
+          {{ ((soc - min_soc) / 100 * cap) | round(1) }}
+        {% else %}
+          0
+        {% endif %}
+
+- binary_sensor:
+    - name: "Energy Battery Needs Evening Charge"
+      unique_id: energy_battery_needs_evening_charge
+      icon: mdi:battery-clock-outline
+      state: >
+        {% if not is_state('input_boolean.energy_battery_installed', 'on') %}
+          {{ false }}
+        {% else %}
+          {% set dow = now().weekday() %}
+          {% set hour = now().hour %}
+          {% set is_weekday_before_peak = dow in [0, 1, 2, 3, 4] and hour < 17 %}
+          {% set available = states('sensor.energy_battery_available_kwh') | float(0) %}
+          {% set target = states('input_number.energy_battery_evening_target_kwh') | float(8) %}
+          {{ is_weekday_before_peak and available < target }}
+        {% endif %}
+
+
+# =============================================================================
+# 9. GREENHOUSE PLACEHOLDER SENSORS
+# Return safe defaults when greenhouse not online.
+# =============================================================================
+- sensor:
+    - name: "Energy Greenhouse Current Draw kW"
+      unique_id: energy_greenhouse_current_draw_kw
+      unit_of_measurement: "kW"
+      device_class: power
+      icon: mdi:greenhouse
+      state: >
+        {% if is_state('input_boolean.energy_greenhouse_online', 'on') %}
+          {{ states('sensor.greenhouse_power_actual_kw') | float(0) }}
+        {% else %}
+          0
+        {% endif %}
+
+    - name: "Energy Greenhouse LED Output Pct"
+      unique_id: energy_greenhouse_led_output_pct
+      unit_of_measurement: "%"
+      icon: mdi:lightbulb-fluorescent-tube
+      state: >
+        {% if is_state('input_boolean.energy_greenhouse_online', 'on') %}
+          {{ states('sensor.greenhouse_led_pct_actual') | float(0) }}
+        {% else %}
+          0
+        {% endif %}
+
+- binary_sensor:
+    - name: "Energy Greenhouse Photoperiod Active"
+      unique_id: energy_greenhouse_photoperiod_active
+      icon: mdi:white-balance-sunny
+      state: >
+        {% if is_state('input_boolean.energy_greenhouse_online', 'on') %}
+          {{ states('binary_sensor.greenhouse_photoperiod_active_actual') | default('off') }}
+        {% else %}
+          {{ false }}
+        {% endif %}
+
+
+# =============================================================================
+# 10. WATERFALL OUTPUT SENSORS
+# Human-readable sensors derived from waterfall helper values.
+# =============================================================================
+- sensor:
+    - name: "Energy Orchestrator Tier"
+      unique_id: energy_orchestrator_tier
+      icon: mdi:stairs
+      state: "{{ states('input_number.energy_orchestrator_active_tier') | int(8) }}"
+      attributes:
+        tier_name: >
+          {% set t = states('input_number.energy_orchestrator_active_tier') | int(8) %}
+          {% if t == 0 %}Safety
+          {% elif t == 1 %}Trip-Critical
+          {% elif t == 2 %}Battery Evening
+          {% elif t == 3 %}Jacuzzi Event
+          {% elif t == 4 %}Greenhouse Dimming
+          {% elif t == 5 %}Car Buffer 80%
+          {% elif t == 6 %}Jacuzzi Standby
+          {% elif t == 7 %}Battery Additional
+          {% elif t == 8 %}Export
+          {% else %}Unknown{% endif %}
+
+    - name: "Energy Orchestrator Allocation"
+      unique_id: energy_orchestrator_allocation
+      icon: mdi:chart-donut
+      state: "{{ states('input_select.energy_orchestrator_allocation_json') }}"

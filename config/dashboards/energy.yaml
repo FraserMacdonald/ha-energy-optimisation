@@ -8,11 +8,30 @@ views:
         primary: >
           Orchestrator: {{ 'Active' if is_state('input_boolean.energy_orchestrator_enabled', 'on') else 'Off' }}
         secondary: >
-          Decision: {{ states('input_select.energy_last_decision') }}
+          Tier {{ states('input_number.energy_orchestrator_active_tier') | int(8) }}: {{ state_attr('sensor.energy_orchestrator_tier', 'tier_name') | default('Export') }}
+          · {{ states('input_select.energy_last_decision') }}
         icon: mdi:robot
         icon_color: |-
           {% if is_state('input_boolean.energy_orchestrator_enabled', 'on') %}green
           {% else %}grey{% endif %}
+
+      # ── CURRENT TIER ──
+      - type: custom:mushroom-template-card
+        primary: >
+          {% set t = states('input_number.energy_orchestrator_active_tier') | int(8) %}
+          Tier {{ t }}: {{ state_attr('sensor.energy_orchestrator_tier', 'tier_name') | default('Export') }}
+        secondary: >
+          {% set surplus = states('sensor.energy_solar_surplus_w') | int(0) %}
+          Surplus: {{ surplus }}W
+          · Remaining: {{ states('input_select.energy_orchestrator_allocation_json') | from_json | default({}) | attr('remaining_w') | default(surplus) | int }}W
+        icon: mdi:stairs
+        icon_color: |-
+          {% set t = states('input_number.energy_orchestrator_active_tier') | int(8) %}
+          {% if t <= 1 %}red
+          {% elif t <= 3 %}orange
+          {% elif t <= 5 %}amber
+          {% elif t <= 7 %}teal
+          {% else %}green{% endif %}
 
       # ── SYSTEM HEALTH ──
       - type: custom:mushroom-template-card
@@ -35,9 +54,9 @@ views:
           {{ states('sensor.energy_tariff_current') | title }} Tariff
         secondary: >
           {% set surplus = states('sensor.energy_solar_surplus_w') | int(0) %}
-          {% if surplus > 0 %}☀️ {{ surplus }}W surplus — exporting
+          {% if surplus > 0 %}{{ surplus }}W surplus
           {% elif surplus == 0 %}Balanced
-          {% else %}⚡ Importing {{ surplus | abs }}W from grid{% endif %}
+          {% else %}Importing {{ surplus | abs }}W from grid{% endif %}
         icon: |-
           {% if states('sensor.energy_tariff_current') == 'low' %}mdi:cash-check
           {% else %}mdi:cash{% endif %}
@@ -82,7 +101,7 @@ views:
         primary: "Horace — {{ states('input_number.ev_horace_current_soc') | int }}%"
         secondary: >
           {{ states('device_tracker.horace_location') | title }}
-          {% if is_state('binary_sensor.horace_plugged', 'on') %}· 🔌 Plugged{% endif %}
+          {% if is_state('binary_sensor.horace_plugged', 'on') %}· Plugged{% endif %}
         icon: mdi:car-electric
         icon_color: |-
           {% if states('input_number.ev_horace_current_soc') | int > 50 %}green
@@ -96,7 +115,7 @@ views:
         primary: "Horatio — {{ states('input_number.ev_horatio_current_soc') | int }}%"
         secondary: >
           {{ states('device_tracker.horatio_location') | title }}
-          {% if is_state('binary_sensor.horatio_plugged', 'on') %}· 🔌 Plugged{% endif %}
+          {% if is_state('binary_sensor.horatio_plugged', 'on') %}· Plugged{% endif %}
         icon: mdi:car-electric
         icon_color: |-
           {% if states('input_number.ev_horatio_current_soc') | int > 50 %}green
@@ -167,26 +186,57 @@ views:
         icon: mdi:piggy-bank
         icon_color: green
 
-      # ── NEXT LOW TARIFF ──
-      - type: custom:mushroom-template-card
-        primary: "Next Low Tariff"
-        secondary: >
-          {{ states('sensor.next_low_tariff_start') }}
-        icon: mdi:clock-outline
-        icon_color: teal
-
       # ── ORCHESTRATOR CONTROLS ──
       - type: entities
         title: Controls
         entities:
           - entity: input_boolean.energy_orchestrator_enabled
             name: Orchestrator
-          - entity: input_boolean.energy_jacuzzi_heat_allowed
-            name: Jacuzzi Heat Allowed
-          - entity: input_boolean.energy_ev_solar_charge_allowed
-            name: EV Solar Charge Allowed
-          - entity: input_boolean.energy_ev_tariff_charge_allowed
-            name: EV Tariff Charge Allowed
+          - entity: input_number.energy_ev_buffer_target_soc
+            name: EV Buffer Target SOC
+          - entity: input_boolean.energy_battery_installed
+            name: Battery Installed
+          - entity: input_boolean.energy_greenhouse_online
+            name: Greenhouse Online
+
+      # ── BATTERY STATUS (conditional — hidden when not installed) ──
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: input_boolean.energy_battery_installed
+            state: "on"
+        card:
+          type: custom:mushroom-template-card
+          primary: >
+            Battery: {{ states('sensor.energy_battery_soc') }}%
+          secondary: >
+            Available: {{ states('sensor.energy_battery_available_kwh') }}kWh
+            · Evening target: {{ states('input_number.energy_battery_evening_target_kwh') }}kWh
+            · Needs charge: {{ is_state('binary_sensor.energy_battery_needs_evening_charge', 'on') }}
+          icon: mdi:battery-high
+          icon_color: |-
+            {% set soc = states('sensor.energy_battery_soc') | int(0) %}
+            {% if soc > 70 %}green
+            {% elif soc > 30 %}amber
+            {% else %}red{% endif %}
+
+      # ── GREENHOUSE STATUS (conditional — hidden when not online) ──
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: input_boolean.energy_greenhouse_online
+            state: "on"
+        card:
+          type: custom:mushroom-template-card
+          primary: "Greenhouse"
+          secondary: >
+            Draw: {{ states('sensor.energy_greenhouse_current_draw_kw') }}kW
+            · LEDs: {{ states('sensor.energy_greenhouse_led_output_pct') }}%
+            · Photoperiod: {{ 'Active' if is_state('binary_sensor.energy_greenhouse_photoperiod_active', 'on') else 'Off' }}
+          icon: mdi:greenhouse
+          icon_color: |-
+            {% if is_state('binary_sensor.energy_greenhouse_photoperiod_active', 'on') %}green
+            {% else %}grey{% endif %}
 
       # ── SOLAR FORECAST CONTROLS ──
       - type: entities
