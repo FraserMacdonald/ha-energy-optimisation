@@ -142,6 +142,15 @@ The planner evaluates two scenarios — Fraser in Horace vs Fraser in Horatio �
 
 If elevation data is available for the route, the system adjusts battery estimates accordingly.
 
+### Manual Car Override
+
+If you want to take a specific car regardless of what the planner recommends, use the **Car Override** card on the EV dashboard. Set "Fraser: Request Specific Car" to Horace or Horatio before the next planner run.
+
+- The planner will assign that car to Fraser and the other car to Heather
+- Overnight charging targets are set based on Fraser's trip distance
+- A plug-in notification is sent if charging is needed
+- The override **automatically clears** after it's applied — it's a one-time use. Subsequent planner runs return to normal optimisation.
+
 ### Overnight Charging
 
 When tomorrow's trips require more charge than a car currently has:
@@ -164,7 +173,9 @@ During the day, when solar panels produce more than the house uses:
 
 ### Maintenance Charging (Always-Ready)
 
-Regardless of trips, tariffs, or time of day, the system ensures at least one car has **50% charge** at all times. This guarantees about 100-150 km of range for unplanned trips or emergencies.
+The system ensures at least one car has **50% charge** at all times, guaranteeing about 100-150 km of range for unplanned trips. Buffer charging targets 80% for both cars.
+
+**Tariff awareness:** Maintenance charging only runs during **low tariff** periods. During peak hours (Mon-Fri 17:00-22:00), buffer charging is deferred — and any in-progress buffer charge is stopped when peak begins. The only exception is the **10% hard floor**: if any car drops below 10%, it charges immediately regardless of tariff (safety override).
 
 The rule is "at least one home car at 50%". Once one car meets that threshold, the system only intervenes for the other car if it drops below the **hard floor of 10%** (critical safety level). This means:
 
@@ -369,6 +380,7 @@ The main view shows:
 | Horatio Trip Mode | Off | Force charge Horatio to 100% for a long trip (auto-resets after 8 hours) |
 | Charger Max Amps | 16 A | Home charger's maximum current |
 | Minimum Amps | 5 A | Lowest useful current for solar charging |
+| Request Specific Car | None | Set to Horace or Horatio to override the planner's car assignment for Fraser's next trip. Clears automatically after use. |
 
 ### Energy / Orchestrator Settings
 

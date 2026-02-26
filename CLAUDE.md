@@ -483,5 +483,33 @@ Structured logging to MariaDB `log_decisions` table for visibility into WHY the 
 - [x] `scripts/solar_forecast.py` — Banking decision logging (`banking_*` / `banking_cleared`) in `cmd_banking()`
 - [x] yamllint passes on all modified files
 
+## What's Done (EV Peak-Tariff Fix + Manual Car Override)
+Two fixes to the EV subsystem: prevent expensive buffer charging and allow manual car selection.
+
+### Part A: ev_044 Peak-Tariff Gate
+EV 044 (maintenance/buffer charging) was charging to 80% during Mon-Fri 17:00-22:00 peak at 0.38 CHF/kWh. After the waterfall redesign raised the target from 50% to 80%, the lack of a tariff check became costly.
+
+**Fix:** Tariff gate at top of ev_044 actions, before any other logic:
+- If high tariff active AND no car below 10% hard floor → stop any active buffer charge + exit
+- If any car below 10% (critical) → fall through to charge at any tariff (safety override)
+- New trigger: `binary_sensor.energy_high_tariff_active` → on (immediate reaction when peak starts)
+
+### Part B: ev_030 Manual Car Override
+Fraser can now request a specific car via `input_select.ev_requested_vehicle`. The planner checks this before running its optimization:
+- If set to Horace/Horatio → assigns that car to Fraser, other car to Heather, calculates charge target, notifies to plug in, then clears to "None" (one-time use)
+- If "None" → normal optimization runs unchanged
+
+### New Decision Codes:
+| Code | System | Source | When |
+|------|--------|--------|------|
+| `maint_blocked_high_tariff` | ev | 044 | Buffer charging deferred — high tariff active |
+| `maint_stopped_high_tariff` | ev | 044 | Active buffer charge stopped — high tariff started |
+| `planner_override` | ev | 030 | Manual car override applied |
+
+### Files Modified:
+- [x] `automations/ev/ev_automations.yaml` — ev_044: tariff gate + high-tariff trigger; ev_030: manual override branch
+- [x] `dashboards/ev.yaml` — Car Override selector card added
+- [x] yamllint passes on all modified files
+
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
