@@ -1,29 +1,13 @@
 #!/usr/bin/env python3
-import sys, os, traceback
+import sys, os
 from datetime import datetime, date
-
-# Debug: write all invocations and errors to a file
-_DEBUG_FILE = "/config/www/log_debug.txt"
-
-def _debug(msg):
-    try:
-        os.makedirs(os.path.dirname(_DEBUG_FILE), exist_ok=True)
-        with open(_DEBUG_FILE, "a") as f:
-            f.write(f"{datetime.now().isoformat()} {msg}\n")
-    except Exception:
-        pass
-
-_debug(f"CALLED with argv={sys.argv}")
 
 try:
     import mysql.connector
-    _debug("mysql.connector imported OK")
 except ImportError:
-    _debug("mysql.connector not found, attempting pip install")
     import subprocess
     subprocess.check_call([sys.executable, "-m", "pip", "install", "mysql-connector-python", "-q"])
     import mysql.connector
-    _debug("mysql.connector installed and imported")
 
 DB = {
     "host": "core-mariadb",
@@ -37,7 +21,6 @@ def conn():
     return mysql.connector.connect(**DB)
 
 def log_decision(system, aid, code, text, ctx):
-    _debug(f"log_decision: system={system} aid={aid} code={code}")
     c = conn()
     cur = c.cursor()
     cur.execute(
@@ -46,10 +29,8 @@ def log_decision(system, aid, code, text, ctx):
     )
     c.commit()
     c.close()
-    _debug("log_decision: OK")
 
 def log_action(system, atype, target, params):
-    _debug(f"log_action: system={system} atype={atype}")
     c = conn()
     cur = c.cursor()
     cur.execute(
@@ -58,7 +39,6 @@ def log_action(system, atype, target, params):
     )
     c.commit()
     c.close()
-    _debug("log_action: OK")
 
 def log_feedback(system, metric, predicted, actual, ctx):
     p = float(predicted or 0)
@@ -127,20 +107,16 @@ def query_decisions_today(to_file=False):
 
 
 if __name__ == "__main__":
-    try:
-        cmd = sys.argv[1]
-        if cmd == "decision":
-            log_decision(*sys.argv[2:7])
-        elif cmd == "action":
-            log_action(*sys.argv[2:6])
-        elif cmd == "feedback":
-            log_feedback(*sys.argv[2:7])
-        elif cmd == "cost":
-            log_cost(*sys.argv[2:6])
-        elif cmd == "query_today":
-            query_decisions_today()
-        elif cmd == "query_today_file":
-            query_decisions_today(to_file=True)
-    except Exception as e:
-        _debug(f"EXCEPTION: {traceback.format_exc()}")
-        raise
+    cmd = sys.argv[1]
+    if cmd == "decision":
+        log_decision(*sys.argv[2:7])
+    elif cmd == "action":
+        log_action(*sys.argv[2:6])
+    elif cmd == "feedback":
+        log_feedback(*sys.argv[2:7])
+    elif cmd == "cost":
+        log_cost(*sys.argv[2:6])
+    elif cmd == "query_today":
+        query_decisions_today()
+    elif cmd == "query_today_file":
+        query_decisions_today(to_file=True)
