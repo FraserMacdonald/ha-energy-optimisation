@@ -73,6 +73,25 @@ def log_cost(system, s, gl, gh):
     c.commit()
     c.close()
 
+def query_decisions_today():
+    c = conn()
+    cur = c.cursor()
+    cur.execute(
+        "SELECT created_at, system, automation_id, decision_code, decision_text, context "
+        "FROM log_decisions WHERE DATE(created_at) = CURDATE() ORDER BY created_at"
+    )
+    rows = cur.fetchall()
+    c.close()
+    if not rows:
+        print("No decisions logged today.")
+        return
+    for r in rows:
+        ts = r[0].strftime("%H:%M:%S") if r[0] else "?"
+        print(f"[{ts}] {r[1]}/{r[2]} {r[3]}: {r[4]}")
+        if r[5]:
+            print(f"  ctx: {r[5]}")
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "decision":
@@ -83,3 +102,5 @@ if __name__ == "__main__":
         log_feedback(*sys.argv[2:7])
     elif cmd == "cost":
         log_cost(*sys.argv[2:6])
+    elif cmd == "query_today":
+        query_decisions_today()
