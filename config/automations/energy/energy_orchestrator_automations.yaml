@@ -385,10 +385,12 @@
         options:
           - "{{ decision_log[:255] }}"
 
-    # Watchdog integration: log degraded but don't block
+    # Watchdog integration: log once when degraded, don't spam every 30s
     - if:
         - condition: template
-          value_template: "{{ watchdog == 'critical' }}"
+          value_template: >
+            {{ watchdog == 'critical'
+               and 'watchdog_degraded' not in (states('input_select.energy_last_decision') | default('')) }}
       then:
         - action: shell_command.log_decision
           data:
