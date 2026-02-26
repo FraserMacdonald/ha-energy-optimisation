@@ -1201,6 +1201,10 @@ def cmd_banking(token):
         is_low = _is_low_tariff_hour(local)
         is_cheap = is_solar or is_low
 
+        # GREENHOUSE PLACEHOLDER: When greenhouse is online, deduct its draw
+        # from available solar surplus here before computing is_solar.
+        # Example: solar_w -= greenhouse_draw_w
+
         timeline.append({
             "utc": current_hour,
             "ambient": amb,

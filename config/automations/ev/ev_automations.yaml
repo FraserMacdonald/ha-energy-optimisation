@@ -1598,7 +1598,7 @@
         {% set car = states('sensor.ev_plugged_vehicle') %}
         {{ (car == 'Horace' and is_state('device_tracker.horace_location', 'home'))
            or (car == 'Horatio' and is_state('device_tracker.horatio_location', 'home')) }}
-    # Orchestrator gate: legacy mode (off) OR orchestrator grants permission
+    # Orchestrator gate: legacy mode (off) OR orchestrator grants permission OR heartbeat stale
     - condition: or
       conditions:
         - condition: state
@@ -1607,12 +1607,19 @@
         - condition: state
           entity_id: input_boolean.energy_ev_solar_charge_allowed
           state: "on"
+        - condition: template
+          value_template: >
+            {% set hb = states('input_datetime.energy_orchestrator_last_heartbeat') %}
+            {{ hb in ['unknown', 'unavailable'] or (as_timestamp(now()) - as_timestamp(hb)) > 300 }}
 
   actions:
     - variables:
         plugged_car: "{{ states('sensor.ev_plugged_vehicle') }}"
         available_amps: "{{ states('sensor.ev_solar_available_amps') | int(0) }}"
         min_amps: "{{ states('input_number.ev_min_amps') | int(5) }}"
+        ev_demand: "{{ states('sensor.energy_ev_demand_scenario') }}"
+        low_tariff: "{{ is_state('binary_sensor.energy_low_tariff_active', 'on') }}"
+        buffer_target: "{{ states('input_number.energy_ev_buffer_target_soc') | float(80) }}"
         # When orchestrator enabled, cap amps to its calculated maximum
         max_amps: >
           {% if is_state('input_boolean.energy_orchestrator_enabled', 'on') %}
@@ -1625,8 +1632,47 @@
 
         charge_current_entity: "{{ 'number.horace_charge_current' if plugged_car == 'Horace' else 'number.horatio_charge_current' }}"
         allow_charging_entity: "{{ 'input_boolean.ev_horace_allow_charging' if plugged_car == 'Horace' else 'input_boolean.ev_horatio_allow_charging' }}"
+        plugged_car_soc: >
+          {% if plugged_car == 'Horace' %}
+            {{ states('input_number.ev_horace_current_soc') | float(100) }}
+          {% else %}
+            {{ states('input_number.ev_horatio_current_soc') | float(100) }}
+          {% endif %}
 
     - choose:
+        # Trip-critical: charge at max amps regardless of surplus
+        - conditions:
+            - condition: template
+              value_template: "{{ ev_demand == 'X' }}"
+          sequence:
+            - action: number.set_value
+              target:
+                entity_id: "{{ charge_current_entity }}"
+              data:
+                value: "{{ max_amps | int }}"
+
+            - action: input_boolean.turn_on
+              target:
+                entity_id: "{{ allow_charging_entity }}"
+
+            - action: logbook.log
+              data:
+                name: "EV Solar"
+                message: "{{ plugged_car }} trip-critical charging @ {{ max_amps }}A"
+
+            - action: shell_command.log_action
+              data:
+                system: ev
+                action_type: charge_start
+                target_entity: "{{ 'switch.' ~ plugged_car | lower ~ '_charge' }}"
+                parameters: >
+                  {{ {'source': 'trip_critical',
+                      'car': plugged_car,
+                      'target_amps': max_amps | int,
+                      'surplus_w': states('sensor.energy_solar_surplus_w') | float(0) | round(0)
+                  } | tojson }}
+
+        # Solar surplus available — normal solar charging
         - conditions:
             - condition: template
               value_template: "{{ can_charge }}"
@@ -1657,6 +1703,41 @@
                       'target_amps': target_amps | int,
                       'available_amps': available_amps | int,
                       'surplus_w': states('sensor.energy_solar_surplus_w') | float(0) | round(0)
+                  } | tojson }}
+
+        # Buffer mode: insufficient solar but low tariff and below buffer target
+        - conditions:
+            - condition: template
+              value_template: >
+                {{ ev_demand == 'Y' and low_tariff
+                   and plugged_car_soc | float < buffer_target | float }}
+          sequence:
+            - action: number.set_value
+              target:
+                entity_id: "{{ charge_current_entity }}"
+              data:
+                value: "{{ min_amps }}"
+
+            - action: input_boolean.turn_on
+              target:
+                entity_id: "{{ allow_charging_entity }}"
+
+            - action: logbook.log
+              data:
+                name: "EV Solar"
+                message: "{{ plugged_car }} buffer charging @ {{ min_amps }}A (low tariff, {{ plugged_car_soc | round(0) }}% < {{ buffer_target }}%)"
+
+            - action: shell_command.log_action
+              data:
+                system: ev
+                action_type: charge_start
+                target_entity: "{{ 'switch.' ~ plugged_car | lower ~ '_charge' }}"
+                parameters: >
+                  {{ {'source': 'tariff_buffer',
+                      'car': plugged_car,
+                      'target_amps': min_amps | int,
+                      'current_soc': plugged_car_soc | float,
+                      'buffer_target': buffer_target | float
                   } | tojson }}
 
       default:
@@ -1805,7 +1886,7 @@
         - conditions:
             - condition: template
               value_template: "{{ should_charge }}"
-            # Orchestrator gate: legacy mode (off) OR orchestrator grants permission
+            # Orchestrator gate: legacy mode (off) OR orchestrator grants permission OR heartbeat stale
             - condition: or
               conditions:
                 - condition: state
@@ -1814,6 +1895,10 @@
                 - condition: state
                   entity_id: input_boolean.energy_ev_tariff_charge_allowed
                   state: "on"
+                - condition: template
+                  value_template: >
+                    {% set hb = states('input_datetime.energy_orchestrator_last_heartbeat') %}
+                    {{ hb in ['unknown', 'unavailable'] or (as_timestamp(now()) - as_timestamp(hb)) > 300 }}
           sequence:
             # Set Tesla charge limit to target SOC — car stops itself
             - action: number.set_value
@@ -1868,12 +1953,56 @@
                       'reason': 'target_reached'
                   } | tojson }}
 
+      # Buffer charging: any plugged home car below buffer_target during cheap tariff
+      default:
+        - variables:
+            buffer_target: "{{ states('input_number.energy_ev_buffer_target_soc') | float(80) }}"
+            horace_home: "{{ is_state('device_tracker.horace_location', 'home') }}"
+            horatio_home: "{{ is_state('device_tracker.horatio_location', 'home') }}"
+            horace_plugged: "{{ is_state('binary_sensor.horace_plugged', 'on') }}"
+            horatio_plugged: "{{ is_state('binary_sensor.horatio_plugged', 'on') }}"
+            buf_horace_needs: "{{ horace_home and horace_plugged and soc_horace < buffer_target | float }}"
+            buf_horatio_needs: "{{ horatio_home and horatio_plugged and soc_horatio < buffer_target | float }}"
+        - if:
+            - condition: template
+              value_template: "{{ buf_horace_needs or buf_horatio_needs }}"
+          then:
+            - variables:
+                buf_car: >
+                  {% if buf_horace_needs and buf_horatio_needs %}
+                    {{ 'Horace' if soc_horace <= soc_horatio else 'Horatio' }}
+                  {% elif buf_horace_needs %}
+                    Horace
+                  {% else %}
+                    Horatio
+                  {% endif %}
+                buf_soc: "{{ soc_horace if buf_car == 'Horace' else soc_horatio }}"
+            - action: number.set_value
+              target:
+                entity_id: "{{ 'number.horace_charge_limit' if buf_car == 'Horace' else 'number.horatio_charge_limit' }}"
+              data:
+                value: "{{ buffer_target | int }}"
+            - action: switch.turn_on
+              target:
+                entity_id: "{{ 'switch.horace_charge' if buf_car == 'Horace' else 'switch.horatio_charge' }}"
+            - action: shell_command.log_action
+              data:
+                system: ev
+                action_type: charge_start
+                target_entity: "{{ 'switch.' ~ buf_car | lower ~ '_charge' }}"
+                parameters: >
+                  {{ {'source': 'tariff_buffer',
+                      'car': buf_car,
+                      'current_soc': buf_soc | float,
+                      'target_soc': buffer_target | float
+                  } | tojson }}
+
 - id: auto_ev_044_maintenance_charging
-  alias: "EV 044 – Maintenance Charging"
+  alias: "EV 044 – Maintenance / Buffer Charging"
   description: >
-    Ensures at least one car always has minimum SOC for unplanned trips.
-    Runs every 30 min. Picks the lowest-SOC home+plugged car below ev_minimum_soc
-    and charges it to that level regardless of tariff or planner state.
+    Ensures both home cars reach buffer target SOC (80%).
+    Runs every 30 min. Picks the lowest-SOC home+plugged car below buffer target
+    and charges it. 10% hard floor remains as safety override.
     Skips if EV 041 planner is active (night_charge_car set AND cheap tariff).
   mode: single
   trace:
@@ -1894,7 +2023,7 @@
 
   actions:
     - variables:
-        min_soc: "{{ states('input_number.ev_minimum_soc') | float(50) }}"
+        buffer_target: "{{ states('input_number.energy_ev_buffer_target_soc') | float(80) }}"
 
         horace_home: "{{ is_state('device_tracker.horace_location', 'home') }}"
         horatio_home: "{{ is_state('device_tracker.horatio_location', 'home') }}"
@@ -1908,30 +2037,16 @@
 
         hard_floor: 10
 
-        # Key check: is ANY home car already at or above the minimum SOC target?
-        any_home_car_at_target: >
-          {{ (horace_home and horace_soc >= min_soc)
-             or (horatio_home and horatio_soc >= min_soc) }}
-
         # A car is critically low if below hard floor (10%)
         horace_critical: "{{ horace_home and horace_soc < hard_floor and not horace_charging }}"
         horatio_critical: "{{ horatio_home and horatio_soc < hard_floor and not horatio_charging }}"
 
-        # Needs logic depends on whether the "one car at target" rule is met:
-        # - If any home car is at target: only critical cars (below 10%) need charging
-        # - If no home car is at target: any car below min_soc needs charging
+        # Both cars targeted to buffer_target (80%) — no "one car at 50%" concept
+        # Critical cars (below 10%) always take priority as safety override
         horace_needs: >
-          {% if any_home_car_at_target %}
-            {{ horace_critical }}
-          {% else %}
-            {{ horace_home and horace_soc < min_soc and not horace_charging }}
-          {% endif %}
+          {{ horace_home and horace_soc < buffer_target and not horace_charging }}
         horatio_needs: >
-          {% if any_home_car_at_target %}
-            {{ horatio_critical }}
-          {% else %}
-            {{ horatio_home and horatio_soc < min_soc and not horatio_charging }}
-          {% endif %}
+          {{ horatio_home and horatio_soc < buffer_target and not horatio_charging }}
 
     # Exit if no car needs maintenance charging, or if a car is already
     # charging toward the minimum (goal is at least one car at min_soc)
@@ -2003,14 +2118,17 @@
         is_plugged: "{{ is_state(plug_entity, 'on') }}"
 
     # Skip if not plugged — notify whoever is at home to plug in
-    # Suppress nag if any home car is at target and this car isn't critical
+    # Suppress nag when both home cars are at buffer target (unless this car is critical)
     - if:
         - condition: template
           value_template: "{{ not is_plugged }}"
       then:
         - variables:
             is_critical: "{{ fresh_soc < hard_floor }}"
-            should_nag: "{{ not any_home_car_at_target or is_critical }}"
+            both_at_buffer: >
+              {{ (not horace_home or horace_soc >= buffer_target)
+                 and (not horatio_home or horatio_soc >= buffer_target) }}
+            should_nag: "{{ not both_at_buffer or is_critical }}"
         - if:
             - condition: template
               value_template: "{{ should_nag }}"
@@ -2024,7 +2142,7 @@
                       data:
                         title: "Plug In {{ maint_car }}"
                         message: >
-                          {{ maint_car }} is at {{ fresh_soc | round(0) }}% (minimum {{ min_soc | round(0) }}%). Please plug in to charge.
+                          {{ maint_car }} is at {{ fresh_soc | round(0) }}% (target {{ buffer_target | round(0) }}%). Please plug in to charge.
                         data:
                           push:
                             interruption-level: time-sensitive
@@ -2037,7 +2155,7 @@
                       data:
                         title: "Plug In {{ maint_car }}"
                         message: >
-                          {{ maint_car }} is at {{ fresh_soc | round(0) }}% (minimum {{ min_soc | round(0) }}%). Please plug in to charge.
+                          {{ maint_car }} is at {{ fresh_soc | round(0) }}% (target {{ buffer_target | round(0) }}%). Please plug in to charge.
                         data:
                           push:
                             interruption-level: time-sensitive
@@ -2047,34 +2165,35 @@
                 system: ev
                 automation_id: auto_ev_044
                 decision_code: maint_nag_suppressed
-                decision_text: "Plug-in nag suppressed — another car at target"
+                decision_text: "Plug-in nag suppressed — both cars at buffer target"
                 context: >
                   {{ {'car': maint_car,
                       'car_soc': fresh_soc | float,
                       'horace_soc': horace_soc | float,
                       'horatio_soc': horatio_soc | float,
-                      'any_at_target': any_home_car_at_target,
+                      'buffer_target': buffer_target | float,
+                      'both_at_buffer': both_at_buffer,
                       'is_critical': is_critical
                   } | tojson }}
         - action: logbook.log
           data:
             name: "EV Maintenance"
-            message: "{{ maint_car }} needs charging ({{ fresh_soc | round(0) }}% < {{ min_soc | round(0) }}%) but is not plugged in"
+            message: "{{ maint_car }} needs charging ({{ fresh_soc | round(0) }}% < {{ buffer_target | round(0) }}%) but is not plugged in"
         - stop: "Car not plugged in"
 
-    # Skip if SOC already at or above minimum (stale data was low)
+    # Skip if SOC already at or above buffer target (stale data was low)
     - if:
         - condition: template
-          value_template: "{{ fresh_soc >= min_soc }}"
+          value_template: "{{ fresh_soc >= buffer_target | float }}"
       then:
-        - stop: "Fresh SOC {{ fresh_soc }}% ≥ minimum {{ min_soc }}% — no charging needed"
+        - stop: "Fresh SOC {{ fresh_soc }}% ≥ buffer target {{ buffer_target }}% — no charging needed"
 
-    # Charge: set limit to minimum SOC and start
+    # Charge: set limit to buffer target SOC and start
     - action: number.set_value
       target:
         entity_id: "{{ 'number.horace_charge_limit' if maint_car == 'Horace' else 'number.horatio_charge_limit' }}"
       data:
-        value: "{{ min_soc | int }}"
+        value: "{{ buffer_target | int }}"
     - action: switch.turn_on
       target:
         entity_id: "{{ 'switch.horace_charge' if maint_car == 'Horace' else 'switch.horatio_charge' }}"
@@ -2088,11 +2207,11 @@
         system: ev
         automation_id: auto_ev_044
         decision_code: maint_charge_started
-        decision_text: "Maintenance charging started for {{ maint_car }}"
+        decision_text: "Buffer charging started for {{ maint_car }}"
         context: >
           {{ {'car': maint_car,
               'car_soc': fresh_soc | float,
-              'target_soc': min_soc | float,
+              'target_soc': buffer_target | float,
               'horace_soc': horace_soc | float,
               'horatio_soc': horatio_soc | float,
               'tariff': states('sensor.energy_tariff_current'),
@@ -2102,7 +2221,7 @@
     - action: logbook.log
       data:
         name: "EV Maintenance"
-        message: "{{ maint_car }} maintenance charge started: {{ fresh_soc | round(0) }}% → {{ min_soc | round(0) }}%"
+        message: "{{ maint_car }} buffer charge started: {{ fresh_soc | round(0) }}% → {{ buffer_target | round(0) }}%"
 
     - action: shell_command.log_action
       data:
@@ -2110,10 +2229,10 @@
         action_type: charge_start
         target_entity: "{{ 'switch.' ~ maint_car | lower ~ '_charge' }}"
         parameters: >
-          {{ {'source': 'maintenance',
+          {{ {'source': 'buffer',
               'car': maint_car,
               'current_soc': fresh_soc | float,
-              'target_soc': min_soc | float
+              'target_soc': buffer_target | float
           } | tojson }}
 
 - id: auto_ev_042_solar_surplus_alert

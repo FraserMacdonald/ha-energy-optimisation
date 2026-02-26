@@ -93,13 +93,14 @@
     stored_traces: 10
 
   triggers:
-    # Bug fix: was binary_sensor.solar_available_jacuzzi (wrong entity_id)
-    # Name "Solar Available for Jacuzzi" → entity binary_sensor.solar_available_for_jacuzzi
     - trigger: state
       entity_id: binary_sensor.solar_available_for_jacuzzi
       to: "on"
       for:
         minutes: 5
+    - trigger: state
+      entity_id: binary_sensor.energy_low_tariff_active
+      to: "on"
 
   conditions:
     - condition: state
@@ -111,7 +112,7 @@
     - condition: state
       entity_id: input_boolean.jacuzzi_manual_override
       state: "off"
-    # Orchestrator gate: legacy mode (off) OR orchestrator grants permission
+    # Orchestrator gate: legacy mode (off) OR orchestrator grants permission OR heartbeat stale
     - condition: or
       conditions:
         - condition: state
@@ -120,54 +121,102 @@
         - condition: state
           entity_id: input_boolean.energy_jacuzzi_heat_allowed
           state: "on"
-    - condition: template
-      value_template: >
-        {% set cal = states.calendar.jacuzzi_schedule %}
-        {% if cal is not none and cal.attributes.start_time is defined %}
-          {% set event_start = as_timestamp(cal.attributes.start_time) %}
-          {% set now_ts = now().timestamp() %}
-          {{ (event_start - now_ts) < 172800 and (event_start - now_ts) > 0 }}
-        {% else %}
-          false
-        {% endif %}
-    - condition: template
-      value_template: >
-        {{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) < 38 }}
+        - condition: template
+          value_template: >
+            {% set hb = states('input_datetime.energy_orchestrator_last_heartbeat') %}
+            {{ hb in ['unknown', 'unavailable'] or (as_timestamp(now()) - as_timestamp(hb)) > 300 }}
 
   actions:
-    - action: input_number.set_value
-      target:
-        entity_id: input_number.jacuzzi_target_temp
-      data:
-        value: 40
-    - action: climate.set_temperature
-      target:
-        entity_id: climate.jacuzzi
-      data:
-        temperature: 40
-    - action: climate.set_hvac_mode
-      target:
-        entity_id: climate.jacuzzi
-      data:
-        hvac_mode: heat
-    - action: logbook.log
-      data:
-        name: "Jacuzzi Solar Heating"
-        message: >
-          Using excess solar to pre-heat jacuzzi.
-          Solar: {{ state_attr('binary_sensor.solar_available_for_jacuzzi', 'solar_power_w') }}W
+    - variables:
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) }}"
+        effective_standby: "{{ states('sensor.jacuzzi_effective_standby_temp') | float(20) }}"
+        low_tariff: "{{ is_state('binary_sensor.energy_low_tariff_active', 'on') }}"
+        solar_available: "{{ is_state('binary_sensor.solar_available_for_jacuzzi', 'on') }}"
+        has_event_48h: >
+          {% set cal = states.calendar.jacuzzi_schedule %}
+          {% if cal is not none and cal.attributes.start_time is defined %}
+            {% set event_start = as_timestamp(cal.attributes.start_time) %}
+            {% set now_ts = now().timestamp() %}
+            {{ (event_start - now_ts) < 172800 and (event_start - now_ts) > 0 }}
+          {% else %}
+            false
+          {% endif %}
+    - choose:
+        # Solar surplus: heat toward 40 if event within 48h and below 38
+        - conditions:
+            - condition: template
+              value_template: "{{ solar_available and has_event_48h and current_temp | float < 38 }}"
+          sequence:
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.jacuzzi_target_temp
+              data:
+                value: 40
+            - action: climate.set_temperature
+              target:
+                entity_id: climate.jacuzzi
+              data:
+                temperature: 40
+            - action: climate.set_hvac_mode
+              target:
+                entity_id: climate.jacuzzi
+              data:
+                hvac_mode: heat
+            - action: logbook.log
+              data:
+                name: "Jacuzzi Solar Heating"
+                message: >
+                  Using excess solar to pre-heat jacuzzi.
+                  Solar: {{ state_attr('binary_sensor.solar_available_for_jacuzzi', 'solar_power_w') }}W
+            - action: shell_command.log_action
+              data:
+                system: jacuzzi
+                action_type: heating_start
+                target_entity: climate.jacuzzi
+                parameters: >
+                  {{ {'source': 'solar',
+                      'trigger': 'solar_surplus',
+                      'current_temp': current_temp | float | round(1),
+                      'solar_w': state_attr('binary_sensor.solar_available_for_jacuzzi', 'solar_power_w') | float(0) | round(0)
+                  } | tojson }}
 
-    - action: shell_command.log_action
-      data:
-        system: jacuzzi
-        action_type: heating_start
-        target_entity: climate.jacuzzi
-        parameters: >
-          {{ {'source': 'solar',
-              'trigger': 'solar_surplus',
-              'current_temp': state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1),
-              'solar_w': state_attr('binary_sensor.solar_available_for_jacuzzi', 'solar_power_w') | float(0) | round(0)
-          } | tojson }}
+        # Low tariff: heat toward effective standby if below it
+        - conditions:
+            - condition: template
+              value_template: "{{ low_tariff and current_temp | float < (effective_standby | float - 0.5) }}"
+          sequence:
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.jacuzzi_target_temp
+              data:
+                value: "{{ effective_standby }}"
+            - action: climate.set_temperature
+              target:
+                entity_id: climate.jacuzzi
+              data:
+                temperature: "{{ effective_standby }}"
+            - action: climate.set_hvac_mode
+              target:
+                entity_id: climate.jacuzzi
+              data:
+                hvac_mode: heat
+            - action: logbook.log
+              data:
+                name: "Jacuzzi Low Tariff Heating"
+                message: >
+                  Low tariff: heating toward effective standby {{ effective_standby }}°C
+                  (current: {{ current_temp }}°C)
+            - action: shell_command.log_action
+              data:
+                system: jacuzzi
+                action_type: heating_start
+                target_entity: climate.jacuzzi
+                parameters: >
+                  {{ {'source': 'low_tariff_standby',
+                      'trigger': 'solar_opportunistic',
+                      'current_temp': current_temp | float | round(1),
+                      'target_temp': effective_standby | float
+                  } | tojson }}
 
 
 # ==============================================================================
@@ -175,10 +224,10 @@
 # Note: Will be retired in Phase 1C when orchestrator handles tariff logic.
 # ==============================================================================
 - id: auto_jacuzzi_021_low_tariff_heating
-  alias: "Jacuzzi 021 – Low Tariff Heating Preference"
+  alias: "Jacuzzi 021 – Low Tariff Standby Heating"
   description: >
-    Delays heating to low tariff period if enough time available.
-    RETIRE in Phase 1C – orchestrator will handle tariff decisions.
+    Heats during ANY low tariff period when below effective standby - 0.5°C.
+    Target = effective standby temp (banking-aware).
   mode: single
   trace:
     stored_traces: 10
@@ -187,6 +236,8 @@
     - trigger: state
       entity_id: binary_sensor.energy_low_tariff_active
       to: "on"
+    - trigger: time_pattern
+      minutes: "/15"
 
   conditions:
     - condition: state
@@ -195,7 +246,10 @@
     - condition: state
       entity_id: input_boolean.jacuzzi_manual_override
       state: "off"
-    # Orchestrator gate: legacy mode (off) OR orchestrator grants permission
+    - condition: state
+      entity_id: binary_sensor.energy_low_tariff_active
+      state: "on"
+    # Orchestrator gate: legacy mode (off) OR orchestrator grants permission OR heartbeat stale
     - condition: or
       conditions:
         - condition: state
@@ -204,33 +258,31 @@
         - condition: state
           entity_id: input_boolean.energy_jacuzzi_heat_allowed
           state: "on"
+        - condition: template
+          value_template: >
+            {% set hb = states('input_datetime.energy_orchestrator_last_heartbeat') %}
+            {{ hb in ['unknown', 'unavailable'] or (as_timestamp(now()) - as_timestamp(hb)) > 300 }}
     - condition: template
       value_template: >
-        {% set cal = states.calendar.jacuzzi_schedule %}
-        {% if cal is not none and cal.attributes.start_time is defined %}
-          {% set event_start = as_timestamp(cal.attributes.start_time) %}
-          {% set now_ts = now().timestamp() %}
-          {% set heat_time = states('sensor.jacuzzi_heat_up_time_required') | float(3) * 3600 %}
-          {% set time_available = event_start - now_ts %}
-          {{ time_available > heat_time and time_available < 172800 }}
-        {% else %}
-          false
-        {% endif %}
-    - condition: template
-      value_template: >
-        {{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) < 35 }}
+        {% set current = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
+        {% set standby = states('sensor.jacuzzi_effective_standby_temp') | float(20) %}
+        {{ current < (standby - 0.5) }}
 
   actions:
+    - variables:
+        effective_standby: "{{ states('sensor.jacuzzi_effective_standby_temp') | float(20) }}"
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) }}"
+
     - action: input_number.set_value
       target:
         entity_id: input_number.jacuzzi_target_temp
       data:
-        value: 40
+        value: "{{ effective_standby }}"
     - action: climate.set_temperature
       target:
         entity_id: climate.jacuzzi
       data:
-        temperature: 40
+        temperature: "{{ effective_standby }}"
     - action: climate.set_hvac_mode
       target:
         entity_id: climate.jacuzzi
@@ -240,8 +292,7 @@
       data:
         name: "Jacuzzi Low Tariff Heating"
         message: >
-          Starting heating during low tariff for event
-          at {{ state_attr('calendar.jacuzzi_schedule', 'start_time') }}
+          Low tariff standby heating: {{ current_temp }}°C → {{ effective_standby }}°C
 
     - action: shell_command.log_action
       data:
@@ -250,9 +301,9 @@
         target_entity: climate.jacuzzi
         parameters: >
           {{ {'source': 'low_tariff',
-              'trigger': 'tariff_change',
-              'current_temp': state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1),
-              'event_time': state_attr('calendar.jacuzzi_schedule', 'start_time') | string
+              'trigger': 'tariff_standby',
+              'current_temp': current_temp | float | round(1),
+              'target_temp': effective_standby | float
           } | tojson }}
 
 
@@ -263,9 +314,9 @@
 - id: auto_jacuzzi_022_solar_off_fallback
   alias: "Jacuzzi 022 – Solar Off Fallback"
   description: >
-    If jacuzzi is heating due to solar opportunistic mode and solar surplus
-    drops below 6000W for more than 10 minutes, reverts target to standby.
-    Prevents grid heating when clouds appear.
+    If jacuzzi is heating and solar surplus drops below 6000W for 10 min,
+    reverts target to standby — UNLESS low tariff is active and the event
+    target is still achievable within remaining time.
   mode: single
   trace:
     stored_traces: 10
@@ -305,29 +356,65 @@
         {{ not in_preheat_or_event }}
 
   actions:
-    - action: input_number.set_value
-      target:
-        entity_id: input_number.jacuzzi_target_temp
-      data:
-        value: "{{ states('sensor.jacuzzi_effective_standby_temp') | float(states('input_number.jacuzzi_standby_temp') | float(15)) }}"
-    - action: logbook.log
-      data:
-        name: "Jacuzzi Solar Fallback"
-        message: >
-          Solar surplus dropped below 6000W for 10 min. Reverting to standby
-          ({{ states('sensor.jacuzzi_effective_standby_temp') | float(states('input_number.jacuzzi_standby_temp') | float(15)) }}°C) to prevent grid heating.
+    - variables:
+        low_tariff: "{{ is_state('binary_sensor.energy_low_tariff_active', 'on') }}"
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) }}"
+        standby_temp: "{{ states('sensor.jacuzzi_effective_standby_temp') | float(states('input_number.jacuzzi_standby_temp') | float(15)) }}"
 
-    - action: shell_command.log_action
-      data:
-        system: jacuzzi
-        action_type: heating_stop
-        target_entity: climate.jacuzzi
-        parameters: >
-          {{ {'source': 'solar_fallback',
-              'current_temp': state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1),
-              'standby_temp': states('sensor.jacuzzi_effective_standby_temp') | float(states('input_number.jacuzzi_standby_temp') | float(15)),
-              'surplus_w': states('sensor.energy_solar_surplus_w') | float(0) | round(0)
-          } | tojson }}
+        # Achievability guard: during low tariff, check if event target is still
+        # reachable in the remaining time before event
+        target_still_achievable: >
+          {% if not low_tariff %}
+            false
+          {% else %}
+            {% set cal = states.calendar.jacuzzi_schedule %}
+            {% if cal is not none and cal.attributes.start_time is defined %}
+              {% set event_ts = as_timestamp(cal.attributes.start_time) %}
+              {% set now_ts = as_timestamp(now()) %}
+              {% set hours_to_event = (event_ts - now_ts) / 3600 %}
+              {% set heat_hours = states('sensor.jacuzzi_heat_up_time_required') | float(99) %}
+              {{ hours_to_event > 0 and hours_to_event > heat_hours }}
+            {% else %}
+              false
+            {% endif %}
+          {% endif %}
+
+    # During low tariff with achievable target: continue heating, don't revert
+    - if:
+        - condition: template
+          value_template: "{{ target_still_achievable }}"
+      then:
+        - action: logbook.log
+          data:
+            name: "Jacuzzi Solar Fallback"
+            message: >
+              Solar dropped but low tariff active — continuing grid heating
+              (event target still achievable in remaining time).
+      else:
+        - action: input_number.set_value
+          target:
+            entity_id: input_number.jacuzzi_target_temp
+          data:
+            value: "{{ standby_temp }}"
+        - action: logbook.log
+          data:
+            name: "Jacuzzi Solar Fallback"
+            message: >
+              Solar surplus dropped below 6000W for 10 min. Reverting to standby
+              ({{ standby_temp }}°C) to prevent grid heating.
+        - action: shell_command.log_action
+          data:
+            system: jacuzzi
+            action_type: heating_stop
+            target_entity: climate.jacuzzi
+            parameters: >
+              {{ {'source': 'solar_fallback',
+                  'current_temp': current_temp | float | round(1),
+                  'standby_temp': standby_temp | float,
+                  'surplus_w': states('sensor.energy_solar_surplus_w') | float(0) | round(0),
+                  'low_tariff': low_tariff,
+                  'target_achievable': target_still_achievable
+              } | tojson }}
 
 
 # ==============================================================================
@@ -376,7 +463,7 @@
                 {% else %}
                   false
                 {% endif %}
-            # Orchestrator gate: legacy mode (off) OR orchestrator grants permission
+            # Orchestrator gate: legacy mode (off) OR orchestrator grants permission OR heartbeat stale
             - condition: or
               conditions:
                 - condition: state
@@ -385,6 +472,10 @@
                 - condition: state
                   entity_id: input_boolean.energy_jacuzzi_heat_allowed
                   state: "on"
+                - condition: template
+                  value_template: >
+                    {% set hb = states('input_datetime.energy_orchestrator_last_heartbeat') %}
+                    {{ hb in ['unknown', 'unavailable'] or (as_timestamp(now()) - as_timestamp(hb)) > 300 }}
           sequence:
             # High-tariff guard: block new grid heating during peak unless
             # solar surplus >6kW or heater already running (target already 40)
@@ -447,7 +538,7 @@
             - condition: state
               entity_id: calendar.jacuzzi_schedule
               state: "on"
-            # Orchestrator gate: legacy mode (off) OR orchestrator grants permission
+            # Orchestrator gate: legacy mode (off) OR orchestrator grants permission OR heartbeat stale
             - condition: or
               conditions:
                 - condition: state
@@ -456,6 +547,10 @@
                 - condition: state
                   entity_id: input_boolean.energy_jacuzzi_heat_allowed
                   state: "on"
+                - condition: template
+                  value_template: >
+                    {% set hb = states('input_datetime.energy_orchestrator_last_heartbeat') %}
+                    {{ hb in ['unknown', 'unavailable'] or (as_timestamp(now()) - as_timestamp(hb)) > 300 }}
           sequence:
             - action: input_number.set_value
               target:
