@@ -1,0 +1,318 @@
+###############################################################################
+# WATCHDOG AUTOMATIONS – Integration Health Monitoring
+# File: automations/energy/energy_watchdog_automations.yaml
+#
+# Numbering: 080-083 (safety/override range)
+#
+# 080 – Failure detector (batched, debounced, rate-limited)
+# 081 – Recovery detector
+# 082 – Startup grace (records HA start time)
+# 083 – Daily health digest
+###############################################################################
+
+
+# ==============================================================================
+# 080 – FAILURE DETECTOR
+# Triggers when any watchdog binary sensor goes OFF for 5 minutes.
+# Batches simultaneous failures with 30-sec delay, respects cooldown,
+# suppresses during 10-min startup grace period.
+# ==============================================================================
+- id: auto_energy_080_watchdog_failure
+  alias: "Energy 080 – Watchdog Failure"
+  description: >
+    Detects integration failures. 5-min debounce avoids false alarms,
+    30-sec batch delay groups simultaneous failures, 30-min cooldown
+    prevents spam. Suppressed for 10 min after HA restart.
+  mode: restart
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id:
+        - binary_sensor.watchdog_solaredge_healthy
+        - binary_sensor.watchdog_tesla_fleet_healthy
+        - binary_sensor.watchdog_balboa_spa_healthy
+        - binary_sensor.watchdog_epex_spot_healthy
+        - binary_sensor.watchdog_caldav_healthy
+        - binary_sensor.watchdog_metno_healthy
+        - binary_sensor.watchdog_grow_water_heater_healthy
+        - binary_sensor.watchdog_grow_water_pump_healthy
+        - binary_sensor.watchdog_grow_light_healthy
+        - binary_sensor.watchdog_grow_fans_healthy
+        - binary_sensor.watchdog_grow_water_sensors_healthy
+        - binary_sensor.watchdog_grow_electronics_healthy
+      to: "off"
+      for: "00:05:00"
+
+  conditions:
+    # Master switch
+    - condition: state
+      entity_id: input_boolean.watchdog_enabled
+      state: "on"
+
+    # Startup grace: suppress for 10 min after HA restart
+    - condition: template
+      value_template: >
+        {% set start = states('input_datetime.watchdog_ha_start_time') %}
+        {% if start in ['unknown', 'unavailable', 'none', ''] %}
+          true
+        {% else %}
+          {{ (as_timestamp(now()) - as_timestamp(start)) > 600 }}
+        {% endif %}
+
+    # Cooldown: suppress if last alert was less than cooldown_minutes ago
+    - condition: template
+      value_template: >
+        {% set last = states('input_datetime.watchdog_last_alert_time') %}
+        {% set cooldown = states('input_number.watchdog_cooldown_minutes') | float(30) * 60 %}
+        {% if last in ['unknown', 'unavailable', 'none', ''] %}
+          true
+        {% else %}
+          {{ (as_timestamp(now()) - as_timestamp(last)) > cooldown }}
+        {% endif %}
+
+  actions:
+    # 30-sec batch delay to group simultaneous failures
+    - delay:
+        seconds: 30
+
+    # Gather current state of all down integrations
+    - variables:
+        groups: >
+          {% set ns = namespace(down=[]) %}
+          {% set entities = [
+            'binary_sensor.watchdog_solaredge_healthy',
+            'binary_sensor.watchdog_tesla_fleet_healthy',
+            'binary_sensor.watchdog_balboa_spa_healthy',
+            'binary_sensor.watchdog_epex_spot_healthy',
+            'binary_sensor.watchdog_caldav_healthy',
+            'binary_sensor.watchdog_metno_healthy',
+            'binary_sensor.watchdog_grow_water_heater_healthy',
+            'binary_sensor.watchdog_grow_water_pump_healthy',
+            'binary_sensor.watchdog_grow_light_healthy',
+            'binary_sensor.watchdog_grow_fans_healthy',
+            'binary_sensor.watchdog_grow_water_sensors_healthy',
+            'binary_sensor.watchdog_grow_electronics_healthy'
+          ] %}
+          {% for entity in entities %}
+            {% if is_state(entity, 'off') %}
+              {% set ns.down = ns.down + [entity] %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.down }}
+        count: >
+          {{ groups | length if groups is iterable else 0 }}
+        health: "{{ states('sensor.watchdog_system_health') }}"
+
+    - variables:
+        names: >
+          {% set ns = namespace(names=[]) %}
+          {% for entity in groups %}
+            {% set ns.names = ns.names + [state_attr(entity, 'group')] %}
+          {% endfor %}
+          {{ ns.names | join(', ') }}
+        details: >
+          {% set ns = namespace(lines=[]) %}
+          {% for entity in groups %}
+            {% set g = state_attr(entity, 'group') %}
+            {% set i = state_attr(entity, 'impact') %}
+            {% set ns.lines = ns.lines + ['* ' ~ g ~ ': ' ~ i] %}
+          {% endfor %}
+          {{ ns.lines | join('\n') }}
+        title: >
+          {% if health == 'critical' %}CRITICAL: Integration Failure
+          {% else %}WARNING: Integration Failure{% endif %}
+
+    # Only proceed if something is actually down (mode: restart may
+    # re-evaluate after batch delay when the failure has recovered)
+    - if:
+        - condition: template
+          value_template: "{{ count | int > 0 }}"
+      then:
+        # Record alert time
+        - action: input_datetime.set_datetime
+          target:
+            entity_id: input_datetime.watchdog_last_alert_time
+          data:
+            datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+        # Store failure list for recovery message
+        - action: input_select.set_options
+          target:
+            entity_id: input_select.watchdog_last_failure
+          data:
+            options:
+              - "{{ names }}"
+
+        # Time-sensitive push to Fraser
+        - action: notify.mobile_app_fraser_s_iphone
+          data:
+            title: "{{ title }}"
+            message: >
+              {{ count }} integration{{ 's' if count | int > 1 else '' }} down: {{ names }}.
+              {{ details }}
+            data:
+              push:
+                interruption-level: time-sensitive
+
+        # Persistent notification (replaceable)
+        - action: persistent_notification.create
+          data:
+            notification_id: watchdog_failure
+            title: "{{ title }}"
+            message: >
+              {{ count }} integration{{ 's' if count | int > 1 else '' }} down: {{ names }}.
+              {{ details }}
+
+        # Log to MariaDB
+        - action: shell_command.log_decision
+          data:
+            system: watchdog
+            automation_id: auto_energy_080
+            decision_code: "failure_{{ health }}"
+            decision_text: "{{ names }}"
+            context: >
+              {{ {'count': count, 'health': health, 'groups': names} | tojson }}
+
+
+# ==============================================================================
+# 081 – RECOVERY DETECTOR
+# Triggers when system health returns to 'healthy' from degraded/critical.
+# ==============================================================================
+- id: auto_energy_081_watchdog_recovery
+  alias: "Energy 081 – Watchdog Recovery"
+  description: >
+    Sends a recovery notification when all integrations come back online.
+    Clears the persistent notification.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: sensor.watchdog_system_health
+      to: "healthy"
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.watchdog_enabled
+      state: "on"
+
+    # Only fire if we previously had a failure recorded
+    - condition: template
+      value_template: >
+        {% set last = states('input_select.watchdog_last_failure') %}
+        {{ last not in ['unknown', 'unavailable', 'none', ''] and last != 'none' }}
+
+    # Startup grace: suppress for 10 min after HA restart
+    - condition: template
+      value_template: >
+        {% set start = states('input_datetime.watchdog_ha_start_time') %}
+        {% if start in ['unknown', 'unavailable', 'none', ''] %}
+          true
+        {% else %}
+          {{ (as_timestamp(now()) - as_timestamp(start)) > 600 }}
+        {% endif %}
+
+  actions:
+    - variables:
+        previously_down: "{{ states('input_select.watchdog_last_failure') }}"
+
+    # Push to Fraser (normal priority)
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Recovered: All Integrations Online"
+        message: "Previously down: {{ previously_down }}."
+
+    # Clear persistent notification
+    - action: persistent_notification.dismiss
+      data:
+        notification_id: watchdog_failure
+
+    # Reset last failure
+    - action: input_select.set_options
+      target:
+        entity_id: input_select.watchdog_last_failure
+      data:
+        options:
+          - "none"
+
+    # Log to MariaDB
+    - action: shell_command.log_decision
+      data:
+        system: watchdog
+        automation_id: auto_energy_081
+        decision_code: recovery
+        decision_text: "All integrations online"
+        context: >
+          {{ {'previously_down': previously_down} | tojson }}
+
+
+# ==============================================================================
+# 082 – STARTUP GRACE
+# Records HA start time so other automations can suppress during boot.
+# ==============================================================================
+- id: auto_energy_082_watchdog_startup
+  alias: "Energy 082 – Watchdog Startup Grace"
+  description: >
+    Records the HA start time into input_datetime.watchdog_ha_start_time
+    so the failure detector can suppress alerts during the 10-min boot window.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: homeassistant
+      event: start
+
+  actions:
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.watchdog_ha_start_time
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+    - action: logbook.log
+      data:
+        name: "Watchdog"
+        message: "HA started — 10-min grace period active."
+
+
+# ==============================================================================
+# 083 – DAILY HEALTH DIGEST
+# Logs current health status to MariaDB at 06:50 each day.
+# ==============================================================================
+- id: auto_energy_083_watchdog_daily_digest
+  alias: "Energy 083 – Watchdog Daily Digest"
+  description: >
+    Logs the current integration health status to MariaDB at 06:50 daily.
+    Provides a daily audit trail of system health.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time
+      at: "06:50:00"
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.watchdog_enabled
+      state: "on"
+
+  actions:
+    - variables:
+        health: "{{ states('sensor.watchdog_system_health') }}"
+        count: "{{ state_attr('sensor.watchdog_system_health', 'count_down') | int(0) }}"
+        down_list: "{{ state_attr('sensor.watchdog_system_health', 'groups_down') }}"
+
+    - action: shell_command.log_decision
+      data:
+        system: watchdog
+        automation_id: auto_energy_083
+        decision_code: "daily_digest_{{ health }}"
+        decision_text: >
+          {{ health }}: {{ count }} down
+        context: >
+          {{ {'health': health, 'count': count, 'groups_down': down_list} | tojson }}

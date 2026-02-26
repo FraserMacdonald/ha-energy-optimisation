@@ -70,10 +70,18 @@
         # Orchestrator status
         orch_mode: "{{ 'ON' if is_state('input_boolean.energy_orchestrator_enabled', 'on') else 'OFF' }}"
 
+        # System health
+        health: "{{ states('sensor.watchdog_system_health') }}"
+        health_count: "{{ state_attr('sensor.watchdog_system_health', 'count_down') | int(0) }}"
+        health_line: >
+          {% if health_count | int == 0 %}Health: all integrations online.
+          {% else %}Health: {{ health_count }} down ({{ state_attr('sensor.watchdog_system_health', 'groups_down') | join(', ') }}).{% endif %}
+
         msg: >
           Today: {{ jacuzzi_plan }}
           EV: {{ ev_plan }}
           Orchestrator: {{ orch_mode }}.
+          {{ health_line }}
 
     - action: notify.mobile_app_fraser_s_iphone
       data:
