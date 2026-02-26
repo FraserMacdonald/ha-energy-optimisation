@@ -12,6 +12,8 @@
 #   021 – Solar Actual Logger      (every 30 min)
 #   022 – Solar Forecast Comparison (:05 past each hour)
 #   023 – Solar Calibration        (Sunday 23:30)
+#   024 – Solar Banking Calculator (every 30 min)
+#   025 – Tariff Transition Logger (on tariff change)
 ###############################################################################
 
 
@@ -139,6 +141,55 @@
 
   actions:
     - action: shell_command.solar_calibrate
+
+
+# =============================================================================
+# 025 – TARIFF TRANSITION LOGGER
+# Logs when the tariff window transitions between high and low.
+# =============================================================================
+- id: auto_energy_025_tariff_transition
+  alias: "Energy 025 – Tariff Transition Logger"
+  description: >
+    Logs a decision whenever the energy tariff changes between high and low.
+    Provides audit trail of tariff window transitions.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: sensor.energy_tariff_current
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ trigger.to_state is not none
+           and trigger.from_state is not none
+           and trigger.to_state.state not in ['unavailable', 'unknown']
+           and trigger.from_state.state != trigger.to_state.state }}
+
+  actions:
+    - variables:
+        new_tariff: "{{ trigger.to_state.state }}"
+        old_tariff: "{{ trigger.from_state.state }}"
+        code: "{{ 'tariff_shift_to_high' if new_tariff == 'high' else 'tariff_shift_to_low' }}"
+        rate: "{{ state_attr('sensor.energy_tariff_current', 'rate_chf') | float(0) }}"
+        day_of_week: "{{ now().strftime('%A') }}"
+        hour: "{{ now().hour }}"
+
+    - action: shell_command.log_decision
+      data:
+        system: energy
+        automation_id: auto_energy_025
+        decision_code: "{{ code }}"
+        decision_text: "Tariff changed from {{ old_tariff }} to {{ new_tariff }}"
+        context: >
+          {{ {'old_tariff': old_tariff,
+              'new_tariff': new_tariff,
+              'rate_chf': rate | float,
+              'day_of_week': day_of_week,
+              'hour': hour | int
+          } | tojson }}
 
 
 # =============================================================================
