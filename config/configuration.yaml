@@ -87,23 +87,23 @@ shell_command:
   get_elevation: "python3 /config/python_scripts/get_elevation.py"
   compute_elevation: "python3 /config/python_scripts/compute_elevation.py"
   ev_text_set: "python3 /config/python_scripts/ev_text_store.py {{ key }} {{ value }}"
-  log_decision: "python3 /homeassistant/scripts/log_to_db.py decision '{{ system }}' '{{ automation_id }}' '{{ decision_code }}' '{{ decision_text }}' '{{ context }}'"
-  log_action: "python3 /homeassistant/scripts/log_to_db.py action '{{ system }}' '{{ action_type }}' '{{ target_entity }}' '{{ parameters }}'"
-  log_feedback: "python3 /homeassistant/scripts/log_to_db.py feedback '{{ system }}' '{{ metric }}' '{{ predicted }}' '{{ actual }}' '{{ context }}'"
-  log_cost: "python3 /homeassistant/scripts/log_to_db.py cost '{{ system }}' '{{ kwh_solar }}' '{{ kwh_grid_low }}' '{{ kwh_grid_high }}'"
+  log_decision: "python3 /config/scripts/log_to_db.py decision '{{ system }}' '{{ automation_id }}' '{{ decision_code }}' '{{ decision_text }}' '{{ context }}'"
+  log_action: "python3 /config/scripts/log_to_db.py action '{{ system }}' '{{ action_type }}' '{{ target_entity }}' '{{ parameters }}'"
+  log_feedback: "python3 /config/scripts/log_to_db.py feedback '{{ system }}' '{{ metric }}' '{{ predicted }}' '{{ actual }}' '{{ context }}'"
+  log_cost: "python3 /config/scripts/log_to_db.py cost '{{ system }}' '{{ kwh_solar }}' '{{ kwh_grid_low }}' '{{ kwh_grid_high }}'"
   # --- Solar Forecast Engine (Phase 2A-2C) ---
-  solar_forecast: "python3 /homeassistant/scripts/solar_forecast.py forecast"
-  solar_actual: "python3 /homeassistant/scripts/solar_forecast.py actual"
-  solar_compare: "python3 /homeassistant/scripts/solar_forecast.py compare"
-  solar_calibrate: "python3 /homeassistant/scripts/solar_forecast.py calibrate"
-  solar_banking: "python3 /homeassistant/scripts/solar_forecast.py banking"
+  solar_forecast: "python3 /config/scripts/solar_forecast.py forecast"
+  solar_actual: "python3 /config/scripts/solar_forecast.py actual"
+  solar_compare: "python3 /config/scripts/solar_forecast.py compare"
+  solar_calibrate: "python3 /config/scripts/solar_forecast.py calibrate"
+  solar_banking: "python3 /config/scripts/solar_forecast.py banking"
   # --- Query ---
-  query_decisions_today: "python3 /homeassistant/scripts/log_to_db.py query_today"
-  query_decisions_today_file: "python3 /homeassistant/scripts/log_to_db.py query_today_file"
+  query_decisions_today: "python3 /config/scripts/log_to_db.py query_today"
+  query_decisions_today_file: "python3 /config/scripts/log_to_db.py query_today_file"
   # --- Deploy from Git ---
   deploy_from_git: "cd /homeassistant/ha-restore && git fetch --all && git reset --hard origin/main && cp -r config/* /config/ && cp -r config/* /homeassistant/ && mkdir -p /config/scripts /homeassistant/scripts && cp scripts/* /config/scripts/ && cp scripts/* /homeassistant/scripts/"
   # --- Deploy via GitHub API (fallback when git binary unavailable) ---
-  deploy_from_github: "python3 /homeassistant/scripts/deploy_github.py"
+  deploy_from_github: "python3 /config/scripts/deploy_github.py"
 
 # =============================================================================
 # REST COMMANDS
