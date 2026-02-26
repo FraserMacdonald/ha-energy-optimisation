@@ -78,8 +78,8 @@ def query_decisions_today(to_file=False):
     c = conn()
     cur = c.cursor()
     cur.execute(
-        "SELECT created_at, system, automation_id, decision_code, decision_text, context "
-        "FROM log_decisions WHERE DATE(created_at) = CURDATE() ORDER BY created_at"
+        "SELECT ts, system, automation_id, decision_code, decision_text, context "
+        "FROM log_decisions WHERE DATE(ts) = CURDATE() ORDER BY ts"
     )
     rows = cur.fetchall()
     c.close()
