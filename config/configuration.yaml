@@ -97,6 +97,8 @@ shell_command:
   solar_compare: "python3 /homeassistant/scripts/solar_forecast.py compare"
   solar_calibrate: "python3 /homeassistant/scripts/solar_forecast.py calibrate"
   solar_banking: "python3 /homeassistant/scripts/solar_forecast.py banking"
+  # --- Query ---
+  query_decisions_today: "python3 /homeassistant/scripts/log_to_db.py query_today"
   # --- Deploy from Git ---
   deploy_from_git: "cd /homeassistant/ha-restore && git fetch --all && git reset --hard origin/main && cp -r config/* /homeassistant/ && cp scripts/* /homeassistant/scripts/"
 
