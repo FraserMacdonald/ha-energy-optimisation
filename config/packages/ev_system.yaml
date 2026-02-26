@@ -29,10 +29,12 @@ input_boolean:
   ev_horace_allow_charging:
     name: "Horace Allow Charging"
     icon: mdi:ev-station
+    initial: true
 
   ev_horatio_allow_charging:
     name: "Horatio Allow Charging"
     icon: mdi:ev-station
+    initial: true
 
   ev_horace_trip_mode:
     name: "Horace Trip Mode (100% charge)"
