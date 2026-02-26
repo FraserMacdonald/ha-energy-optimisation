@@ -2041,6 +2041,21 @@
                         data:
                           push:
                             interruption-level: time-sensitive
+          else:
+            - action: shell_command.log_decision
+              data:
+                system: ev
+                automation_id: auto_ev_044
+                decision_code: maint_nag_suppressed
+                decision_text: "Plug-in nag suppressed — another car at target"
+                context: >
+                  {{ {'car': maint_car,
+                      'car_soc': fresh_soc | float,
+                      'horace_soc': horace_soc | float,
+                      'horatio_soc': horatio_soc | float,
+                      'any_at_target': any_home_car_at_target,
+                      'is_critical': is_critical
+                  } | tojson }}
         - action: logbook.log
           data:
             name: "EV Maintenance"
@@ -2067,6 +2082,22 @@
     - action: switch.turn_off
       target:
         entity_id: "{{ 'switch.horatio_charge' if maint_car == 'Horace' else 'switch.horace_charge' }}"
+
+    - action: shell_command.log_decision
+      data:
+        system: ev
+        automation_id: auto_ev_044
+        decision_code: maint_charge_started
+        decision_text: "Maintenance charging started for {{ maint_car }}"
+        context: >
+          {{ {'car': maint_car,
+              'car_soc': fresh_soc | float,
+              'target_soc': min_soc | float,
+              'horace_soc': horace_soc | float,
+              'horatio_soc': horatio_soc | float,
+              'tariff': states('sensor.energy_tariff_current'),
+              'is_critical': fresh_soc < hard_floor
+          } | tojson }}
 
     - action: logbook.log
       data:

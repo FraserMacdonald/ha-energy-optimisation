@@ -1079,6 +1079,14 @@ def _clear_banking(token):
     ha_select_option("input_select.jacuzzi_banking_strategy", "none", token)
 
 
+def _log_banking_decision(code, text, context, token):
+    """Log a banking decision to the database."""
+    from log_to_db import log_decision
+    import json
+    log_decision("jacuzzi", "solar_forecast.py", code, text,
+                 json.dumps(context))
+
+
 def cmd_banking(token):
     """Compute optimal thermal banking target for jacuzzi.
 
@@ -1108,6 +1116,13 @@ def cmd_banking(token):
         "unknown", "unavailable"
     ) else standby
 
+    # Check if banking is currently active (for cleared logging)
+    prev_target_str = ha_state("input_number.jacuzzi_banking_target_temp", token)
+    banking_was_active = (
+        prev_target_str is not None
+        and float(prev_target_str or 0) > 0
+    )
+
     # k values per ambient temperature band
     k_cold = float(ha_state("input_number.jacuzzi_k_cold", token) or 0.040)
     k_mild = float(ha_state("input_number.jacuzzi_k_mild", token) or 0.035)
@@ -1133,6 +1148,13 @@ def cmd_banking(token):
         return
 
     if not events:
+        if banking_was_active:
+            _log_banking_decision(
+                "banking_cleared",
+                "Banking cleared — no events within 48h",
+                {"reason": "no_events", "water_temp": t_water},
+                token,
+            )
         _clear_banking(token)
         print("Banking: No events within 48h. Cleared.")
         return
@@ -1142,6 +1164,14 @@ def cmd_banking(token):
     hours_to_event = (event_start - now_utc).total_seconds() / 3600
 
     if hours_to_event < 1:
+        if banking_was_active:
+            _log_banking_decision(
+                "banking_cleared",
+                f"Banking cleared — event in <1h ({event['summary']})",
+                {"reason": "event_imminent", "event": event["summary"],
+                 "water_temp": t_water},
+                token,
+            )
         _clear_banking(token)
         print(f"Banking: Event in <1h ({event['summary']}). Cleared.")
         return
@@ -1183,6 +1213,13 @@ def cmd_banking(token):
         current_hour += timedelta(hours=1)
 
     if not timeline:
+        if banking_was_active:
+            _log_banking_decision(
+                "banking_cleared",
+                "Banking cleared — no hours to analyse",
+                {"reason": "no_hours", "water_temp": t_water},
+                token,
+            )
         _clear_banking(token)
         print("Banking: No hours to analyse. Cleared.")
         return
@@ -1318,6 +1355,36 @@ def cmd_banking(token):
 
     tz_offset = get_tz_offset(now_utc.replace(tzinfo=timezone.utc))
     event_local = event_start + timedelta(hours=tz_offset)
+
+    # --- Log banking decision ---
+    if strategy != "none":
+        code = f"banking_{strategy}"
+        cheap_count = sum(1 for h in timeline if h["is_cheap"])
+        expensive_count = len(timeline) - cheap_count
+        _log_banking_decision(
+            code,
+            f"Banking target set to {banking_target:.1f}°C ({strategy})",
+            {
+                "event_time": event_local.strftime("%Y-%m-%d %H:%M"),
+                "hours_to_event": round(hours_to_event, 1),
+                "target_temp": round(banking_target, 1),
+                "strategy": strategy,
+                "water_temp": round(t_water, 1),
+                "cheap_hours": cheap_count,
+                "expensive_hours": expensive_count,
+                "solar_hours": expected_solar_hours,
+                "solar_gain_c": round(expected_solar_gain, 1),
+            },
+            token,
+        )
+    elif banking_was_active:
+        _log_banking_decision(
+            "banking_cleared",
+            "Banking cleared — strategy is none",
+            {"reason": "not_worthwhile", "water_temp": round(t_water, 1),
+             "event_time": event_local.strftime("%Y-%m-%d %H:%M")},
+            token,
+        )
 
     print(f"Banking: target={banking_target:.1f}°C, strategy={strategy}, "
           f"solar={expected_solar_hours:.0f}h(+{expected_solar_gain:.1f}°C), "

@@ -385,42 +385,62 @@
                 - condition: state
                   entity_id: input_boolean.energy_jacuzzi_heat_allowed
                   state: "on"
+          sequence:
             # High-tariff guard: block new grid heating during peak unless
             # solar surplus >6kW or heater already running (target already 40)
-            - condition: template
-              value_template: >
-                {% set is_high = is_state('binary_sensor.energy_high_tariff_active', 'on') %}
-                {% set solar_surplus = states('sensor.energy_solar_surplus_w') | float(0) > 6000 %}
-                {% set already_heating = states('input_number.jacuzzi_target_temp') | float(15) >= 40 %}
-                {{ not is_high or solar_surplus or already_heating }}
-          sequence:
-            - action: input_number.set_value
-              target:
-                entity_id: input_number.jacuzzi_target_temp
-              data:
-                value: 40
-            - action: climate.set_temperature
-              target:
-                entity_id: climate.jacuzzi
-              data:
-                temperature: 40
-            - action: climate.set_hvac_mode
-              target:
-                entity_id: climate.jacuzzi
-              data:
-                hvac_mode: heat
+            - if:
+                - condition: template
+                  value_template: >
+                    {% set is_high = is_state('binary_sensor.energy_high_tariff_active', 'on') %}
+                    {% set solar_surplus = states('sensor.energy_solar_surplus_w') | float(0) > 6000 %}
+                    {% set already_heating = states('input_number.jacuzzi_target_temp') | float(15) >= 40 %}
+                    {{ not is_high or solar_surplus or already_heating }}
+              then:
+                - action: input_number.set_value
+                  target:
+                    entity_id: input_number.jacuzzi_target_temp
+                  data:
+                    value: 40
+                - action: climate.set_temperature
+                  target:
+                    entity_id: climate.jacuzzi
+                  data:
+                    temperature: 40
+                - action: climate.set_hvac_mode
+                  target:
+                    entity_id: climate.jacuzzi
+                  data:
+                    hvac_mode: heat
 
-            - action: shell_command.log_decision
-              data:
-                system: jacuzzi
-                automation_id: auto_jacuzzi_040
-                decision_code: calendar_preheat
-                decision_text: "Calendar preheat started"
-                context: >
-                  {{ {'event_time': state_attr('calendar.jacuzzi_schedule', 'start_time') | string,
-                      'smart_start': states('sensor.jacuzzi_smart_start_time'),
-                      'current_temp': state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1)
-                  } | tojson }}
+                - action: shell_command.log_decision
+                  data:
+                    system: jacuzzi
+                    automation_id: auto_jacuzzi_040
+                    decision_code: calendar_preheat
+                    decision_text: "Calendar preheat started"
+                    context: >
+                      {{ {'event_time': state_attr('calendar.jacuzzi_schedule', 'start_time') | string,
+                          'smart_start': states('sensor.jacuzzi_smart_start_time'),
+                          'current_temp': state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1),
+                          'tariff': states('sensor.energy_tariff_current'),
+                          'rate_chf': state_attr('sensor.energy_tariff_current', 'rate_chf') | float(0),
+                          'solar_surplus_w': states('sensor.energy_solar_surplus_w') | float(0) | round(0),
+                          'is_high_tariff': is_state('binary_sensor.energy_high_tariff_active', 'on')
+                      } | tojson }}
+              else:
+                - action: shell_command.log_decision
+                  data:
+                    system: jacuzzi
+                    automation_id: auto_jacuzzi_040
+                    decision_code: preheat_blocked_high_tariff
+                    decision_text: "Preheat due but blocked by high tariff"
+                    context: >
+                      {{ {'event_time': state_attr('calendar.jacuzzi_schedule', 'start_time') | string,
+                          'smart_start': states('sensor.jacuzzi_smart_start_time'),
+                          'current_temp': state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1),
+                          'tariff': states('sensor.energy_tariff_current'),
+                          'solar_surplus_w': states('sensor.energy_solar_surplus_w') | float(0) | round(0)
+                      } | tojson }}
 
         # Event ongoing — maintain temperature
         - conditions:
@@ -646,6 +666,89 @@
           Forecast at event: {{ forecast_at_event }}°C.
           Forecast at mid-heating: {{ forecast_at_heating }}°C.
           Delta: {{ (forecast_at_event | float - states('sensor.la_dole_temperature') | float(10)) | round(1) }}°C
+
+
+# ==============================================================================
+# 043 – SMART START LOGGER
+# Logs whether the smart start time was shifted to avoid peak tariff.
+# ==============================================================================
+- id: auto_jacuzzi_043_smart_start_logger
+  alias: "Jacuzzi 043 – Smart Start Logger"
+  description: >
+    Logs a decision whenever sensor.jacuzzi_smart_start_time changes.
+    Compares the actual smart start against a naive (unshifted) start to
+    determine whether the start was shifted earlier to avoid peak tariff.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: state
+      entity_id: sensor.jacuzzi_smart_start_time
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ trigger.to_state is not none
+           and trigger.to_state.state not in ['unavailable', 'unknown', ''] }}
+
+  actions:
+    - variables:
+        smart_start: "{{ states('sensor.jacuzzi_smart_start_time') }}"
+        event_time: "{{ state_attr('calendar.jacuzzi_schedule', 'start_time') | default('') }}"
+        heat_hours: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(3) }}"
+        solar_priority: "{{ is_state('input_boolean.jacuzzi_solar_priority', 'on') }}"
+        # Naive start = event_time minus heat_hours (no peak avoidance)
+        naive_start: >
+          {% if event_time not in ['', 'unavailable', 'unknown'] %}
+            {{ (as_timestamp(event_time) - heat_hours | float * 3600)
+               | timestamp_custom('%Y-%m-%dT%H:%M:%S') }}
+          {% else %}
+            {{ smart_start }}
+          {% endif %}
+        shift_hours: >
+          {% if event_time not in ['', 'unavailable', 'unknown']
+             and smart_start not in ['unavailable', 'unknown', ''] %}
+            {{ ((as_timestamp(naive_start) - as_timestamp(smart_start)) / 3600)
+               | round(2) }}
+          {% else %}
+            0
+          {% endif %}
+        is_shifted: "{{ shift_hours | float > 0.08 }}"
+
+    - if:
+        - condition: template
+          value_template: "{{ is_shifted }}"
+      then:
+        - action: shell_command.log_decision
+          data:
+            system: jacuzzi
+            automation_id: auto_jacuzzi_043
+            decision_code: smart_start_shifted
+            decision_text: "Smart start shifted {{ shift_hours }}h earlier to avoid peak"
+            context: >
+              {{ {'smart_start': smart_start,
+                  'naive_start': naive_start,
+                  'shift_hours': shift_hours | float,
+                  'event_time': event_time,
+                  'heat_hours': heat_hours | float,
+                  'solar_priority': solar_priority
+              } | tojson }}
+      else:
+        - action: shell_command.log_decision
+          data:
+            system: jacuzzi
+            automation_id: auto_jacuzzi_043
+            decision_code: smart_start_normal
+            decision_text: "Smart start calculated, no peak conflict"
+            context: >
+              {{ {'smart_start': smart_start,
+                  'naive_start': naive_start,
+                  'shift_hours': shift_hours | float,
+                  'event_time': event_time,
+                  'heat_hours': heat_hours | float,
+                  'solar_priority': solar_priority
+              } | tojson }}
 
 
 # ==============================================================================

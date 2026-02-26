@@ -458,5 +458,30 @@ LocalTuya couldn't rediscover the water quality monitor after the server failure
 - Jacuzzi 040 blocks new grid heating during peak (safety net for edge cases)
 - EV maintenance only nags for second car when first car hasn't reached 50% target, or when any car is critically low (<10%)
 
+## What's Done (Decision Audit Trail Logging)
+Structured logging to MariaDB `log_decisions` table for visibility into WHY the system makes each decision. ~10-20 rows/day.
+
+### Decision Codes:
+| Code | System | Source | When |
+|------|--------|--------|------|
+| `smart_start_shifted` | jacuzzi | 043 | Start time moved earlier to avoid peak |
+| `smart_start_normal` | jacuzzi | 043 | Start calculated, no peak conflict |
+| `preheat_blocked_high_tariff` | jacuzzi | 040 | Preheat due but blocked by peak tariff |
+| `calendar_preheat` (enhanced) | jacuzzi | 040 | Preheat started — includes tariff/solar context |
+| `banking_solar` / `_low_tariff` / `_combined` | jacuzzi | solar_forecast.py | Banking target set |
+| `banking_cleared` | jacuzzi | solar_forecast.py | Active banking cleared |
+| `maint_nag_suppressed` | ev | 044 | Nag suppressed (other car at target) |
+| `maint_charge_started` | ev | 044 | Maintenance charging began |
+| `plug_nag_suppressed` | ev | 080 | Plug nag suppressed (home car at target) |
+| `tariff_shift_to_high` / `_to_low` | energy | 025 | Tariff window transition |
+
+### Changes:
+- [x] `jacuzzi_automations.yaml` — New `jacuzzi_043` smart start logger, restructured `jacuzzi_040` preheat with if/then/else for blocked logging, enhanced `calendar_preheat` context
+- [x] `ev_automations.yaml` — `ev_044`: `maint_nag_suppressed` (else branch) + `maint_charge_started` (before log_action)
+- [x] `ev_notification_automations.yaml` — `ev_080`: suppression check moved from conditions to actions with `plug_nag_suppressed` logging
+- [x] `energy_solar_forecast_automations.yaml` — New `energy_025` tariff transition logger
+- [x] `scripts/solar_forecast.py` — Banking decision logging (`banking_*` / `banking_cleared`) in `cmd_banking()`
+- [x] yamllint passes on all modified files
+
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
