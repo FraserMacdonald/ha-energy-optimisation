@@ -18,7 +18,10 @@ REPO = "FraserMacdonald/ha-energy-optimisation"
 BRANCH = "main"
 BASE_URL = f"https://api.github.com/repos/{REPO}/git/trees/{BRANCH}?recursive=1"
 RAW_URL = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}"
-DEST = Path("/homeassistant")
+# HA Core container: /config is the config dir (API reports config_dir=/config).
+# /homeassistant may be a symlink or legacy path — deploy to both to be safe.
+DEST_PRIMARY = Path("/config")
+DEST_FALLBACK = Path("/homeassistant")
 
 
 def fetch_tree():
@@ -57,18 +60,18 @@ def deploy():
     errors = 0
     for rel_path in deploy_files:
         if rel_path.startswith("config/"):
-            # config/foo -> /homeassistant/foo
-            dest_path = DEST / rel_path[len("config/"):]
+            sub = rel_path[len("config/"):]
         elif rel_path.startswith("scripts/"):
-            # scripts/foo -> /homeassistant/scripts/foo
-            dest_path = DEST / rel_path
+            sub = rel_path
         else:
             continue
 
         try:
             content = download_file(rel_path)
-            dest_path.parent.mkdir(parents=True, exist_ok=True)
-            dest_path.write_bytes(content)
+            for dest in (DEST_PRIMARY, DEST_FALLBACK):
+                dest_path = dest / sub
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                dest_path.write_bytes(content)
             updated += 1
         except Exception as e:
             print(f"  ERROR: {rel_path} -> {e}")
