@@ -73,7 +73,8 @@ def log_cost(system, s, gl, gh):
     c.commit()
     c.close()
 
-def query_decisions_today():
+def query_decisions_today(to_file=False):
+    import json as _json
     c = conn()
     cur = c.cursor()
     cur.execute(
@@ -82,6 +83,19 @@ def query_decisions_today():
     )
     rows = cur.fetchall()
     c.close()
+    if to_file:
+        out = []
+        for r in rows:
+            out.append({
+                "time": r[0].strftime("%H:%M:%S") if r[0] else "?",
+                "system": r[1], "automation_id": r[2],
+                "code": r[3], "text": r[4], "context": r[5],
+            })
+        os.makedirs("/config/www", exist_ok=True)
+        with open("/config/www/decisions.json", "w") as f:
+            _json.dump({"count": len(out), "decisions": out}, f, indent=2)
+        print(f"Wrote {len(out)} decisions to /config/www/decisions.json")
+        return
     if not rows:
         print("No decisions logged today.")
         return
@@ -104,3 +118,5 @@ if __name__ == "__main__":
         log_cost(*sys.argv[2:6])
     elif cmd == "query_today":
         query_decisions_today()
+    elif cmd == "query_today_file":
+        query_decisions_today(to_file=True)

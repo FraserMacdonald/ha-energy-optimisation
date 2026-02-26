@@ -99,6 +99,7 @@ shell_command:
   solar_banking: "python3 /homeassistant/scripts/solar_forecast.py banking"
   # --- Query ---
   query_decisions_today: "python3 /homeassistant/scripts/log_to_db.py query_today"
+  query_decisions_today_file: "python3 /homeassistant/scripts/log_to_db.py query_today_file"
   # --- Deploy from Git ---
   deploy_from_git: "cd /homeassistant/ha-restore && git fetch --all && git reset --hard origin/main && cp -r config/* /config/ && cp -r config/* /homeassistant/ && mkdir -p /config/scripts /homeassistant/scripts && cp scripts/* /config/scripts/ && cp scripts/* /homeassistant/scripts/"
   # --- Deploy via GitHub API (fallback when git binary unavailable) ---
