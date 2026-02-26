@@ -1210,6 +1210,11 @@
     stored_traces: 10
 
   triggers:
+    # Manual car override requested
+    - trigger: state
+      entity_id: input_select.ev_requested_vehicle
+      not_to: "None"
+
     # Trip data changed (today or tomorrow)
     - trigger: state
       entity_id:
