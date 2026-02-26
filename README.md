@@ -43,4 +43,4 @@ See `docs/001_architectural_review.md` for full conventions and design decisions
 - **Hardware:** Mini PC
 - **Solar:** SolarEdge inverter
 - **EV:** Tesla (multi-car)
-- **Jacuzzi:** Smart-switched heater (3500W)
+- **Jacuzzi:** Smart-switched heater (6000W)
