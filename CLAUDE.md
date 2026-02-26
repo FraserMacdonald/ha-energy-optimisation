@@ -25,7 +25,7 @@ ha-energy-optimisation/
 │   ├── scripts/               # Manual trigger scripts
 │   ├── python_scripts/        # Python helpers (elevation, text store)
 │   ├── scenes/
-│   └── dashboards/
+│   └── dashboards/            # 3-tier: home.yaml, admin.yaml, debug.yaml
 ├── docs/                      # Architecture docs and changelogs
 │   ├── 001_architectural_review.md
 │   └── 003_phase_1a_changelog.md
@@ -510,6 +510,44 @@ Fraser can now request a specific car via `input_select.ev_requested_vehicle`. T
 - [x] `automations/ev/ev_automations.yaml` — ev_044: tariff gate + high-tariff trigger; ev_030: manual override branch
 - [x] `dashboards/ev.yaml` — Car Override selector card added
 - [x] yamllint passes on all modified files
+
+## What's Done (Dashboard Redesign – 3-Tier Split)
+Replaced 4 per-system dashboards (energy, ev, jacuzzi, grow_tent) with 3 role-based dashboards. Heather gets a clean Home view; Fraser gets Admin monitoring with tabs; Debug collects broken entities and watchdog canaries.
+
+### New Dashboards:
+| Dashboard | File | Path | Views | Admin-only |
+|-----------|------|------|-------|------------|
+| Home | `dashboards/home.yaml` | `lovelace-home` | 1 | No |
+| Admin | `dashboards/admin.yaml` | `lovelace-admin` | 4 (energy, jacuzzi, ev, grow-tent) | Yes |
+| Debug | `dashboards/debug.yaml` | `lovelace-debug` | 1 | Yes |
+
+### Home Dashboard (~15 cards):
+- At a Glance: system status + tariff + surplus, solar actual vs forecast, today's savings
+- Jacuzzi: climate card, status summary, event/prediction (conditional), quick actions (4h override, heat now, standby), toggle chips (automation, solar priority, manual override)
+- Cars: Horace + Horatio status, Fraser/Heather trip today (conditional), EV controls (allow charging x2, trip mode x2, request car, solar mode, external charge)
+- Grow Tent: conditional summary (hidden when mode = idle), links to Admin grow-tent view
+
+### Admin Dashboard (~55 cards, 4 views):
+- **Energy view**: all existing energy.yaml cards + new issues banner (conditional, links to debug) + orchestrator internals (tier, allocation JSON, heartbeat, output booleans)
+- **Jacuzzi view**: all existing jacuzzi.yaml cards + banking internals + heating progress tracking
+- **EV view**: all existing ev.yaml cards + planner internals + SOC predictions + energy tracking + advanced settings
+- **Grow Tent view**: all existing grow_tent.yaml cards + offline warning banner (links to debug)
+
+### Debug Dashboard (~10 cards):
+- Watchdog summary + all 12 canaries (SolarEdge, Tesla Fleet, Balboa Spa, EPEX Spot, CalDAV, Met.no, 6 grow tent groups)
+- Grow tent broken devices: Shelly plugs (5), Meross plugs (2), LocalTuya (1), ESPHome pumps/fan (9), automation TODOs (2)
+- Watchdog settings
+
+### Files Changed:
+- [x] `config/dashboards/home.yaml` — **CREATED**
+- [x] `config/dashboards/admin.yaml` — **CREATED**
+- [x] `config/dashboards/debug.yaml` — **CREATED**
+- [x] `config/configuration.yaml` — 4 dashboard registrations replaced with 3 new ones
+- [x] `config/dashboards/energy.yaml` — **DELETED**
+- [x] `config/dashboards/ev.yaml` — **DELETED**
+- [x] `config/dashboards/jacuzzi.yaml` — **DELETED**
+- [x] `config/dashboards/grow_tent.yaml` — **DELETED**
+- [x] yamllint passes on all files
 
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
