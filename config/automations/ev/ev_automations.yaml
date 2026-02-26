@@ -1252,6 +1252,112 @@
       at: "20:30:00"
 
   actions:
+    # Manual car override — Fraser requests a specific car for next trip
+    - variables:
+        override_car: "{{ states('input_select.ev_requested_vehicle') }}"
+        has_override: "{{ override_car in ['Horace', 'Horatio'] }}"
+    - if:
+        - condition: template
+          value_template: "{{ has_override }}"
+      then:
+        - variables:
+            other_car: "{{ 'Horatio' if override_car == 'Horace' else 'Horace' }}"
+            km_fraser_today: "{{ states('input_number.ev_trip_km_fraser_today') | float(0) }}"
+            km_fraser_tmrw: "{{ states('input_number.ev_trip_km_fraser_tomorrow') | float(0) }}"
+            trip_km: "{{ km_fraser_today if km_fraser_today > 0 else km_fraser_tmrw }}"
+            wh_per_km: "{{ 180 if override_car == 'Horace' else 215 }}"
+            battery_kwh: "{{ 70 if override_car == 'Horace' else 90 }}"
+        - variables:
+            soc_needed: "{{ ((trip_km | float * wh_per_km | float) / (battery_kwh | float * 10)) | round(0) }}"
+            current_soc: "{{ states('input_number.ev_' ~ override_car | lower ~ '_predicted_soc_home') | float(50) }}"
+            heather_soc: "{{ states('input_number.ev_' ~ other_car | lower ~ '_predicted_soc_home') | float(50) }}"
+        - variables:
+            target_soc: "{{ [[current_soc | float + soc_needed | float + 10, 100] | min, 20] | max | int }}"
+            decision_summary: >
+              Override: Fraser={{ override_car }}, Heather={{ other_car }}.
+              Night charge: {{ override_car }} to {{ target_soc }}%.
+        # Assign cars
+        - action: input_select.select_option
+          target:
+            entity_id: input_select.ev_fraser_assigned_car
+          data:
+            option: "{{ override_car }}"
+        - action: input_select.select_option
+          target:
+            entity_id: input_select.ev_heather_assigned_car
+          data:
+            option: "{{ other_car }}"
+        # Night charge = override car (needs to be ready)
+        - action: input_select.select_option
+          target:
+            entity_id: input_select.ev_night_charge_car
+          data:
+            option: "{{ override_car }}"
+        - action: input_number.set_value
+          target:
+            entity_id: input_number.ev_night_charge_target_soc
+          data:
+            value: "{{ target_soc }}"
+        - action: input_number.set_value
+          target:
+            entity_id: input_number.ev_fraser_departure_soc
+          data:
+            value: "{{ target_soc }}"
+        - action: input_number.set_value
+          target:
+            entity_id: input_number.ev_heather_departure_soc
+          data:
+            value: "{{ heather_soc | round(0) }}"
+        - action: "input_boolean.turn_off"
+          target:
+            entity_id: input_boolean.ev_external_charge_required
+        - action: input_select.set_options
+          target:
+            entity_id: input_select.ev_last_planner_decision
+          data:
+            options:
+              - "{{ decision_summary[:255] }}"
+        - action: logbook.log
+          data:
+            name: "EV Planner"
+            message: "{{ decision_summary }}"
+        - action: shell_command.log_decision
+          data:
+            system: ev
+            automation_id: auto_ev_030
+            decision_code: planner_override
+            decision_text: "Manual override: Fraser takes {{ override_car }}"
+            context: >
+              {{ {'override_car': override_car,
+                  'other_car': other_car,
+                  'trip_km': trip_km | float,
+                  'target_soc': target_soc | int,
+                  'current_soc': current_soc | float
+              } | tojson }}
+        # Notify to plug in if charging needed
+        - if:
+            - condition: template
+              value_template: "{{ current_soc | float < target_soc | float }}"
+          then:
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                title: "EV Planner Override"
+                message: >
+                  You requested {{ override_car }} for tomorrow ({{ trip_km | round(0) }}km).
+                  Currently {{ current_soc | round(0) }}%, needs {{ target_soc }}%.
+                  Please plug in {{ override_car }} tonight.
+                data:
+                  push:
+                    interruption-level: time-sensitive
+        # Clear the override (one-time use)
+        - action: input_select.select_option
+          target:
+            entity_id: input_select.ev_requested_vehicle
+          data:
+            option: "None"
+        - stop: "Manual car override applied"
+
+    # Normal optimization follows
     - variables:
         # Trip distances – prefer today (day-of), fall back to tomorrow (planning)
         km_fraser_today: "{{ states('input_number.ev_trip_km_fraser_today') | float(0) }}"
@@ -2011,6 +2117,9 @@
   triggers:
     - trigger: time_pattern
       minutes: "/30"
+    - trigger: state
+      entity_id: binary_sensor.energy_high_tariff_active
+      to: "on"
 
   conditions:
     # Don't interfere when planner + cheap tariff is handling it
@@ -2022,6 +2131,51 @@
                and states('sensor.ev_cheap_tariff_active') == 'on' }}
 
   actions:
+    # Tariff gate: non-critical buffer charging only during low tariff
+    # 10% hard floor charges at any tariff (safety override)
+    - variables:
+        low_tariff: "{{ is_state('binary_sensor.energy_low_tariff_active', 'on') }}"
+    - if:
+        - condition: template
+          value_template: "{{ not low_tariff }}"
+      then:
+        - variables:
+            horace_soc_check: "{{ states('sensor.horace_battery_level') | float(100) }}"
+            horatio_soc_check: "{{ states('sensor.horatio_battery_level') | float(100) }}"
+            hard_floor_check: 10
+            any_critical: "{{ horace_soc_check < hard_floor_check or horatio_soc_check < hard_floor_check }}"
+            horace_buf_charging: "{{ is_state('switch.horace_charge', 'on') }}"
+            horatio_buf_charging: "{{ is_state('switch.horatio_charge', 'on') }}"
+            any_charging: "{{ horace_buf_charging or horatio_buf_charging }}"
+        - if:
+            - condition: template
+              value_template: "{{ not any_critical }}"
+          then:
+            # Stop any active buffer charge during peak
+            - if:
+                - condition: template
+                  value_template: "{{ any_charging }}"
+              then:
+                - action: switch.turn_off
+                  target:
+                    entity_id:
+                      - switch.horace_charge
+                      - switch.horatio_charge
+            - action: shell_command.log_decision
+              data:
+                system: ev
+                automation_id: auto_ev_044
+                decision_code: "{{ 'maint_stopped_high_tariff' if any_charging else 'maint_blocked_high_tariff' }}"
+                decision_text: "{{ 'Buffer charging stopped — high tariff started' if any_charging else 'Buffer charging deferred — high tariff active' }}"
+                context: >
+                  {{ {'horace_soc': horace_soc_check | float,
+                      'horatio_soc': horatio_soc_check | float,
+                      'was_charging': any_charging,
+                      'tariff': states('sensor.energy_tariff_current')
+                  } | tojson }}
+            - stop: "High tariff active — defer buffer charging"
+
+    # Critical car below 10% falls through to charge at any tariff
     - variables:
         buffer_target: "{{ states('input_number.energy_ev_buffer_target_soc') | float(80) }}"
 

@@ -137,6 +137,14 @@ views:
             name: Solar Charging Mode
             icon: mdi:solar-power
 
+      # ── CAR OVERRIDE ──
+      - type: entities
+        title: Car Override
+        entities:
+          - entity: input_select.ev_requested_vehicle
+            name: "Fraser: Request Specific Car"
+            icon: mdi:car-key
+
       # ── TODAY'S ENERGY ──
       - type: custom:mushroom-template-card
         primary: "Today's Charging"
