@@ -1,0 +1,42 @@
+###############################################################################
+# WATCHDOG SYSTEM – Integration Health Monitoring
+# File: packages/watchdog_system.yaml
+#
+# Helpers for the watchdog system that monitors integration health and
+# sends alerts when integrations go down or recover.
+###############################################################################
+
+input_boolean:
+  watchdog_enabled:
+    name: "Watchdog Enabled"
+    icon: mdi:shield-check
+
+input_number:
+  watchdog_cooldown_minutes:
+    name: "Watchdog Cooldown Minutes"
+    min: 5
+    max: 120
+    step: 5
+    unit_of_measurement: "min"
+    icon: mdi:timer-sand
+    mode: box
+
+input_datetime:
+  watchdog_last_alert_time:
+    name: "Watchdog Last Alert Time"
+    icon: mdi:clock-alert
+    has_date: true
+    has_time: true
+
+  watchdog_ha_start_time:
+    name: "Watchdog HA Start Time"
+    icon: mdi:clock-start
+    has_date: true
+    has_time: true
+
+input_select:
+  watchdog_last_failure:
+    name: "Watchdog Last Failure"
+    icon: mdi:alert-circle
+    options:
+      - "none"

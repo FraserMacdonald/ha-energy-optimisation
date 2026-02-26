@@ -1,0 +1,246 @@
+###############################################################################
+# WATCHDOG SENSORS – Integration Health Monitoring
+# File: templates/energy/energy_watchdog_sensors.yaml
+#
+# 12 binary sensors (one canary per integration group) + 1 aggregator sensor.
+# Each binary_sensor is ON when healthy, OFF when down.
+# Checks: state not in ['unknown', 'unavailable', 'none', '']
+###############################################################################
+
+# =============================================================================
+# ENERGY & VEHICLE CANARY SENSORS
+# =============================================================================
+
+- binary_sensor:
+    - name: "Watchdog SolarEdge Healthy"
+      unique_id: watchdog_solaredge_healthy
+      device_class: connectivity
+      icon: mdi:solar-panel
+      state: >
+        {{ states('sensor.solaredge_current_power') not in ['unknown', 'unavailable', 'none', ''] }}
+      attributes:
+        group: "SolarEdge"
+        criticality: "critical"
+        impact: "Surplus, orchestrator, EV/jacuzzi solar"
+
+    - name: "Watchdog Tesla Fleet Healthy"
+      unique_id: watchdog_tesla_fleet_healthy
+      device_class: connectivity
+      icon: mdi:car-electric
+      state: >
+        {{ states('sensor.horace_battery_level') not in ['unknown', 'unavailable', 'none', ''] }}
+      attributes:
+        group: "Tesla Fleet"
+        criticality: "critical"
+        impact: "EV charging, SOC, plug detection"
+
+    - name: "Watchdog Balboa Spa Healthy"
+      unique_id: watchdog_balboa_spa_healthy
+      device_class: connectivity
+      icon: mdi:hot-tub
+      state: >
+        {{ states('climate.jacuzzi') not in ['unknown', 'unavailable', 'none', ''] }}
+      attributes:
+        group: "Balboa Spa"
+        criticality: "critical"
+        impact: "Temperature, heating, freeze protection"
+
+    - name: "Watchdog EPEX Spot Healthy"
+      unique_id: watchdog_epex_spot_healthy
+      device_class: connectivity
+      icon: mdi:chart-line
+      state: >
+        {{ states('sensor.spot_price_chf_kwh') not in ['unknown', 'unavailable', 'none', ''] }}
+      attributes:
+        group: "EPEX Spot"
+        criticality: "high"
+        impact: "Battery arbitrage, dynamic pricing"
+
+    - name: "Watchdog CalDAV Healthy"
+      unique_id: watchdog_caldav_healthy
+      device_class: connectivity
+      icon: mdi:calendar
+      state: >
+        {{ states('calendar.jacuzzi_schedule') not in ['unknown', 'unavailable', 'none', ''] }}
+      attributes:
+        group: "CalDAV"
+        criticality: "high"
+        impact: "Smart start, EV trip planning"
+
+    - name: "Watchdog Met.no Healthy"
+      unique_id: watchdog_metno_healthy
+      device_class: connectivity
+      icon: mdi:weather-cloudy
+      state: >
+        {{ states('weather.forecast_home') not in ['unknown', 'unavailable', 'none', ''] }}
+      attributes:
+        group: "Met.no"
+        criticality: "medium"
+        impact: "Solar forecast, ambient predictions"
+
+# =============================================================================
+# GROW TENT PER-DEVICE SENSORS
+# =============================================================================
+
+- binary_sensor:
+    - name: "Watchdog Grow Water Heater Healthy"
+      unique_id: watchdog_grow_water_heater_healthy
+      device_class: connectivity
+      icon: mdi:water-boiler
+      state: >
+        {{ states('sensor.meross_plug_water_heater_power') not in ['unknown', 'unavailable', 'none', ''] }}
+      attributes:
+        group: "Grow: Water Heater"
+        criticality: "high"
+        impact: "Water temp drops, root damage"
+
+    - name: "Watchdog Grow Water Pump Healthy"
+      unique_id: watchdog_grow_water_pump_healthy
+      device_class: connectivity
+      icon: mdi:water-pump
+      state: >
+        {{ states('switch.shellyplug_water_pump') not in ['unknown', 'unavailable', 'none', ''] }}
+      attributes:
+        group: "Grow: Water Pump"
+        criticality: "high"
+        impact: "No water circulation, roots starve"
+
+    - name: "Watchdog Grow Light Healthy"
+      unique_id: watchdog_grow_light_healthy
+      device_class: connectivity
+      icon: mdi:lightbulb-fluorescent-tube
+      state: >
+        {{ states('switch.shellyplug_marshydro_led') not in ['unknown', 'unavailable', 'none', '']
+           and states('switch.shellyplug_marshydro_ihub') not in ['unknown', 'unavailable', 'none', ''] }}
+      attributes:
+        group: "Grow: Light"
+        criticality: "high"
+        impact: "Light cycle broken, photoperiod stress"
+
+    - name: "Watchdog Grow Fans Healthy"
+      unique_id: watchdog_grow_fans_healthy
+      device_class: connectivity
+      icon: mdi:fan
+      state: >
+        {{ states('switch.shellyplug_air_fan') not in ['unknown', 'unavailable', 'none', '']
+           and states('switch.shellyplug_extraction_fan') not in ['unknown', 'unavailable', 'none', ''] }}
+      attributes:
+        group: "Grow: Fans"
+        criticality: "medium"
+        impact: "VPD/humidity uncontrolled"
+
+    - name: "Watchdog Grow Water Sensors Healthy"
+      unique_id: watchdog_grow_water_sensors_healthy
+      device_class: connectivity
+      icon: mdi:water-thermometer
+      state: >
+        {{ states('sensor.water_temperature') not in ['unknown', 'unavailable', 'none', ''] }}
+      attributes:
+        group: "Grow: Water Sensors"
+        criticality: "medium"
+        impact: "Blind to pH/EC/temp - can't detect problems"
+
+    - name: "Watchdog Grow Electronics Healthy"
+      unique_id: watchdog_grow_electronics_healthy
+      device_class: connectivity
+      icon: mdi:chip
+      state: >
+        {{ states('sensor.meross_plug_electronics_power') not in ['unknown', 'unavailable', 'none', ''] }}
+      attributes:
+        group: "Grow: Electronics"
+        criticality: "low"
+        impact: "ESP32/controller power lost"
+
+# =============================================================================
+# AGGREGATOR SENSOR
+# =============================================================================
+
+- sensor:
+    - name: "Watchdog System Health"
+      unique_id: watchdog_system_health
+      icon: mdi:shield-check
+      state: >
+        {% set ns = namespace(critical=[], down=[]) %}
+        {% set groups = [
+          'binary_sensor.watchdog_solaredge_healthy',
+          'binary_sensor.watchdog_tesla_fleet_healthy',
+          'binary_sensor.watchdog_balboa_spa_healthy',
+          'binary_sensor.watchdog_epex_spot_healthy',
+          'binary_sensor.watchdog_caldav_healthy',
+          'binary_sensor.watchdog_metno_healthy',
+          'binary_sensor.watchdog_grow_water_heater_healthy',
+          'binary_sensor.watchdog_grow_water_pump_healthy',
+          'binary_sensor.watchdog_grow_light_healthy',
+          'binary_sensor.watchdog_grow_fans_healthy',
+          'binary_sensor.watchdog_grow_water_sensors_healthy',
+          'binary_sensor.watchdog_grow_electronics_healthy'
+        ] %}
+        {% for entity in groups %}
+          {% if is_state(entity, 'off') %}
+            {% set ns.down = ns.down + [state_attr(entity, 'group')] %}
+            {% if state_attr(entity, 'criticality') == 'critical' %}
+              {% set ns.critical = ns.critical + [state_attr(entity, 'group')] %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        {% if ns.critical | length > 0 %}critical
+        {% elif ns.down | length > 0 %}degraded
+        {% else %}healthy{% endif %}
+      attributes:
+        groups_down: >
+          {% set ns = namespace(down=[]) %}
+          {% set groups = [
+            'binary_sensor.watchdog_solaredge_healthy',
+            'binary_sensor.watchdog_tesla_fleet_healthy',
+            'binary_sensor.watchdog_balboa_spa_healthy',
+            'binary_sensor.watchdog_epex_spot_healthy',
+            'binary_sensor.watchdog_caldav_healthy',
+            'binary_sensor.watchdog_metno_healthy',
+            'binary_sensor.watchdog_grow_water_heater_healthy',
+            'binary_sensor.watchdog_grow_water_pump_healthy',
+            'binary_sensor.watchdog_grow_light_healthy',
+            'binary_sensor.watchdog_grow_fans_healthy',
+            'binary_sensor.watchdog_grow_water_sensors_healthy',
+            'binary_sensor.watchdog_grow_electronics_healthy'
+          ] %}
+          {% for entity in groups %}
+            {% if is_state(entity, 'off') %}
+              {% set ns.down = ns.down + [state_attr(entity, 'group')] %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.down }}
+        count_down: >
+          {% set ns = namespace(count=0) %}
+          {% set groups = [
+            'binary_sensor.watchdog_solaredge_healthy',
+            'binary_sensor.watchdog_tesla_fleet_healthy',
+            'binary_sensor.watchdog_balboa_spa_healthy',
+            'binary_sensor.watchdog_epex_spot_healthy',
+            'binary_sensor.watchdog_caldav_healthy',
+            'binary_sensor.watchdog_metno_healthy',
+            'binary_sensor.watchdog_grow_water_heater_healthy',
+            'binary_sensor.watchdog_grow_water_pump_healthy',
+            'binary_sensor.watchdog_grow_light_healthy',
+            'binary_sensor.watchdog_grow_fans_healthy',
+            'binary_sensor.watchdog_grow_water_sensors_healthy',
+            'binary_sensor.watchdog_grow_electronics_healthy'
+          ] %}
+          {% for entity in groups %}
+            {% if is_state(entity, 'off') %}
+              {% set ns.count = ns.count + 1 %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.count }}
+        critical_down: >
+          {% set ns = namespace(critical=[]) %}
+          {% set groups = [
+            'binary_sensor.watchdog_solaredge_healthy',
+            'binary_sensor.watchdog_tesla_fleet_healthy',
+            'binary_sensor.watchdog_balboa_spa_healthy'
+          ] %}
+          {% for entity in groups %}
+            {% if is_state(entity, 'off') %}
+              {% set ns.critical = ns.critical + [state_attr(entity, 'group')] %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.critical }}

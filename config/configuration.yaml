@@ -52,6 +52,7 @@ homeassistant:
     ev_system: !include packages/ev_system.yaml
     energy_orchestrator: !include packages/energy_orchestrator_system.yaml
     energy_solar_forecast: !include packages/energy_solar_forecast_system.yaml
+    watchdog: !include packages/watchdog_system.yaml
     # --- Grow Tent (6 package files) ---
     grow_tent_system: !include packages/grow_tent/grow_tent_system.yaml
     grow_tent_sensors: !include packages/grow_tent/grow_tent_sensors.yaml
