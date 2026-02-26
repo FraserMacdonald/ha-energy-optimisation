@@ -182,7 +182,11 @@
         {% set cons = states('sensor.solaredge_power_consumption') | float(0) %}
         {% set cons_w = cons * 1000 if state_attr('sensor.solaredge_power_consumption', 'unit_of_measurement') == 'kW' else cons %}
         {% set margin_w = states('input_number.ev_solar_margin_w') | float(500) %}
-        {{ [0, (prod_w - cons_w - margin_w) / 1000] | max | round(2) }}
+        {# Add back current EV draw — SolarEdge consumption includes it #}
+        {% set horace_kw = states('sensor.horace_charger_power') | float(0) %}
+        {% set horatio_kw = states('sensor.horatio_charger_power') | float(0) %}
+        {% set ev_draw_w = (horace_kw + horatio_kw) * 1000 %}
+        {{ [0, (prod_w - cons_w + ev_draw_w - margin_w) / 1000] | max | round(2) }}
 
     - name: "EV Solar Available Amps"
       unique_id: ev_solar_available_amps
