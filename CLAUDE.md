@@ -549,5 +549,16 @@ Replaced 4 per-system dashboards (energy, ev, jacuzzi, grow_tent) with 3 role-ba
 - [x] `config/dashboards/grow_tent.yaml` — **DELETED**
 - [x] yamllint passes on all files
 
+## What's Done (EV Override Trigger Fix + Allow Charging Defaults)
+Two bugs found during dashboard testing.
+
+### Bug 1: ev_030 manual car override not triggering
+`input_select.ev_requested_vehicle` was checked in ev_030's actions but ev_030 had no trigger for it changing. Selecting a car on the dashboard did nothing — the planner only re-ran on trip data or SOC changes.
+- [x] `automations/ev/ev_automations.yaml` — Added `input_select.ev_requested_vehicle` trigger (`not_to: "None"`) to ev_030
+
+### Bug 2: allow_charging booleans resetting on restart
+`ev_horace_allow_charging` and `ev_horatio_allow_charging` had no `initial:` value, so both defaulted to `off` after every HA restart. Charging was silently blocked until manually re-enabled.
+- [x] `packages/ev_system.yaml` — Added `initial: true` to both allow_charging booleans
+
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
