@@ -300,7 +300,7 @@
 # 6. EV DEMAND SCENARIO
 # Classifies combined EV charging need into the orchestrator's state model.
 #
-# State X – Trip-critical: tomorrow's trip requires more SOC than predicted
+# State X – Trip-critical: upcoming trip (48h) requires more SOC than predicted
 #           at home for either car assigned to a driver      → Tier 1
 # State Y – Top-up:        a car is plugged at home, SOC below charge limit,
 #           but no trip-critical need                        → Tier 3
