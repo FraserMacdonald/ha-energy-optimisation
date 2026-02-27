@@ -560,5 +560,44 @@ Two bugs found during dashboard testing.
 `ev_horace_allow_charging` and `ev_horatio_allow_charging` had no `initial:` value, so both defaulted to `off` after every HA restart. Charging was silently blocked until manually re-enabled.
 - [x] `packages/ev_system.yaml` — Added `initial: true` to both allow_charging booleans
 
+## What's Done (Solar-First Energy Redesign)
+Economics-based energy logic: partial solar use, peak avoidance, 48h rolling window.
+
+### Core Problem Fixed:
+Jacuzzi demand scenario was comparing against standby temp (32°C) instead of event target (40°C), so system thought jacuzzi was "satisfied" when an event was upcoming. Multiple 6000W thresholds prevented partial solar use.
+
+### Solar Threshold Changes:
+- [x] `binary_sensor.solar_available_for_jacuzzi` — 6000W → 500W (any meaningful surplus)
+- [x] `sensor.jacuzzi_effective_standby_temp` — 6000W → 500W solar check (2 places)
+- [x] Demand scenario C/D — compare against 39.5°C (event target) not standby
+- [x] Orchestrator tiers 3+6 — accept partial solar (was requiring full 6kW)
+- [x] Notification source detection — 6000W → 500W (2 places)
+
+### Peak Tariff Economics:
+- [x] Orchestrator tier 3 grid: solar blend during peak when surplus >= 2250W (cheaper than low-tariff-later)
+- [x] Jacuzzi 020: peak guard (no pure grid heating during peak unless solar >= 2250W)
+- [x] Jacuzzi 022: fallback at 500W, only reverts during peak without solar
+- [x] Jacuzzi 040: solar threshold 6000W → 2250W for peak blend
+
+### EV 48h Rolling Window:
+- [x] EV 010: single 48h calendar query per person (was 4 separate day-bucket queries)
+- [x] EV 002: removed tomorrow→today midnight copy (EV 010 recalculates from calendar)
+- [x] EV 030: simplified km vars (direct 48h totals, no today/tomorrow fallback)
+- [x] EV demand scenario: simplified to use 48h rolling totals
+- [x] `_today` helpers repurposed as 48h rolling totals; `_tomorrow` deprecated (always 0)
+- [x] `sensor.ev_tomorrow_trip_summary` → `sensor.ev_upcoming_trip_summary`
+- [x] Notification labels updated: "tomorrow" → "upcoming trip"
+- [x] Admin dashboard: tomorrow trip cards → upcoming trip cards
+
+### Self-Consumption Tracking:
+- [x] `sensor.energy_self_consumption_pct` — real-time (production - export) / production
+- [x] Home dashboard self-consumption card with colour-coded icon
+
+### Key Economic Rules:
+- Solar pre-heating ALWAYS wins within 48h (break-even at ~156h/6.5 days)
+- Any solar surplus > 0 makes heating cheaper (partial solar + grid < full grid)
+- During peak with >= 2.25kW solar, heating NOW is cheaper than waiting for low tariff
+- 2.28 - 0.32×S vs 1.56 CHF/h → break-even at S = 2.25kW
+
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
