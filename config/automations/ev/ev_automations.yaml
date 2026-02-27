@@ -2217,6 +2217,20 @@
       then:
         - stop: "No action needed — car already charging or target met"
 
+    # Exit early if readiness goal already met (any home car >= min_soc)
+    # and no car is critically low. Avoids unnecessary car wakes.
+    - variables:
+        min_soc: "{{ states('input_number.ev_minimum_soc') | float(50) }}"
+        any_home_at_min: >
+          {{ (horace_home and horace_soc >= min_soc)
+             or (horatio_home and horatio_soc >= min_soc) }}
+        any_critical: "{{ horace_critical or horatio_critical }}"
+    - if:
+        - condition: template
+          value_template: "{{ any_home_at_min and not any_critical }}"
+      then:
+        - stop: "Readiness goal met — a home car is at minimum SOC, skipping wake"
+
     # Pick car:
     #   1. Critical car (below hard floor 10%) always wins — safety first
     #   2. Otherwise pick the car closest to min_soc — fastest path to goal
