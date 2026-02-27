@@ -581,6 +581,7 @@ Jacuzzi demand scenario was comparing against standby temp (32°C) instead of ev
 
 ### EV 48h Rolling Window:
 - [x] EV 010: single 48h calendar query per person (was 4 separate day-bucket queries)
+- [x] EV 010: overnight return-home logic — inserts `zone.home` waypoint between events on different calendar dates, multi-day events bridge without return-home
 - [x] EV 002: removed tomorrow→today midnight copy (EV 010 recalculates from calendar)
 - [x] EV 030: simplified km vars (direct 48h totals, no today/tomorrow fallback)
 - [x] EV demand scenario: simplified to use 48h rolling totals
