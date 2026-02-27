@@ -125,6 +125,11 @@
           value_template: >
             {% set hb = states('input_datetime.energy_orchestrator_last_heartbeat') %}
             {{ hb in ['unknown', 'unavailable'] or (as_timestamp(now()) - as_timestamp(hb)) > 300 }}
+    # Peak tariff guard: only heat if low tariff OR solar surplus > 2250W (blend saves money)
+    - condition: template
+      value_template: >
+        {{ is_state('binary_sensor.energy_high_tariff_active', 'off')
+           or states('sensor.energy_solar_surplus_w') | float(0) > 2250 }}
 
   actions:
     - variables:
@@ -314,9 +319,9 @@
 - id: auto_jacuzzi_022_solar_off_fallback
   alias: "Jacuzzi 022 – Solar Off Fallback"
   description: >
-    If jacuzzi is heating and solar surplus drops below 6000W for 10 min,
-    reverts target to standby — UNLESS low tariff is active and the event
-    target is still achievable within remaining time.
+    If jacuzzi is heating and solar surplus drops below 500W for 10 min,
+    reverts target to standby — UNLESS low tariff is active (grid is fine)
+    or surplus >= 500W during peak (blend is still cheaper).
   mode: single
   trace:
     stored_traces: 10
@@ -324,7 +329,7 @@
   triggers:
     - trigger: numeric_state
       entity_id: sensor.energy_solar_surplus_w
-      below: 6000
+      below: 500
       for:
         minutes: 10
 
@@ -361,35 +366,21 @@
         current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) }}"
         standby_temp: "{{ states('sensor.jacuzzi_effective_standby_temp') | float(states('input_number.jacuzzi_standby_temp') | float(15)) }}"
 
-        # Achievability guard: during low tariff, check if event target is still
-        # reachable in the remaining time before event
-        target_still_achievable: >
-          {% if not low_tariff %}
-            false
-          {% else %}
-            {% set cal = states.calendar.jacuzzi_schedule %}
-            {% if cal is not none and cal.attributes.start_time is defined %}
-              {% set event_ts = as_timestamp(cal.attributes.start_time) %}
-              {% set now_ts = as_timestamp(now()) %}
-              {% set hours_to_event = (event_ts - now_ts) / 3600 %}
-              {% set heat_hours = states('sensor.jacuzzi_heat_up_time_required') | float(99) %}
-              {{ hours_to_event > 0 and hours_to_event > heat_hours }}
-            {% else %}
-              false
-            {% endif %}
-          {% endif %}
+        # Continue heating check: low tariff means grid is cheap, don't revert
+        should_continue: >
+          {{ low_tariff }}
 
-    # During low tariff with achievable target: continue heating, don't revert
+    # During low tariff: continue heating (grid is cheap), don't revert
     - if:
         - condition: template
-          value_template: "{{ target_still_achievable }}"
+          value_template: "{{ should_continue }}"
       then:
         - action: logbook.log
           data:
             name: "Jacuzzi Solar Fallback"
             message: >
-              Solar dropped but low tariff active — continuing grid heating
-              (event target still achievable in remaining time).
+              Solar dropped below 500W but low tariff active — continuing
+              grid heating (grid at 0.26 CHF/kWh is acceptable).
       else:
         - action: input_number.set_value
           target:
@@ -400,8 +391,9 @@
           data:
             name: "Jacuzzi Solar Fallback"
             message: >
-              Solar surplus dropped below 6000W for 10 min. Reverting to standby
-              ({{ standby_temp }}°C) to prevent grid heating.
+              Solar surplus dropped below 500W for 10 min during peak tariff.
+              Reverting to standby ({{ standby_temp }}°C) to prevent expensive
+              grid heating.
         - action: shell_command.log_action
           data:
             system: jacuzzi
@@ -478,12 +470,13 @@
                     {{ hb in ['unknown', 'unavailable'] or (as_timestamp(now()) - as_timestamp(hb)) > 300 }}
           sequence:
             # High-tariff guard: block new grid heating during peak unless
-            # solar surplus >6kW or heater already running (target already 40)
+            # solar surplus >= 2250W (blend cheaper than low-tariff-later)
+            # or heater already running (target already 40)
             - if:
                 - condition: template
                   value_template: >
                     {% set is_high = is_state('binary_sensor.energy_high_tariff_active', 'on') %}
-                    {% set solar_surplus = states('sensor.energy_solar_surplus_w') | float(0) > 6000 %}
+                    {% set solar_surplus = states('sensor.energy_solar_surplus_w') | float(0) >= 2250 %}
                     {% set already_heating = states('input_number.jacuzzi_target_temp') | float(15) >= 40 %}
                     {{ not is_high or solar_surplus or already_heating }}
               then:
@@ -889,7 +882,7 @@
           {% endif %}
         surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
         source: >
-          {% if surplus | float > 6000 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
+          {% if surplus | float > 500 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
             solar
           {% elif is_state('binary_sensor.energy_low_tariff_active', 'on') %}
             low tariff

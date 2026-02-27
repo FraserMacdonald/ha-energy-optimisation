@@ -58,6 +58,27 @@ views:
           {% elif cloud < 70 %}orange
           {% else %}grey{% endif %}
 
+      # ── SELF-CONSUMPTION ──
+      - type: custom:mushroom-template-card
+        primary: >
+          Self-consumption: {{ states('sensor.energy_self_consumption_pct') | int(0) }}%
+        secondary: >
+          {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
+          {% if surplus > 0 %}Exporting {{ (surplus / 1000) | round(1) }}kW{% else %}No export{% endif %}
+          {% set jac_demand = states('sensor.energy_jacuzzi_demand_scenario') %}
+          {% set ev_demand = states('sensor.energy_ev_demand_scenario') %}
+          {% if jac_demand == 'E' and ev_demand == 'idle' %}
+          · No loads available
+          {% elif jac_demand == 'E' %}
+          · Jacuzzi satisfied
+          {% elif ev_demand == 'idle' %}
+          · No EV plugged
+          {% endif %}
+        icon: mdi:solar-power
+        icon_color: >
+          {% set pct = states('sensor.energy_self_consumption_pct') | int(0) %}
+          {% if pct > 80 %}green{% elif pct > 50 %}orange{% else %}red{% endif %}
+
       # ── TODAY'S SAVINGS ──
       - type: custom:mushroom-template-card
         primary: "Today's Savings"

@@ -206,20 +206,20 @@
 # =============================================================================
 
 - sensor:
-    - name: "EV Tomorrow Trip Summary"
+    - name: "EV Upcoming Trip Summary"
       unique_id: ev_tomorrow_trip_summary
       icon: mdi:car-multiple
       state: >
-        {% set km_f = states('input_number.ev_trip_km_fraser_tomorrow') | float(0) %}
-        {% set km_h = states('input_number.ev_trip_km_heather_tomorrow') | float(0) %}
+        {% set km_f = states('input_number.ev_trip_km_fraser_today') | float(0) %}
+        {% set km_h = states('input_number.ev_trip_km_heather_today') | float(0) %}
         {% if km_f == 0 and km_h == 0 %}
           No trips
         {% else %}
           F:{{ km_f | round(0) }}km H:{{ km_h | round(0) }}km
         {% endif %}
       attributes:
-        fraser_km: "{{ states('input_number.ev_trip_km_fraser_tomorrow') | float(0) }}"
-        heather_km: "{{ states('input_number.ev_trip_km_heather_tomorrow') | float(0) }}"
+        fraser_km: "{{ states('input_number.ev_trip_km_fraser_today') | float(0) }}"
+        heather_km: "{{ states('input_number.ev_trip_km_heather_today') | float(0) }}"
         fraser_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
         heather_car: "{{ states('input_select.ev_heather_assigned_car') }}"
         night_charge_car: "{{ states('input_select.ev_night_charge_car') }}"

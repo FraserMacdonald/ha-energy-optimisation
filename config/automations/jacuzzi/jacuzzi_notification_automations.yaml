@@ -201,7 +201,7 @@
           {% endif %}
         surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
         source: >
-          {% if surplus | float > 6000 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
+          {% if surplus | float > 500 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
             solar ({{ surplus }}W)
           {% elif is_state('binary_sensor.energy_low_tariff_active', 'on') %}
             low tariff
@@ -695,7 +695,7 @@
         outdoor_temp: "{{ states('sensor.la_dole_temperature') | float(10) }}"
         surplus: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
         source: >
-          {% if surplus | float > 6000 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
+          {% if surplus | float > 500 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
             solar
           {% elif is_state('binary_sensor.energy_low_tariff_active', 'on') %}
             low_tariff

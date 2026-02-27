@@ -15,9 +15,8 @@
         {% set solar_power = solar_power * 1000 if state_attr('sensor.solaredge_current_power', 'unit_of_measurement') == 'kW' else solar_power %}
         {% set consumption = states('sensor.solaredge_power_consumption') | float(0) %}
         {% set consumption = consumption * 1000 if state_attr('sensor.solaredge_power_consumption', 'unit_of_measurement') == 'kW' else consumption %}
-        {% set jacuzzi_power = 6000 %}
         {% set excess = solar_power - consumption %}
-        {{ excess >= jacuzzi_power }}
+        {{ excess >= 500 }}
       attributes:
         solar_power_w: >
           {% set v = states('sensor.solaredge_current_power') | float(0) %}

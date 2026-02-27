@@ -658,17 +658,17 @@ views:
           icon: mdi:account-arrow-right
           icon_color: pink
 
-      # ── TOMORROW'S TRIPS ──
+      # ── UPCOMING TRIPS (48h) ──
       - type: conditional
         conditions:
           - condition: numeric_state
-            entity: input_number.ev_trip_km_fraser_tomorrow
+            entity: input_number.ev_trip_km_fraser_today
             above: 0
         card:
           type: custom:mushroom-template-card
-          primary: "Fraser Tomorrow"
+          primary: "Fraser Upcoming"
           secondary: >
-            {{ states('input_number.ev_trip_km_fraser_tomorrow') | int }}km
+            {{ states('input_number.ev_trip_km_fraser_today') | int }}km (48h)
             · Assigned: {{ states('input_select.ev_fraser_assigned_car') }}
           icon: mdi:calendar-arrow-right
           icon_color: light-blue
@@ -676,13 +676,13 @@ views:
       - type: conditional
         conditions:
           - condition: numeric_state
-            entity: input_number.ev_trip_km_heather_tomorrow
+            entity: input_number.ev_trip_km_heather_today
             above: 0
         card:
           type: custom:mushroom-template-card
-          primary: "Heather Tomorrow"
+          primary: "Heather Upcoming"
           secondary: >
-            {{ states('input_number.ev_trip_km_heather_tomorrow') | int }}km
+            {{ states('input_number.ev_trip_km_heather_today') | int }}km (48h)
             · Assigned: {{ states('input_select.ev_heather_assigned_car') }}
           icon: mdi:calendar-arrow-right
           icon_color: light-blue
