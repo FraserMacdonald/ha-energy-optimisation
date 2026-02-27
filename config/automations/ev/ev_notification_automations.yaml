@@ -857,6 +857,25 @@
           {% else %}
             {{ states('sensor.horatio_battery_level') | float(0) | round(0) }}
           {% endif %}
+        min_soc: "{{ states('input_number.ev_minimum_soc') | float(50) }}"
+        other_car_soc: >
+          {% if car == 'Horace' %}
+            {{ states('sensor.horatio_battery_level') | float(0) }}
+          {% else %}
+            {{ states('sensor.horace_battery_level') | float(0) }}
+          {% endif %}
+        other_home: >
+          {% if car == 'Horace' %}
+            {{ is_state('device_tracker.horatio_location', 'home') }}
+          {% else %}
+            {{ is_state('device_tracker.horace_location', 'home') }}
+          {% endif %}
+
+    # Suppress if another home car is already at minimum SOC (unless this car is critical)
+    - condition: template
+      value_template: >
+        {{ soc | float < 10
+           or not (other_home and other_car_soc | float >= min_soc) }}
 
     # Notify the driver of that car
     - choose:
