@@ -140,26 +140,24 @@
         # -- Tier 3: Jacuzzi event (states C or D) --
         tier3_active: "{{ jac in ['C', 'D'] }}"
         tier3_solar_w: >
-          {% if tier3_active and remaining_2 | float >= jac_w | float %}
-            {{ jac_w }}
+          {% if tier3_active and remaining_2 | float > 0 %}
+            {{ [remaining_2 | float, jac_w | float] | min }}
           {% else %}
             0
           {% endif %}
-        # Grid allowed during low tariff; during peak only if already heating AND event ≤2h away
+        # Grid allowed during low tariff; during peak only if solar blend
+        # >= 2250W (makes blended cost cheaper than waiting for low tariff)
+        # or event active and temp dropping (maintenance heating)
         tier3_grid: >
           {% if not tier3_active %}
             false
           {% elif low_tariff | bool %}
             true
           {% elif high_tariff | bool %}
-            {% set cal = states.calendar.jacuzzi_schedule %}
-            {% set already_heating = states('input_number.jacuzzi_target_temp') | float(15) >= 40 %}
-            {% set event_close = false %}
-            {% if cal is not none and cal.attributes.start_time is defined %}
-              {% set hours = (as_timestamp(cal.attributes.start_time) - as_timestamp(now())) / 3600 %}
-              {% set event_close = hours > 0 and hours <= 2 %}
-            {% endif %}
-            {{ already_heating and event_close }}
+            {% set event_active = is_state('calendar.jacuzzi_schedule', 'on') %}
+            {% set temp_dropping = state_attr('climate.jacuzzi', 'current_temperature') | float(40) < 39 %}
+            {% set solar_blend = surplus | float >= 2250 %}
+            {{ (event_active and temp_dropping) or solar_blend }}
           {% else %}
             false
           {% endif %}
@@ -186,8 +184,8 @@
         # -- Tier 6: Jacuzzi standby/banking (state B) --
         tier6_active: "{{ jac == 'B' }}"
         tier6_solar_w: >
-          {% if tier6_active and remaining_5 | float >= jac_w | float %}
-            {{ jac_w }}
+          {% if tier6_active and remaining_5 | float > 0 %}
+            {{ [remaining_5 | float, jac_w | float] | min }}
           {% else %}
             0
           {% endif %}

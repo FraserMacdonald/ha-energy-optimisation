@@ -340,7 +340,7 @@
           {% set event_ts = as_timestamp(cal.attributes.start_time) %}
           {% set now_ts = as_timestamp(now()) %}
           {% set hours_to_event = (event_ts - now_ts) / 3600 %}
-          {% if hours_to_event <= 0 or hours_to_event > 24 %}
+          {% if hours_to_event <= 0 or hours_to_event > 48 %}
             unavailable
           {% else %}
             {% set t_current = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
@@ -452,7 +452,7 @@
         {% set banking = states('input_number.jacuzzi_banking_target_temp') | float(0) %}
         {% set boost_on = is_state('input_boolean.jacuzzi_standby_boost_enabled', 'on') %}
         {% set boosted = states('input_number.jacuzzi_boosted_standby_temp') | float(34) %}
-        {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 6000 %}
+        {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 500 %}
         {% set low_tariff = is_state('binary_sensor.energy_low_tariff_active', 'on') %}
         {% set cheap = solar or low_tariff %}
         {# Banking target takes priority when active AND cheap energy available #}
@@ -474,7 +474,7 @@
           {% set min_ready = states('sensor.jacuzzi_minimum_standby_temp') | float(5) %}
           {% set banking = states('input_number.jacuzzi_banking_target_temp') | float(0) %}
           {% set boost_on = is_state('input_boolean.jacuzzi_standby_boost_enabled', 'on') %}
-          {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 6000 %}
+          {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 500 %}
           {% set low_tariff = is_state('binary_sensor.energy_low_tariff_active', 'on') %}
           {% set cheap = solar or low_tariff %}
           {% if banking > 0 and cheap %}

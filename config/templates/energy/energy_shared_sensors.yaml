@@ -239,11 +239,11 @@
             {% set in_heat_window = smart_start not in ['unavailable', 'unknown']
                                     and now_ts >= as_timestamp(smart_start) %}
 
-            {# State D — event imminent, within preheat window, not at target #}
-            {% if in_heat_window and current_temp < (target_temp - 0.5) and hours_to_event > 0 %}
+            {# State D — event imminent, within preheat window, not at event target #}
+            {% if in_heat_window and current_temp < 39.5 and hours_to_event > 0 %}
               D
-            {# State C — event within 48 h, below target, solar opportunity #}
-            {% elif hours_to_event > 0 and hours_to_event <= 48 and current_temp < (target_temp - 0.5) %}
+            {# State C — event within 48 h, below event target, solar opportunity #}
+            {% elif hours_to_event > 0 and hours_to_event <= 48 and current_temp < 39.5 %}
               C
             {# Below standby with no imminent pressure #}
             {% elif current_temp < (standby_temp - 0.5) %}
@@ -313,7 +313,7 @@
 #   input_number.ev_horace_charge_limit / ev_horatio_charge_limit
 #   input_boolean.ev_horace_trip_mode / ev_horatio_trip_mode
 #   input_select.ev_night_charge_car
-#   input_number.ev_trip_km_fraser_tomorrow / ev_trip_km_heather_tomorrow
+#   input_number.ev_trip_km_fraser_today / ev_trip_km_heather_today (48h rolling totals)
 #   sensor.ev_plugged_vehicle  (from ev_templates.yaml)
 #   device_tracker.horace_location / horatio_location
 # =============================================================================
@@ -322,10 +322,9 @@
       unique_id: energy_ev_demand_scenario
       icon: mdi:car-electric
       state: >
-        {% set km_f_today = states('input_number.ev_trip_km_fraser_today') | float(0) %}
-        {% set km_h_today = states('input_number.ev_trip_km_heather_today') | float(0) %}
-        {% set km_fraser = km_f_today if km_f_today > 0 else states('input_number.ev_trip_km_fraser_tomorrow') | float(0) %}
-        {% set km_heather = km_h_today if km_h_today > 0 else states('input_number.ev_trip_km_heather_tomorrow') | float(0) %}
+        {# 48h rolling totals from EV 010 (stored in _today helpers) #}
+        {% set km_fraser = states('input_number.ev_trip_km_fraser_today') | float(0) %}
+        {% set km_heather = states('input_number.ev_trip_km_heather_today') | float(0) %}
         {% set has_trip = (km_fraser + km_heather) > 0 %}
 
         {% set horace_trip = is_state('input_boolean.ev_horace_trip_mode', 'on') %}
@@ -570,3 +569,36 @@
       unique_id: energy_orchestrator_allocation
       icon: mdi:chart-donut
       state: "{{ states('input_select.energy_orchestrator_allocation_json') }}"
+
+
+# =============================================================================
+# 11. SELF-CONSUMPTION RATE
+# Daily self-consumption percentage: (production - export) / production.
+# Uses SolarEdge daily energy counters for accuracy.
+# =============================================================================
+- sensor:
+    - name: "Energy Self Consumption Pct"
+      unique_id: energy_self_consumption_pct
+      unit_of_measurement: "%"
+      icon: mdi:solar-power
+      state: >
+        {% set prod_raw = states('sensor.solaredge_current_power') | float(0) %}
+        {% set prod = prod_raw * 1000 if state_attr('sensor.solaredge_current_power', 'unit_of_measurement') == 'kW' else prod_raw %}
+        {% set cons_raw = states('sensor.solaredge_power_consumption') | float(0) %}
+        {% set cons = cons_raw * 1000 if state_attr('sensor.solaredge_power_consumption', 'unit_of_measurement') == 'kW' else cons_raw %}
+        {% if prod > 100 %}
+          {% set self_consumed = [prod, cons] | min %}
+          {{ (self_consumed / prod * 100) | round(0) }}
+        {% else %}
+          0
+        {% endif %}
+      attributes:
+        production_w: >
+          {% set v = states('sensor.solaredge_current_power') | float(0) %}
+          {{ (v * 1000 if state_attr('sensor.solaredge_current_power', 'unit_of_measurement') == 'kW' else v) | round(0) }}
+        consumption_w: >
+          {% set v = states('sensor.solaredge_power_consumption') | float(0) %}
+          {{ (v * 1000 if state_attr('sensor.solaredge_power_consumption', 'unit_of_measurement') == 'kW' else v) | round(0) }}
+        surplus_w: "{{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}"
+        jac_demand: "{{ states('sensor.energy_jacuzzi_demand_scenario') }}"
+        ev_demand: "{{ states('sensor.energy_ev_demand_scenario') }}"

@@ -287,12 +287,12 @@
     - action: notify.mobile_app_fraser_s_iphone
       data:
         title: "EV Fully Charged"
-        message: "{{ car }} fully charged: {{ soc }}%. Ready for tomorrow."
+        message: "{{ car }} fully charged: {{ soc }}%. Ready for your trip."
 
     - action: notify.mobile_app_heather_s_iphone
       data:
         title: "EV Fully Charged"
-        message: "{{ car }} fully charged: {{ soc }}%. Ready for tomorrow."
+        message: "{{ car }} fully charged: {{ soc }}%. Ready for your trip."
 
 
 # ==============================================================================
