@@ -17,6 +17,7 @@ input_boolean:
   energy_solar_forecast_enabled:
     name: "Solar Forecast Enabled"
     icon: mdi:weather-sunny
+    initial: true
 
 
 # =============================================================================

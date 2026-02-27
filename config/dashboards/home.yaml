@@ -96,6 +96,29 @@ views:
           {% elif mode == 'event' %}green
           {% else %}grey{% endif %}
 
+      # ── TEMPERATURE 6H GRAPH ──
+      - type: custom:mini-graph-card
+        name: Temperature (6h)
+        entities:
+          - entity: climate.jacuzzi
+            attribute: current_temperature
+            name: Water
+            color: "#ff6b35"
+          - entity: sensor.la_dole_temperature
+            name: Ambient
+            color: "#4fc3f7"
+            y_axis: secondary
+        hours_to_show: 6
+        points_per_hour: 12
+        line_width: 2
+        hour24: true
+        animate: true
+        show:
+          labels: true
+          points: false
+          legend: true
+          average: false
+
       # ── EVENT / PREDICTION (conditional) ──
       - type: conditional
         conditions:

@@ -610,25 +610,18 @@
         {{ jac_active and ev_active and insufficient }}
 
   actions:
-    - action: persistent_notification.create
+    - action: notify.mobile_app_fraser_s_iphone
       data:
-        notification_id: energy_orchestrator_conflict
         title: "Energy Orchestrator – Solar Contention"
         message: >
-          Competing demands detected with insufficient solar.
-
-          Production scenario: {{ states('sensor.energy_production_scenario') }}
-          ({{ state_attr('sensor.energy_production_scenario', 'description') | default('') | trim }})
-
-          Jacuzzi: {{ states('sensor.energy_jacuzzi_demand_scenario') }}
-          ({{ state_attr('sensor.energy_jacuzzi_demand_scenario', 'description') | default('') | trim }})
-
+          Competing demands with insufficient solar.
+          Prod: {{ states('sensor.energy_production_scenario') }}
+          Jac: {{ states('sensor.energy_jacuzzi_demand_scenario') }}
           EV: {{ states('sensor.energy_ev_demand_scenario') }}
-          ({{ state_attr('sensor.energy_ev_demand_scenario', 'description') | default('') | trim }})
-
-          Surplus: {{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }} W
-
+          Surplus: {{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}W
           Decision: {{ states('sensor.energy_orchestrator_decision') }}
+        data:
+          tag: energy_orchestrator_conflict
 
     - action: shell_command.log_decision
       data:
