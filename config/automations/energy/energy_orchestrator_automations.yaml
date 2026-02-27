@@ -599,6 +599,11 @@
         - sensor.energy_ev_demand_scenario
 
   conditions:
+    # DISABLED — redundant with Energy 065 (conflict detail) which has
+    # orchestrator-enabled gate + 15-min cooldown. This fired on every
+    # sensor fluctuation with no cooldown, spamming notifications.
+    - condition: template
+      value_template: "{{ false }}"
     - condition: template
       value_template: >
         {% set jac = states('sensor.energy_jacuzzi_demand_scenario') %}

@@ -389,11 +389,6 @@
         title: "Daily Energy Summary"
         message: "{{ msg }}"
 
-    - action: persistent_notification.create
-      data:
-        notification_id: energy_daily_summary
-        title: "Daily Energy Summary"
-        message: "{{ msg }}"
 
 
 # ==============================================================================
@@ -433,11 +428,6 @@
         title: "Weekly Energy Summary"
         message: "{{ msg }}"
 
-    - action: persistent_notification.create
-      data:
-        notification_id: energy_weekly_summary
-        title: "Weekly Energy Summary"
-        message: "{{ msg }}"
 
 
 # ==============================================================================
