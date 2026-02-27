@@ -1742,6 +1742,7 @@
         target_amps: "{{ [[available_amps, min_amps] | max, max_amps | int] | min }}"
 
         charge_current_entity: "{{ 'number.horace_charge_current' if plugged_car == 'Horace' else 'number.horatio_charge_current' }}"
+        charge_switch_entity: "{{ 'switch.horace_charge' if plugged_car == 'Horace' else 'switch.horatio_charge' }}"
         allow_charging_entity: "{{ 'input_boolean.ev_horace_allow_charging' if plugged_car == 'Horace' else 'input_boolean.ev_horatio_allow_charging' }}"
         plugged_car_soc: >
           {% if plugged_car == 'Horace' %}
@@ -1765,6 +1766,9 @@
             - action: input_boolean.turn_on
               target:
                 entity_id: "{{ allow_charging_entity }}"
+            - action: switch.turn_on
+              target:
+                entity_id: "{{ charge_switch_entity }}"
 
             - action: logbook.log
               data:
@@ -1797,6 +1801,9 @@
             - action: input_boolean.turn_on
               target:
                 entity_id: "{{ allow_charging_entity }}"
+            - action: switch.turn_on
+              target:
+                entity_id: "{{ charge_switch_entity }}"
 
             - action: logbook.log
               data:
@@ -1832,6 +1839,9 @@
             - action: input_boolean.turn_on
               target:
                 entity_id: "{{ allow_charging_entity }}"
+            - action: switch.turn_on
+              target:
+                entity_id: "{{ charge_switch_entity }}"
 
             - action: logbook.log
               data:
@@ -1855,6 +1865,9 @@
         - action: input_boolean.turn_off
           target:
             entity_id: "{{ allow_charging_entity }}"
+        - action: switch.turn_off
+          target:
+            entity_id: "{{ charge_switch_entity }}"
 
         - action: logbook.log
           data:
