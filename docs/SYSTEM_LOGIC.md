@@ -96,13 +96,15 @@ Whatever solar is left goes to the grid at 0.06 CHF/kWh.
 
 The **effective standby temperature** is chosen by priority:
 
-1. **Banking target** (e.g. 35°C) — if the banking calculator has determined it's worth pre-heating for an upcoming event during cheap energy. During peak hours, this drops to banking minus 2°C to avoid wasting expensive grid power.
+1. **Solar banking** (40°C) — if there's any solar surplus > 500W. The jacuzzi acts as a thermal battery: store solar energy as heat now, avoid buying grid power later. This applies **regardless of whether there's an event** — even without an event, heating to 40°C with solar at 0.06 CHF/kWh avoids paying 0.26–0.38 CHF/kWh for standby maintenance later. The water will cool naturally (~2–3°C over 5 hours during peak), staying well above normal standby.
 
-2. **Boosted standby** (34°C) — if the boost toggle is on and cheap energy is available (solar > 500W or low tariff).
+2. **Banking target** (e.g. 35°C) — if the banking calculator has determined it's worth pre-heating for an upcoming event during cheap energy. During peak hours, this drops to banking minus 2°C to avoid wasting expensive grid power.
 
-3. **Normal standby** (20°C) — the default idle temperature.
+3. **Boosted standby** (34°C) — if the boost toggle is on and cheap energy is available (solar > 500W or low tariff).
 
-4. **Readiness floor** — if the physics model calculates that the water must be above a certain temperature to guarantee reaching 40°C within the maximum heat-up window (6 hours), this overrides everything above. This prevents a situation where the water cools so much overnight that 40°C becomes unreachable.
+4. **Normal standby** (20°C) — the default idle temperature.
+
+5. **Readiness floor** — if the physics model calculates that the water must be above a certain temperature to guarantee reaching 40°C within the maximum heat-up window (6 hours), this overrides everything above. This prevents a situation where the water cools so much overnight that 40°C becomes unreachable.
 
 The system always picks the highest applicable value.
 
@@ -121,7 +123,7 @@ The **smart start time** is calculated in three steps:
 | Automation | Trigger | What it does |
 |---|---|---|
 | **040 — Calendar Scheduler** | Every 5 min + calendar changes | Main controller. If we're in the smart-start window: heat to 40°C (unless peak with no solar, then wait). If event is happening now: maintain 40°C. Otherwise: revert to effective standby. |
-| **020 — Solar Opportunistic** | Solar available for 5 min, or low tariff starts | If solar is available and there's an event within 48h and water < 38°C: heat to 40°C. If low tariff and water is below standby: heat to standby. Blocked during peak unless solar > 2,250W. |
+| **020 — Solar Banking** | Solar available for 5 min, or low tariff starts | If solar is available and water is more than 2°C below effective standby (40°C during solar): heat to effective standby. No event required — the jacuzzi is a thermal battery. If low tariff and water is below standby: heat to standby. Blocked during peak unless solar > 2,250W. |
 | **021 — Low Tariff Standby** | Low tariff starts, or every 15 min | If water is below effective standby and it's low tariff: heat to standby. |
 | **022 — Solar Off Fallback** | Solar drops below 500W for 10 min | If we were heating to 40°C on solar and it drops: during low tariff, keep going (grid is cheap). During peak, revert to standby (don't pay 0.38/kWh). Does NOT revert if we're in the smart-start window or during an event. |
 | **041 — Heating Persistence** | Every 2 min when target is 40°C | If the Balboa controller drops out of heat mode while we're trying to reach 40°C: force it back on. Safety net for unreliable hardware. |
@@ -263,6 +265,7 @@ The banking target feeds into the effective standby temperature, which the jacuz
 - Conflict alerts, surplus wasted alerts
 - Unexpected EV disconnect
 - All orchestrator-level decisions
+- Swap charger cable suggestions (when plugged car is full but solar surplus is being wasted and other car could use it)
 
 **Heather receives (when relevant):**
 - EV plug-in reminders (when she's at home)

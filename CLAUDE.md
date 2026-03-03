@@ -594,11 +594,22 @@ Jacuzzi demand scenario was comparing against standby temp (32°C) instead of ev
 - [x] `sensor.energy_self_consumption_pct` — real-time (production - export) / production
 - [x] Home dashboard self-consumption card with colour-coded icon
 
+### Proactive Solar Banking (Thermal Battery):
+- [x] `sensor.jacuzzi_effective_standby_temp` — solar > 500W → base = 40°C (highest priority in cascade)
+  - Cascade: solar_banking (40°C) > banking calculator > banking_hold > tariff_boost > normal, floored by readiness
+- [x] Jacuzzi 020 solar branch — removed event requirement, now banks with any surplus regardless of calendar
+  - Triggers when solar_available AND current_temp < (effective_standby - 2)
+  - Target set to effective_standby (40°C during solar)
+- [x] EV 085 swap cable suggestion (NEW) — notifies when plugged car at limit + solar surplus > 2000W for 10 min + other car at home below limit
+  - 60 min cooldown, notifies Fraser always + Heather if home
+- [x] Jacuzzi 022 solar-off fallback confirmed correct: during low tariff continues grid (finish what solar started), during peak reverts to effective_standby (which drops from 40°C when solar gone)
+
 ### Key Economic Rules:
 - Solar pre-heating ALWAYS wins within 48h (break-even at ~156h/6.5 days)
 - Any solar surplus > 0 makes heating cheaper (partial solar + grid < full grid)
 - During peak with >= 2.25kW solar, heating NOW is cheaper than waiting for low tariff
 - 2.28 - 0.32×S vs 1.56 CHF/h → break-even at S = 2.25kW
+- Jacuzzi is a thermal battery: heat to 40°C with any solar surplus, cool ~2-3°C over 5h peak, avoids grid heating entirely
 
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
