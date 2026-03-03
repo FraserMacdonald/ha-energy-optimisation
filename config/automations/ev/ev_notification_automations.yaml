@@ -1198,3 +1198,110 @@
       data:
         name: "EV Charging"
         message: "{{ car }} charging stopped. SOC: {{ soc }}%. Solar: {{ solar_kwh }}kWh, Grid: {{ grid_kwh }}kWh."
+
+
+# ==============================================================================
+# 085 — SWAP CABLE SUGGESTION
+# When the plugged car reaches its charge limit but solar surplus is available
+# and the other car is at home below its limit, suggest swapping the cable.
+# ==============================================================================
+- id: auto_ev_085_swap_cable_suggestion
+  alias: "EV 085 – Swap Cable Suggestion"
+  description: >
+    Suggests swapping the charger cable to the other car when the plugged car
+    is full and solar surplus is going to waste.
+  mode: single
+  triggers:
+    - trigger: template
+      value_template: >
+        {% set plugged = states('sensor.ev_plugged_vehicle') %}
+        {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
+        {% if plugged == 'Horace' %}
+          {% set soc = states('sensor.horace_battery_level') | int(0) %}
+          {% set lim = states('input_number.ev_horace_charge_limit') | int(80) %}
+          {{ soc >= lim and surplus > 2000 }}
+        {% elif plugged == 'Horatio' %}
+          {% set soc = states('sensor.horatio_battery_level') | int(0) %}
+          {% set lim = states('input_number.ev_horatio_charge_limit') | int(80) %}
+          {{ soc >= lim and surplus > 2000 }}
+        {% else %}
+          false
+        {% endif %}
+      for:
+        minutes: 10
+  conditions:
+    - condition: state
+      entity_id: input_boolean.ev_solar_mode_enabled
+      state: "on"
+    - condition: state
+      entity_id: sun.sun
+      state: "above_horizon"
+  actions:
+    - variables:
+        plugged: "{{ states('sensor.ev_plugged_vehicle') }}"
+        other_car: "{{ 'Horatio' if plugged == 'Horace' else 'Horace' }}"
+        other_soc: >
+          {% if other_car == 'Horace' %}
+            {{ states('sensor.horace_battery_level') | int(100) }}
+          {% else %}
+            {{ states('sensor.horatio_battery_level') | int(100) }}
+          {% endif %}
+        other_limit: >
+          {% if other_car == 'Horace' %}
+            {{ states('input_number.ev_horace_charge_limit') | int(80) }}
+          {% else %}
+            {{ states('input_number.ev_horatio_charge_limit') | int(80) }}
+          {% endif %}
+        other_home: >
+          {% if other_car == 'Horace' %}
+            {{ is_state('device_tracker.horace_location', 'home') }}
+          {% else %}
+            {{ is_state('device_tracker.horatio_location', 'home') }}
+          {% endif %}
+        surplus_kw: "{{ (states('sensor.energy_solar_surplus_w') | float(0) / 1000) | round(1) }}"
+        plugged_soc: >
+          {% if plugged == 'Horace' %}
+            {{ states('sensor.horace_battery_level') | int(0) }}
+          {% else %}
+            {{ states('sensor.horatio_battery_level') | int(0) }}
+          {% endif %}
+        last_swap: "{{ states('input_datetime.ev_last_swap_request') }}"
+        cooldown_ok: >
+          {% if last_swap in ['unknown', 'unavailable', ''] %}
+            true
+          {% else %}
+            {{ (as_timestamp(now()) - as_timestamp(last_swap)) > (states('input_number.ev_swap_request_cooldown_min') | int(60)) * 60 }}
+          {% endif %}
+    - condition: template
+      value_template: >
+        {{ other_home | bool and other_soc | int < other_limit | int and cooldown_ok | bool }}
+    - action: notify.mobile_app_fraser_s_iphone
+      data:
+        title: "Swap Charger Cable"
+        message: >
+          {{ plugged }} is full at {{ plugged_soc }}%.
+          {{ other_car }} is at {{ other_soc }}% (limit {{ other_limit }}%) and at home.
+          {{ surplus_kw }}kW solar surplus available — swap the cable to keep using it.
+    - choose:
+        - conditions:
+            - condition: state
+              entity_id: device_tracker.heather_s_iphone
+              state: "home"
+          sequence:
+            - action: notify.mobile_app_heather_s_iphone
+              data:
+                title: "Swap Charger Cable"
+                message: >
+                  {{ plugged }} is full at {{ plugged_soc }}%.
+                  {{ other_car }} is at {{ other_soc }}% — swap cable to use {{ surplus_kw }}kW solar.
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.ev_last_swap_request
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+    - action: logbook.log
+      data:
+        name: "EV Swap Suggestion"
+        message: >
+          Suggested swapping cable from {{ plugged }} ({{ plugged_soc }}%) to
+          {{ other_car }} ({{ other_soc }}%). Surplus: {{ surplus_kw }}kW.
