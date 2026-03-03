@@ -455,8 +455,12 @@
         {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 500 %}
         {% set low_tariff = is_state('binary_sensor.energy_low_tariff_active', 'on') %}
         {% set cheap = solar or low_tariff %}
-        {# Banking target takes priority when active AND cheap energy available #}
-        {% if banking > 0 and cheap %}
+        {# Solar banking: any solar surplus → heat to 40°C (thermal battery) #}
+        {# The jacuzzi stores solar energy as heat regardless of events #}
+        {% if solar %}
+          {% set base = 40 %}
+        {# Banking target from calculator takes priority when cheap energy available #}
+        {% elif banking > 0 and cheap %}
           {% set base = banking %}
         {% elif banking > 0 and not cheap %}
           {# During expensive periods, maintain at banking target minus small margin #}
@@ -477,14 +481,16 @@
           {% set solar = states('sensor.energy_solar_surplus_w') | float(0) > 500 %}
           {% set low_tariff = is_state('binary_sensor.energy_low_tariff_active', 'on') %}
           {% set cheap = solar or low_tariff %}
-          {% if banking > 0 and cheap %}
+          {% if solar %}
+            solar_banking
+          {% elif banking > 0 and cheap %}
             banking
           {% elif banking > 0 and not cheap %}
             banking_hold
           {% elif min_ready > normal %}
             readiness
           {% elif boost_on and cheap %}
-            {% if solar %}solar_boost{% else %}tariff_boost{% endif %}
+            tariff_boost
           {% else %}
             normal
           {% endif %}

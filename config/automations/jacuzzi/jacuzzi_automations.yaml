@@ -137,31 +137,22 @@
         effective_standby: "{{ states('sensor.jacuzzi_effective_standby_temp') | float(20) }}"
         low_tariff: "{{ is_state('binary_sensor.energy_low_tariff_active', 'on') }}"
         solar_available: "{{ is_state('binary_sensor.solar_available_for_jacuzzi', 'on') }}"
-        has_event_48h: >
-          {% set cal = states.calendar.jacuzzi_schedule %}
-          {% if cal is not none and cal.attributes.start_time is defined %}
-            {% set event_start = as_timestamp(cal.attributes.start_time) %}
-            {% set now_ts = now().timestamp() %}
-            {{ (event_start - now_ts) < 172800 and (event_start - now_ts) > 0 }}
-          {% else %}
-            false
-          {% endif %}
     - choose:
-        # Solar surplus: heat toward 40 if event within 48h and below 38
+        # Solar surplus: heat toward effective standby (40°C during solar — thermal battery)
         - conditions:
             - condition: template
-              value_template: "{{ solar_available and has_event_48h and current_temp | float < 38 }}"
+              value_template: "{{ solar_available and current_temp | float < (effective_standby | float - 2) }}"
           sequence:
             - action: input_number.set_value
               target:
                 entity_id: input_number.jacuzzi_target_temp
               data:
-                value: 40
+                value: "{{ effective_standby }}"
             - action: climate.set_temperature
               target:
                 entity_id: climate.jacuzzi
               data:
-                temperature: 40
+                temperature: "{{ effective_standby }}"
             - action: climate.set_hvac_mode
               target:
                 entity_id: climate.jacuzzi
@@ -169,9 +160,10 @@
                 hvac_mode: heat
             - action: logbook.log
               data:
-                name: "Jacuzzi Solar Heating"
+                name: "Jacuzzi Solar Banking"
                 message: >
-                  Using excess solar to pre-heat jacuzzi.
+                  Solar banking: heating jacuzzi to {{ effective_standby }}°C.
+                  Current: {{ current_temp }}°C.
                   Solar: {{ state_attr('binary_sensor.solar_available_for_jacuzzi', 'solar_power_w') }}W
             - action: shell_command.log_action
               data:
@@ -179,9 +171,10 @@
                 action_type: heating_start
                 target_entity: climate.jacuzzi
                 parameters: >
-                  {{ {'source': 'solar',
+                  {{ {'source': 'solar_banking',
                       'trigger': 'solar_surplus',
                       'current_temp': current_temp | float | round(1),
+                      'target_temp': effective_standby | float | round(1),
                       'solar_w': state_attr('binary_sensor.solar_available_for_jacuzzi', 'solar_power_w') | float(0) | round(0)
                   } | tojson }}
 
