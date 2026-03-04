@@ -86,6 +86,7 @@ shell_command:
   log_feedback: "python3 /config/scripts/log_to_db.py feedback '{{ system }}' '{{ metric }}' '{{ predicted }}' '{{ actual }}' '{{ context }}'"
   log_cost: "python3 /config/scripts/log_to_db.py cost '{{ system }}' '{{ kwh_solar }}' '{{ kwh_grid_low }}' '{{ kwh_grid_high }}'"
   # --- Solar Forecast Engine (Phase 2A-2C) ---
+  solar_init_db: "python3 /config/scripts/solar_forecast.py init_db"
   solar_forecast: "python3 /config/scripts/solar_forecast.py forecast"
   solar_actual: "python3 /config/scripts/solar_forecast.py actual"
   solar_compare: "python3 /config/scripts/solar_forecast.py compare"
