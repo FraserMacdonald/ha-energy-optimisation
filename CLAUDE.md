@@ -317,14 +317,15 @@ Jacuzzi heater power increased from 3.5kW to 6kW. All hardcoded 3500W references
 ## What's Done (Phase 2D – Smart Thermal Banking)
 Jacuzzi pre-heating during cheap energy periods using solar forecast + tariff schedule + calendar events.
 
-### Banking Algorithm:
+### Banking Algorithm (rewritten Mar 2026 — forward simulation):
 - `cmd_banking()` subcommand in `scripts/solar_forecast.py` runs every 30 min
 - Fetches next calendar event within 48h from HA calendar API
-- Builds hourly timeline with cheap/expensive flags (solar >6kW or low tariff)
-- Uses Met.no ambient forecast + solar forecast from DB for each hour
-- Backward induction from event: inverts cooling through expensive gaps to find banking target
-- Cost check: only banks if cheap energy cost < alternative high tariff cost
-- Caps banking at 37°C (diminishing returns above this)
+- Builds hourly timeline with Met.no ambient forecast + solar forecast (actual Wh per hour from DB)
+- Forward simulation: Newton's cooling + solar heating per hour, 500W base load deducted from solar
+- Binary search (20 iterations) for T_bank where simulate(T_bank) reaches 40°C by event
+- Cost check: grid_deficit × RATE_LOW vs peak_deficit × RATE_HIGH — only banks if cheaper
+- Caps banking at 37°C (BANKING_CAP)
+- Decision log includes: grid_deficit_kwh, solar_contribution_kwh, projected_solar_only, banking_cost_chf, peak_alternative_chf
 
 ### New/Modified Files:
 - [x] `scripts/solar_forecast.py` — Added `banking` subcommand + 5 helper functions (`_is_low_tariff_hour`, `_fetch_calendar_events`, `_fetch_solar_forecast_db`, `_clear_banking`, `fetch_metno_temps`, `ha_select_option`)
@@ -610,6 +611,28 @@ Jacuzzi demand scenario was comparing against standby temp (32°C) instead of ev
 - During peak with >= 2.25kW solar, heating NOW is cheaper than waiting for low tariff
 - 2.28 - 0.32×S vs 1.56 CHF/h → break-even at S = 2.25kW
 - Jacuzzi is a thermal battery: heat to 40°C with any solar surplus, cool ~2-3°C over 5h peak, avoids grid heating entirely
+
+## What's Done (Solar-Deficit Jacuzzi Energy Budgeting)
+Two changes to eliminate wasteful overnight grid heating when events are far away.
+
+### Part 1: Calendar-Aware Readiness Floor
+- [x] `sensor.jacuzzi_minimum_standby_temp` now reads `calendar.jacuzzi_schedule` `start_time` directly instead of using fixed `input_number.jacuzzi_max_heat_up_hours`
+- No event or event in past/beyond 48h → T_min = 5°C (freeze protection only)
+- Event exists → `effective_h = max(hours_to_event, 1.0)` used in inverted Newton's law formula
+- Event 19h away → ~14.8°C (non-binding), event 6h → ~32.5°C (same as before), event 3h → tighter
+- New attributes: `event_aware`, `effective_hours`, `hours_to_event`; removed `max_heat_up_hours`
+
+### Part 2: Forward-Simulation Banking Calculator
+- [x] `cmd_banking()` rewritten from backward-induction to forward simulation + binary search
+- `_simulate_solar_only(t_start, timeline)`: Newton's cooling + solar heating per hour using actual forecast wattage (not binary 6kW threshold), minus 500W base load
+- Binary search finds exact T_bank where solar tops up to 40°C; grid covers only the deficit
+- Cost check: banking at RATE_LOW vs heating at RATE_HIGH — skips if not cost-effective
+- Removed: backward induction, segments, `min_standby` dependency, `SOLAR_THRESHOLD_W`
+
+### Files Modified:
+- [x] `config/templates/jacuzzi/jacuzzi_sensors.yaml` — Readiness sensor rewritten (lines 414-475)
+- [x] `scripts/solar_forecast.py` — `cmd_banking()` core algorithm replaced (lines ~1938-2116)
+- [x] yamllint + python syntax check pass
 
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
