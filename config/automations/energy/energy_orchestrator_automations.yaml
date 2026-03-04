@@ -100,18 +100,55 @@
              or (horatio_home and horatio_soc < buffer_target | float) }}
 
     # -----------------------------------------------------------------
-    # Block 2: Walk tiers 0–8, decrement remaining surplus
-    # Each tier checks its condition, claims surplus if available,
-    # and determines whether grid is allowed.
+    # Block 2: Read supply plan OR walk legacy tiers
+    # If the supply planner has run recently (<30 min), use its output.
+    # Otherwise fall back to legacy tier allocation.
+    # Tier 0 (safety) always runs independently of the plan.
     # -----------------------------------------------------------------
     - variables:
         remaining_0: "{{ surplus | float }}"
 
-        # -- Tier 0: Safety --
-        # Freeze risk (jac==A) or car SOC <10% — runs independently, no surplus claim
+        # -- Tier 0: Safety (always independent of plan) --
         tier0_safety: "{{ jac == 'A' or horace_soc | float < 10 or horatio_soc | float < 10 }}"
         tier0_greenhouse: "{{ greenhouse_online | bool and photoperiod_active | bool }}"
 
+        # -- Check if supply plan is fresh --
+        plan_status: "{{ states('input_select.energy_plan_status') }}"
+        plan_action: "{{ states('input_select.energy_plan_current_action') }}"
+        plan_is_fresh: >
+          {% set status = states('input_select.energy_plan_status') %}
+          {% if status in ['none', 'unknown', 'unavailable'] %}
+            false
+          {% else %}
+            true
+          {% endif %}
+
+    # -----------------------------------------------------------------
+    # Block 2a: Plan-based allocation (when plan is fresh)
+    # -----------------------------------------------------------------
+    - variables:
+        plan_jac: >
+          {% if plan_is_fresh %}
+            {{ plan_action in ['Jac', 'Jac+EV'] }}
+          {% else %}
+            false
+          {% endif %}
+        plan_ev: >
+          {% if plan_is_fresh %}
+            {{ plan_action in ['EV', 'Jac+EV'] }}
+          {% else %}
+            false
+          {% endif %}
+        plan_ev_amps: >
+          {% if plan_is_fresh %}
+            {{ states('input_number.energy_plan_ev_amps') | int(0) }}
+          {% else %}
+            0
+          {% endif %}
+
+    # -----------------------------------------------------------------
+    # Block 2b: Legacy tier allocation (fallback when plan is stale)
+    # -----------------------------------------------------------------
     - variables:
         # -- Tier 1: Trip-critical car --
         tier1_active: "{{ ev == 'X' }}"
@@ -145,9 +182,6 @@
           {% else %}
             0
           {% endif %}
-        # Grid allowed during low tariff; during peak only if solar blend
-        # >= 2250W (makes blended cost cheaper than waiting for low tariff)
-        # or event active and temp dropping (maintenance heating)
         tier3_grid: >
           {% if not tier3_active %}
             false
@@ -204,15 +238,18 @@
         remaining_7: "{{ remaining_6 | float - tier7_solar_w | float }}"
 
     # -----------------------------------------------------------------
-    # Block 3: Derive legacy gate values + active tier
+    # Block 3: Derive gate values — plan-first, legacy fallback
+    # Safety tier 0 always overrides. Plan overrides legacy tiers.
     # -----------------------------------------------------------------
     - variables:
-        # Jacuzzi allowed: tier 0 safety OR tier 3 (solar or grid) OR tier 6 (solar or grid)
+        # Jacuzzi allowed: safety override OR plan OR legacy tiers
         jacuzzi_allowed: >
-          {% if jac == 'E' %}
-            false
-          {% elif jac == 'A' %}
+          {% if jac == 'A' %}
             true
+          {% elif jac == 'E' %}
+            false
+          {% elif plan_is_fresh %}
+            {{ plan_jac | bool }}
           {% elif jac in ['C', 'D'] %}
             {{ tier3_solar_w | float > 0 or tier3_grid | bool }}
           {% elif jac == 'B' %}
@@ -221,27 +258,45 @@
             false
           {% endif %}
 
-        # EV solar allowed: tier 1 or tier 5 has solar
+        # EV solar allowed: safety override OR plan OR legacy
         ev_solar_allowed: >
-          {{ tier1_solar_w | float > 0 or tier5_solar_w | float > 0 }}
-
-        # EV tariff allowed: tier 1 grid (trip-critical) or tier 5 grid (buffer low tariff)
-        ev_tariff_allowed: >
-          {{ tier1_grid | bool or tier5_grid | bool }}
-
-        # EV max solar amps: from whichever tier is active
-        ev_solar_amps: >
-          {% set solar_w = tier1_solar_w | float if tier1_solar_w | float > 0 else tier5_solar_w | float %}
-          {% if solar_w > 0 %}
-            {% set raw = (solar_w / (voltage | float * phases | int)) | int %}
-            {{ [[raw, min_amps | int] | max, max_amps | int] | min }}
+          {% if plan_is_fresh %}
+            {{ plan_ev | bool and plan_ev_amps | int > 0 }}
           {% else %}
-            0
+            {{ tier1_solar_w | float > 0 or tier5_solar_w | float > 0 }}
           {% endif %}
 
-        # Active tier = lowest tier with activity
+        # EV tariff allowed: safety override OR plan OR legacy
+        ev_tariff_allowed: >
+          {% if plan_is_fresh %}
+            {{ plan_ev | bool }}
+          {% else %}
+            {{ tier1_grid | bool or tier5_grid | bool }}
+          {% endif %}
+
+        # EV max solar amps: plan amps OR legacy calculation
+        ev_solar_amps: >
+          {% if plan_is_fresh and plan_ev | bool %}
+            {{ plan_ev_amps | int }}
+          {% else %}
+            {% set solar_w = tier1_solar_w | float if tier1_solar_w | float > 0 else tier5_solar_w | float %}
+            {% if solar_w > 0 %}
+              {% set raw = (solar_w / (voltage | float * phases | int)) | int %}
+              {{ [[raw, min_amps | int] | max, max_amps | int] | min }}
+            {% else %}
+              0
+            {% endif %}
+          {% endif %}
+
+        # Active tier
         active_tier: >
           {% if tier0_safety or tier0_greenhouse %}0
+          {% elif plan_is_fresh %}
+            {% if plan_action == 'Jac+EV' %}3
+            {% elif plan_action == 'Jac' %}3
+            {% elif plan_action == 'EV' %}5
+            {% elif plan_action == 'Export' %}8
+            {% else %}8{% endif %}
           {% elif tier1_active %}1
           {% elif tier2_active %}2
           {% elif tier3_active %}3
@@ -253,18 +308,30 @@
 
         # Allocation JSON
         allocation: >
-          {{ {'surplus_w': surplus | float | round(0),
-              'remaining_w': remaining_7 | float | round(0),
-              'solar_available': solar_available,
-              'tier0_safety': tier0_safety,
-              'tier0_greenhouse': tier0_greenhouse,
-              'tier1_ev_trip_w': tier1_solar_w | float | round(0),
-              'tier2_battery_w': tier2_solar_w | float | round(0),
-              'tier3_jac_event_w': tier3_solar_w | float | round(0),
-              'tier5_ev_buffer_w': tier5_solar_w | float | round(0),
-              'tier6_jac_standby_w': tier6_solar_w | float | round(0),
-              'tier7_battery_w': tier7_solar_w | float | round(0)
-          } | tojson }}
+          {% if plan_is_fresh %}
+            {{ {'source': 'plan',
+                'plan_action': plan_action,
+                'plan_ev_amps': plan_ev_amps | int,
+                'surplus_w': surplus | float | round(0),
+                'solar_available': solar_available,
+                'tier0_safety': tier0_safety,
+                'tier0_greenhouse': tier0_greenhouse
+            } | tojson }}
+          {% else %}
+            {{ {'source': 'legacy_waterfall',
+                'surplus_w': surplus | float | round(0),
+                'remaining_w': remaining_7 | float | round(0),
+                'solar_available': solar_available,
+                'tier0_safety': tier0_safety,
+                'tier0_greenhouse': tier0_greenhouse,
+                'tier1_ev_trip_w': tier1_solar_w | float | round(0),
+                'tier2_battery_w': tier2_solar_w | float | round(0),
+                'tier3_jac_event_w': tier3_solar_w | float | round(0),
+                'tier5_ev_buffer_w': tier5_solar_w | float | round(0),
+                'tier6_jac_standby_w': tier6_solar_w | float | round(0),
+                'tier7_battery_w': tier7_solar_w | float | round(0)
+            } | tojson }}
+          {% endif %}
 
     # -----------------------------------------------------------------
     # Block 4: Build decision summary

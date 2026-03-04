@@ -2,13 +2,14 @@
 # ENERGY SOLAR FORECAST – TEMPLATE SENSORS
 # File: templates/energy/energy_solar_forecast_sensors.yaml
 #
-# Phase 2A-2C: Template sensors derived from solar forecast helpers.
+# Template sensors derived from solar forecast and supply planner helpers.
 #
 # Format: YAML list for template: !include_dir_merge_list templates/
 #
 # Sensors:
 #   1. energy_solar_forecast_summary  – Human-readable forecast summary
 #   2. energy_solar_forecast_quality  – Quality assessment with attributes
+#   3. energy_supply_plan_summary     – Current plan status summary
 ###############################################################################
 
 
@@ -60,11 +61,16 @@
           {% endif %}
         last_run: >
           {{ states('input_select.energy_solar_forecast_last_run') }}
+        calibration_east: >
+          {{ states('input_number.energy_solar_calibration_east') | float(0.75) | round(3) }}
+        calibration_west: >
+          {{ states('input_number.energy_solar_calibration_west') | float(0.75) | round(3) }}
 
 
 # =============================================================================
 # 2. SOLAR FORECAST QUALITY
 # Summarises forecast accuracy for dashboard display.
+# Includes per-component accuracy breakdown.
 # =============================================================================
 - sensor:
     - name: "Energy Solar Forecast Quality"
@@ -79,8 +85,14 @@
           {{ states('input_number.energy_solar_forecast_error_pct_t0') | float(0) | round(1) }}
         error_24h_pct: >
           {{ states('input_number.energy_solar_forecast_error_pct_t24') | float(0) | round(1) }}
-        calibration_factor: >
-          {{ states('input_number.energy_solar_calibration_factor') | float(0.75) | round(4) }}
+        calibration_east: >
+          {{ states('input_number.energy_solar_calibration_east') | float(0.75) | round(4) }}
+        calibration_west: >
+          {{ states('input_number.energy_solar_calibration_west') | float(0.75) | round(4) }}
+        cloud_bias_t0: >
+          {{ states('input_number.energy_cloud_bias_t0') | float(0) | round(1) }}
+        cloud_bias_t24: >
+          {{ states('input_number.energy_cloud_bias_t24') | float(0) | round(1) }}
         description: >
           {% set rating = states('input_select.energy_solar_forecast_quality_rating') %}
           {% if rating == 'Excellent' %}Model tracking well, errors < 10%
@@ -88,3 +100,45 @@
           {% elif rating == 'Fair' %}Moderate accuracy, errors 20-30%
           {% elif rating == 'Poor' %}Low accuracy, errors > 30%
           {% else %}Insufficient data{% endif %}
+
+
+# =============================================================================
+# 3. SUPPLY PLAN SUMMARY
+# Human-readable summary of the current supply plan.
+# =============================================================================
+- sensor:
+    - name: "Energy Supply Plan Summary"
+      unique_id: energy_supply_plan_summary
+      icon: mdi:calendar-clock
+      state: >
+        {% set action = states('input_select.energy_plan_current_action') %}
+        {% set cost = states('input_number.energy_plan_48h_cost_chf') | float(0) %}
+        {% if action in ['Idle', 'Export', 'none'] %}
+          {{ action }} · {{ cost | round(2) }} CHF
+        {% else %}
+          {{ action }} · {{ cost | round(2) }} CHF
+        {% endif %}
+      attributes:
+        current_action: >
+          {{ states('input_select.energy_plan_current_action') }}
+        ev_amps: >
+          {{ states('input_number.energy_plan_ev_amps') | int(0) }}
+        cost_48h_chf: >
+          {{ states('input_number.energy_plan_48h_cost_chf') | float(0) | round(2) }}
+        savings_48h_chf: >
+          {{ states('input_number.energy_plan_48h_savings_chf') | float(0) | round(2) }}
+        self_consumption_pct: >
+          {{ states('input_number.energy_plan_self_consumption') | float(0) | round(0) }}
+        peak_grid_kwh: >
+          {{ states('input_number.energy_plan_grid_peak_kwh') | float(0) | round(1) }}
+        next_change: >
+          {{ states('input_select.energy_plan_next_change') }}
+        status: >
+          {{ states('input_select.energy_plan_status') }}
+        is_stale: >
+          {% set status = states('input_select.energy_plan_status') %}
+          {% if status in ['none', 'unknown', 'unavailable'] %}
+            true
+          {% else %}
+            false
+          {% endif %}

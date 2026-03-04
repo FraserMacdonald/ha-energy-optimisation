@@ -155,9 +155,11 @@ views:
         primary: >
           Forecast Quality: {{ states('input_select.energy_solar_forecast_quality_rating') }}
         secondary: >
-          Nowcast error: {{ states('input_number.energy_solar_forecast_error_pct_t0') | float(0) | round(1) }}%
-          · 24h error: {{ states('input_number.energy_solar_forecast_error_pct_t24') | float(0) | round(1) }}%
-          · Cal: {{ states('input_number.energy_solar_calibration_factor') | float(0.75) | round(3) }}
+          Nowcast: ±{{ states('input_number.energy_solar_forecast_error_pct_t0') | float(0) | round(1) }}%
+          · 24h: ±{{ states('input_number.energy_solar_forecast_error_pct_t24') | float(0) | round(1) }}%
+          · East: {{ states('input_number.energy_solar_calibration_east') | float(0.75) | round(3) }}
+          · West: {{ states('input_number.energy_solar_calibration_west') | float(0.75) | round(3) }}
+          · Cloud bias: {{ states('input_number.energy_cloud_bias_t0') | float(0) | round(1) }}% (t0), {{ states('input_number.energy_cloud_bias_t24') | float(0) | round(1) }}% (t24)
         icon: mdi:gauge
         icon_color: >
           {% set score = states('input_number.energy_solar_forecast_quality_score') | float(0) %}
@@ -165,6 +167,23 @@ views:
           {% elif score >= 60 %}amber
           {% elif score >= 40 %}orange
           {% else %}red{% endif %}
+
+      # ── SUPPLY PLAN STATUS ──
+      - type: custom:mushroom-template-card
+        primary: >
+          Plan: {{ states('input_select.energy_plan_current_action') }}
+        secondary: >
+          48h cost: {{ states('input_number.energy_plan_48h_cost_chf') | float(0) | round(2) }} CHF
+          · Savings: {{ states('input_number.energy_plan_48h_savings_chf') | float(0) | round(2) }} CHF
+          · Self: {{ states('input_number.energy_plan_self_consumption') | float(0) | round(0) }}%
+          · Peak grid: {{ states('input_number.energy_plan_grid_peak_kwh') | float(0) | round(1) }}kWh
+          · EV: {{ states('input_number.energy_plan_ev_amps') | int(0) }}A
+          · {{ states('input_select.energy_plan_next_change') }}
+        icon: mdi:calendar-clock
+        icon_color: >
+          {% set status = states('input_select.energy_plan_status') %}
+          {% if status not in ['none', 'unknown', 'unavailable'] %}green
+          {% else %}grey{% endif %}
 
       # ── TODAY'S SAVINGS ──
       - type: custom:mushroom-template-card
@@ -232,12 +251,48 @@ views:
         entities:
           - entity: input_boolean.energy_solar_forecast_enabled
             name: Forecast Enabled
+          - entity: input_number.energy_solar_calibration_east
+            name: Calibration East
+          - entity: input_number.energy_solar_calibration_west
+            name: Calibration West
           - entity: input_number.energy_solar_calibration_factor
-            name: Calibration Factor
+            name: Calibration Factor (legacy)
           - entity: input_select.energy_solar_forecast_last_run
             name: Last Run
           - entity: input_select.energy_solar_forecast_quality_rating
             name: Quality Rating
+          - type: divider
+          - entity: input_number.energy_cloud_bias_t0
+            name: Cloud Bias (Nowcast)
+          - entity: input_number.energy_cloud_bias_t6
+            name: Cloud Bias (6h)
+          - entity: input_number.energy_cloud_bias_t12
+            name: Cloud Bias (12h)
+          - entity: input_number.energy_cloud_bias_t24
+            name: Cloud Bias (24h)
+          - entity: input_number.energy_cloud_bias_t36
+            name: Cloud Bias (36h)
+
+      # ── SUPPLY PLAN INTERNALS ──
+      - type: entities
+        title: Supply Plan
+        entities:
+          - entity: input_select.energy_plan_current_action
+            name: Current Action
+          - entity: input_number.energy_plan_ev_amps
+            name: Plan EV Amps
+          - entity: input_number.energy_plan_48h_cost_chf
+            name: 48h Projected Cost
+          - entity: input_number.energy_plan_48h_savings_chf
+            name: 48h Savings vs Naive
+          - entity: input_number.energy_plan_self_consumption
+            name: Self-Consumption %
+          - entity: input_number.energy_plan_grid_peak_kwh
+            name: Peak-Tariff Grid Draw
+          - entity: input_select.energy_plan_next_change
+            name: Next Change
+          - entity: input_select.energy_plan_status
+            name: Plan Status
 
       # ── ORCHESTRATOR INTERNALS (NEW) ──
       - type: entities

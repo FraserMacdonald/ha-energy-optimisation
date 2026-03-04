@@ -2,39 +2,41 @@
 # ENERGY SOLAR FORECAST – AUTOMATIONS
 # File: automations/energy/energy_solar_forecast_automations.yaml
 #
-# Phase 2A-2C: Automations that trigger the solar forecast engine.
+# Automations that trigger the solar forecast engine and supply planner.
 # All gated by input_boolean.energy_solar_forecast_enabled.
 #
 # Format: YAML list for automation: !include_dir_merge_list automations/
 #
 # Automations:
-#   020 – Solar Forecast Runner    (every 30 min, 04:00-22:00)
-#   021 – Solar Actual Logger      (every 30 min)
+#   020 – Solar Forecast Runner    (every 15 min, 04:00-22:00)
+#   021 – Solar Actual Logger      (every 15 min)
 #   022 – Solar Forecast Comparison (:05 past each hour)
 #   023 – Solar Calibration        (Sunday 23:30)
 #   024 – Solar Banking Calculator (every 30 min)
 #   025 – Tariff Transition Logger (on tariff change)
+#   028 – Supply Planner           (every 15 min + reactive triggers)
 ###############################################################################
 
 
 # =============================================================================
 # 020 – SOLAR FORECAST RUNNER
-# Generates a 48-hour solar forecast every 30 minutes during daylight.
+# Generates a 48-hour solar forecast every 15 minutes during daylight.
 # Uses Met.no cloud data + NOAA sun position + dual-slope clear-sky model.
+# Now produces 192 rows (15-min intervals) per run.
 # =============================================================================
 - id: auto_energy_020_solar_forecast
   alias: "Energy 020 – Solar Forecast Runner"
   description: >
-    Triggers the solar forecast engine every 30 minutes between 04:00 and
-    22:00 local time. Generates a 48-hour forecast using clear-sky model
-    with Met.no cloud overlay and stores results in MariaDB + HA helpers.
+    Triggers the solar forecast engine every 15 minutes between 04:00 and
+    22:00 local time. Generates a 48-hour forecast at 15-min resolution
+    with per-component tracking and stores results in MariaDB + HA helpers.
   mode: single
   trace:
     stored_traces: 10
 
   triggers:
     - trigger: time_pattern
-      minutes: "/30"
+      minutes: "/15"
 
   conditions:
     - condition: state
@@ -51,22 +53,21 @@
 
 # =============================================================================
 # 021 – SOLAR ACTUAL LOGGER
-# Logs current SolarEdge production every 30 minutes (all hours).
-# Accumulates energy samples into hourly rows in MariaDB.
+# Logs current SolarEdge production every 15 minutes (all hours).
+# Writes 15-min slots to MariaDB, also accumulates hourly for backward compat.
 # =============================================================================
 - id: auto_energy_021_solar_actual
   alias: "Energy 021 – Solar Actual Logger"
   description: >
-    Logs current SolarEdge production to MariaDB every 30 minutes.
-    Accumulates half-hourly samples into hourly energy totals.
-    Runs 24/7 to capture any production (even night = 0W baseline).
+    Logs current SolarEdge production to MariaDB every 15 minutes.
+    Writes to both 15-min and hourly tables. Runs 24/7.
   mode: single
   trace:
     stored_traces: 10
 
   triggers:
     - trigger: time_pattern
-      minutes: "/30"
+      minutes: "/15"
 
   conditions:
     - condition: state
@@ -80,15 +81,14 @@
 # =============================================================================
 # 022 – SOLAR FORECAST COMPARISON
 # Compares forecast vintages against actual production at :05 past each hour.
-# Runs slightly after the hour to ensure the actual logger has written data.
+# Now includes per-component accuracy (cloud, temp, east/west arrays).
 # =============================================================================
 - id: auto_energy_022_solar_compare
   alias: "Energy 022 – Solar Forecast Comparison"
   description: >
-    At 5 minutes past each hour, compares all forecast vintages for completed
-    hours against actual production. Computes total error, error percentage,
-    and variance decomposition (model vs weather error). Updates quality
-    metrics in HA helpers.
+    At 5 minutes past each hour, compares forecast vintages for completed
+    slots against actual production. Computes per-component errors (cloud,
+    temperature, east/west arrays) and updates bias corrections.
   mode: single
   trace:
     stored_traces: 10
@@ -114,15 +114,13 @@
 # =============================================================================
 # 023 – SOLAR CALIBRATION
 # Weekly auto-calibration from clear-sky days. Runs Sunday at 23:30.
-# Updates the calibration factor using exponentially weighted mean of
-# actual/clear-sky ratios from the last 90 days of clear-sky days.
+# Now calibrates per-array (east/west) using morning/afternoon split.
 # =============================================================================
 - id: auto_energy_023_solar_calibrate
   alias: "Energy 023 – Solar Calibration"
   description: >
-    Weekly calibration of the clear-sky model. Analyses clear-sky days
-    (avg cloud < 20%) from the last 90 days, computes actual-to-model
-    ratio, and updates the calibration factor via EWM (alpha=0.1).
+    Weekly calibration of the clear-sky model. Now calibrates east and west
+    arrays independently using morning/afternoon production split.
   mode: single
   trace:
     stored_traces: 10
@@ -195,16 +193,13 @@
 # =============================================================================
 # 024 – SOLAR BANKING CALCULATOR
 # Computes optimal thermal banking target for the jacuzzi every 30 minutes.
-# Uses calendar events, solar forecast, tariff schedule, and Met.no ambient
-# forecast to determine when to pre-heat during cheap energy periods.
+# NOTE: Superseded by 028 (supply planner) but kept for backward compat.
 # =============================================================================
 - id: auto_energy_024_solar_banking
   alias: "Energy 024 – Solar Banking Calculator"
   description: >
-    Runs every 30 minutes to compute the optimal jacuzzi banking target
-    temperature. Uses backward induction from the next calendar event through
-    cheap/expensive energy windows to determine how much to pre-heat during
-    low-cost periods (solar surplus or low tariff).
+    Runs every 30 minutes to compute the optimal jacuzzi banking target.
+    Superseded by the supply planner (028) but kept for backward compat.
   mode: single
   trace:
     stored_traces: 10
@@ -220,3 +215,49 @@
 
   actions:
     - action: shell_command.solar_banking
+
+
+# =============================================================================
+# 028 – SUPPLY PLANNER
+# Generates a 48-hour cost-optimal supply plan every 15 minutes.
+# Schedules jacuzzi heating and EV charging to minimize total cost
+# using forward simulation with marginal cost comparison.
+# =============================================================================
+- id: auto_energy_028_supply_planner
+  alias: "Energy 028 – Supply Planner"
+  description: >
+    Generates a 48-hour cost-optimal supply plan every 15 minutes.
+    Uses forward simulation to schedule jacuzzi heating and EV charging
+    concurrently when cost-effective. Reactive triggers for state changes.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    # Regular 15-min schedule
+    - trigger: time_pattern
+      minutes: "/15"
+    # Reactive: EV plugged/unplugged
+    - trigger: state
+      entity_id: sensor.ev_plugged_vehicle
+    # Reactive: jacuzzi calendar event change
+    - trigger: state
+      entity_id: calendar.jacuzzi_schedule
+    # Reactive: solar production deviates >30% from forecast for 15 min
+    - trigger: template
+      value_template: >
+        {% set actual = states('sensor.solaredge_current_power') | float(0) %}
+        {% set unit = state_attr('sensor.solaredge_current_power', 'unit_of_measurement') %}
+        {% set actual = actual * 1000 if unit == 'kW' else actual %}
+        {% set forecast = states('input_number.energy_solar_forecast_current_hour_w') | float(1) %}
+        {{ (actual - forecast) | abs / [forecast, 100] | max > 0.3 }}
+      for:
+        minutes: 15
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.energy_solar_forecast_enabled
+      state: "on"
+
+  actions:
+    - action: shell_command.solar_plan

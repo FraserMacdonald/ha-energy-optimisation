@@ -2,9 +2,7 @@
 # ENERGY SOLAR FORECAST – SYSTEM PACKAGE
 # File: packages/energy_solar_forecast_system.yaml
 #
-# Phase 2A-2C: Helpers for the solar production forecast system.
-# 13 input_numbers, 1 input_boolean, 2 input_selects.
-#
+# Helpers for the solar production forecast system and supply planner.
 # The forecast engine (scripts/solar_forecast.py) writes to these helpers.
 # Automations in energy_solar_forecast_automations.yaml trigger the engine.
 ###############################################################################
@@ -134,14 +132,129 @@ input_number:
     icon: mdi:gauge
     mode: box
 
-  # --- Calibration (read/write by solar_forecast.py) ---
+  # --- Calibration: per-array (read/write by solar_forecast.py) ---
   energy_solar_calibration_factor:
-    name: "Solar Calibration Factor"
+    name: "Solar Calibration Factor (legacy)"
     min: 0.1
     max: 2.0
     step: 0.001
     initial: 0.75
     icon: mdi:tune-vertical
+    mode: box
+
+  energy_solar_calibration_east:
+    name: "Solar Calibration East Array"
+    min: 0.1
+    max: 2.0
+    step: 0.001
+    initial: 0.75
+    icon: mdi:tune-vertical
+    mode: box
+
+  energy_solar_calibration_west:
+    name: "Solar Calibration West Array"
+    min: 0.1
+    max: 2.0
+    step: 0.001
+    initial: 0.75
+    icon: mdi:tune-vertical
+    mode: box
+
+  # --- Cloud bias correction per horizon bucket ---
+  energy_cloud_bias_t0:
+    name: "Cloud Bias Correction (Nowcast)"
+    min: -50
+    max: 50
+    step: 0.1
+    initial: 0
+    unit_of_measurement: "%"
+    icon: mdi:cloud-sync
+    mode: box
+
+  energy_cloud_bias_t6:
+    name: "Cloud Bias Correction (6h)"
+    min: -50
+    max: 50
+    step: 0.1
+    initial: 0
+    unit_of_measurement: "%"
+    icon: mdi:cloud-sync
+    mode: box
+
+  energy_cloud_bias_t12:
+    name: "Cloud Bias Correction (12h)"
+    min: -50
+    max: 50
+    step: 0.1
+    initial: 0
+    unit_of_measurement: "%"
+    icon: mdi:cloud-sync
+    mode: box
+
+  energy_cloud_bias_t24:
+    name: "Cloud Bias Correction (24h)"
+    min: -50
+    max: 50
+    step: 0.1
+    initial: 0
+    unit_of_measurement: "%"
+    icon: mdi:cloud-sync
+    mode: box
+
+  energy_cloud_bias_t36:
+    name: "Cloud Bias Correction (36h)"
+    min: -50
+    max: 50
+    step: 0.1
+    initial: 0
+    unit_of_measurement: "%"
+    icon: mdi:cloud-sync
+    mode: box
+
+  # --- Supply Planner outputs (written by solar_forecast.py plan) ---
+  energy_plan_ev_amps:
+    name: "Plan EV Amps"
+    min: 0
+    max: 32
+    step: 1
+    unit_of_measurement: "A"
+    icon: mdi:current-ac
+    mode: box
+
+  energy_plan_48h_cost_chf:
+    name: "Plan 48h Projected Cost"
+    min: 0
+    max: 100
+    step: 0.01
+    unit_of_measurement: "CHF"
+    icon: mdi:cash
+    mode: box
+
+  energy_plan_48h_savings_chf:
+    name: "Plan 48h Savings vs Naive"
+    min: 0
+    max: 100
+    step: 0.01
+    unit_of_measurement: "CHF"
+    icon: mdi:piggy-bank
+    mode: box
+
+  energy_plan_self_consumption:
+    name: "Plan Self-Consumption %"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:solar-power
+    mode: box
+
+  energy_plan_grid_peak_kwh:
+    name: "Plan Peak-Tariff Grid Draw"
+    min: 0
+    max: 500
+    step: 0.01
+    unit_of_measurement: "kWh"
+    icon: mdi:transmission-tower-import
     mode: box
 
 
@@ -158,5 +271,27 @@ input_select:
   energy_solar_forecast_quality_rating:
     name: "Solar Forecast Quality"
     icon: mdi:star-circle
+    options:
+      - "none"
+
+  energy_plan_current_action:
+    name: "Plan Current Action"
+    icon: mdi:play-circle
+    options:
+      - "Idle"
+      - "Jac"
+      - "EV"
+      - "Jac+EV"
+      - "Export"
+
+  energy_plan_next_change:
+    name: "Plan Next Change"
+    icon: mdi:calendar-clock
+    options:
+      - "none"
+
+  energy_plan_status:
+    name: "Plan Status"
+    icon: mdi:check-circle
     options:
       - "none"
