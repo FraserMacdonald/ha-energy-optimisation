@@ -2100,6 +2100,19 @@ def cmd_plan(token):
     Uses forward simulation with marginal cost comparison to schedule
     jacuzzi heating and EV charging across 192 slots (15-min each).
     """
+    try:
+        _cmd_plan_inner(token)
+    except Exception as e:
+        import traceback
+        err = f"ERROR: {e}"
+        print(err)
+        traceback.print_exc()
+        # Write error to HA so it's visible on dashboard
+        ha_set("input_select.energy_plan_status", f"ERR: {str(e)[:200]}", token)
+
+
+def _cmd_plan_inner(token):
+    """Inner plan logic — wrapped by cmd_plan for error reporting."""
     lat, lon = get_location(token)
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     tz_offset = get_tz_offset(now_utc.replace(tzinfo=timezone.utc))
