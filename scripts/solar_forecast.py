@@ -2113,7 +2113,10 @@ def cmd_plan(token):
     t_water = ha_attr("climate.jacuzzi", "current_temperature", token)
     t_water = float(t_water) if t_water is not None else 20.0
 
-    standby = float(ha_state("input_number.jacuzzi_standby_temp", token) or JAC_DEFAULT_STANDBY)
+    # Use effective standby (solar-aware: 40°C during solar) not raw standby (20°C)
+    standby = float(ha_state("sensor.jacuzzi_effective_standby_temp", token)
+                    or ha_state("input_number.jacuzzi_standby_temp", token)
+                    or JAC_DEFAULT_STANDBY)
     p_net = float(ha_state("input_number.jacuzzi_effective_power_kw", token) or JAC_DEFAULT_P_NET)
     c_thermal = float(ha_state("sensor.jacuzzi_thermal_capacity", token) or 3.72)
     t_ambient_now = float(ha_state("sensor.la_dole_temperature", token) or 10)
@@ -2305,19 +2308,28 @@ def cmd_plan(token):
                 if slots_to_deadline < 24:  # <6h to event
                     jac_must_heat = True
 
-        # Jacuzzi below standby
+        # Jacuzzi below effective standby (40°C during solar, 20°C otherwise)
         if jac_temp < standby - 0.5:
             jac_needs_heat = True
 
-        # EV needs charge
+        # SOLAR BANKING: Always heat with surplus — every kWh self-consumed
+        # saves 0.20-0.32 CHF vs exporting and reimporting later.
+        # The jacuzzi is a thermal battery.
+        jac_can_bank = jac_temp < JAC_MAX_TEMP and surplus > 0
+
+        if jac_can_bank:
+            jac_needs_heat = True
+
+        # EV needs charge — any plugged car below limit should charge with solar
         ev_needs_charge = (charge_car is not None
                            and ev_soc < charge_limit
-                           and (plugged == charge_car or charge_car is not None))
+                           and plugged in (charge_car, "Horace", "Horatio"))
         ev_must_charge = ev_soc < 10  # Safety: charge at any tariff
 
         # --- Evaluate 4 combinations ---
         combos = []
-        jac_kw = p_net if jac_needs_heat and jac_temp < JAC_MAX_TEMP else 0
+        # Allow heating whenever physically possible (below max temp)
+        jac_kw = p_net if jac_temp < JAC_MAX_TEMP else 0
 
         for do_jac in [False, True]:
             if do_jac and jac_kw == 0:
@@ -2373,20 +2385,31 @@ def cmd_plan(token):
                 if not valid:
                     continue
 
-                # Marginal value: cost of deferring vs running now
+                # Marginal value: self-consumption savings + deferred cost savings
+                # Every kWh of solar used instead of exported saves
+                # (future_import_rate - RATE_SOLAR) per kWh.
                 marginal = 0
-                if do_jac and jac_needs_heat:
-                    jac_deferred_rate = cheapest_future[min(i + 1, SLOTS_48H - 1)]
-                    jac_immediate_rate = (slot_cost / max(load_w / 1000 * dt, 0.001))
-                    marginal += (jac_deferred_rate - jac_immediate_rate) * JAC_HEATER_KW * dt
 
-                if do_ev:
-                    ev_deferred_rate = cheapest_future[min(i + 1, SLOTS_48H - 1)]
+                # Self-consumption value: avoided export loss
+                # Exporting 1 kWh earns RATE_SOLAR (0.06), but later we must
+                # import at RATE_LOW (0.26+). Net loss = 0.20+ per kWh exported.
+                self_consumption_value = (solar_used / 1000) * (RATE_LOW - RATE_SOLAR) * dt
+
+                # Grid draw cost: any grid used now vs deferring to cheaper slot
+                grid_penalty = 0
+                if grid_draw > 0:
+                    future_rate = cheapest_future[min(i + 1, SLOTS_48H - 1)]
+                    grid_penalty = (grid_draw / 1000) * (tariff - future_rate) * dt
+
+                marginal = self_consumption_value - grid_penalty
+
+                # For event-critical loads, add urgency bonus
+                if do_jac and jac_must_heat:
+                    marginal += JAC_HEATER_KW * dt * 0.5  # strong preference
+
+                if do_ev and ev_must_charge:
                     ev_kw = ev_amps * ev_voltage * ev_phases / 1000
-                    ev_immediate_cost = max(0, ev_kw * 1000 - surplus) / 1000 * tariff
-                    if surplus >= ev_kw * 1000:
-                        ev_immediate_cost = ev_kw * RATE_SOLAR
-                    marginal += (ev_deferred_rate - ev_immediate_cost) * ev_kw * dt
+                    marginal += ev_kw * dt * 0.5
 
                 combos.append({
                     "do_jac": do_jac,
