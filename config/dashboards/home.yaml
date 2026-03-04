@@ -58,6 +58,22 @@ views:
           {% elif cloud < 70 %}orange
           {% else %}grey{% endif %}
 
+      # ── SUPPLY PLAN ──
+      - type: custom:mushroom-template-card
+        primary: >
+          Plan: {{ states('input_select.energy_plan_current_action') }}
+        secondary: >
+          Cost: {{ states('input_number.energy_plan_48h_cost_chf') | float(0) | round(2) }} CHF
+          · Self: {{ states('input_number.energy_plan_self_consumption') | float(0) | round(0) }}%
+          · {{ states('input_select.energy_plan_next_change') }}
+        icon: mdi:calendar-clock
+        icon_color: >
+          {% set action = states('input_select.energy_plan_current_action') %}
+          {% if action in ['Jac+EV'] %}green
+          {% elif action in ['Jac', 'EV'] %}amber
+          {% elif action == 'Export' %}teal
+          {% else %}grey{% endif %}
+
       # ── SELF-CONSUMPTION ──
       - type: custom:mushroom-template-card
         primary: >
