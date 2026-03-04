@@ -92,7 +92,8 @@ shell_command:
   solar_compare: "python3 /config/scripts/solar_forecast.py compare"
   solar_calibrate: "python3 /config/scripts/solar_forecast.py calibrate"
   solar_banking: "python3 /config/scripts/solar_forecast.py banking"
-  solar_plan: "python3 /config/scripts/solar_forecast.py plan"
+  solar_plan: "python3 /config/scripts/solar_forecast.py plan 2>&1 | tee /config/solar_plan.log"
+  read_solar_plan_log: "cat /config/solar_plan.log 2>/dev/null || echo 'no log file'"
   # --- Query ---
   query_decisions_today: "python3 /config/scripts/log_to_db.py query_today"
   query_decisions_today_file: "python3 /config/scripts/log_to_db.py query_today_file"
