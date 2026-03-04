@@ -103,6 +103,8 @@ shell_command:
   # --- Deploy via GitHub API (fallback when git binary unavailable) ---
   deploy_from_github: "rm -f /config/python_scripts/.ha_token && python3 /config/scripts/deploy_github.py"
   fix_token: "rm -f /config/python_scripts/.ha_token && echo 'ha_token removed'"
+  api_test: "python3 /config/scripts/api_test_20260304.py"
+  read_api_test: "cat /config/api_test_output.txt 2>/dev/null || echo 'no output'"
 
 # =============================================================================
 # REST COMMANDS
