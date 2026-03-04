@@ -1,0 +1,214 @@
+###############################################################################
+# ENERGY REGRET AUTOMATIONS — Exported Solar Cost Analysis
+# File: automations/energy/energy_regret_automations.yaml
+#
+# 030: Accumulator — every 5 min, categorize export power, accumulate kWh + CHF
+# 031: Daily reset — midnight, zero all helpers
+#
+# Numbering: 030-031 (energy solar/cost analysis range)
+###############################################################################
+
+# =============================================================================
+# 030 — REGRET ACCUMULATOR
+# Every 5 minutes: read export power, categorize into 4 buckets, accumulate
+# =============================================================================
+- id: auto_energy_030_regret_accumulator
+  alias: "Energy 030 – Regret Accumulator"
+  description: >
+    Every 5 minutes, reads current solar export power and categorizes it into
+    four buckets based on what COULD have consumed it: actionable loads (jacuzzi
+    + plugged car), cable away (car at home but unplugged), battery (placeholder),
+    and unavoidable. Accumulates kWh and regret cost (buy-back minus feed-in).
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/5"
+
+  conditions:
+    - condition: template
+      value_template: >
+        {{ states('sensor.energy_solar_surplus_w') | float(0) > 0 }}
+
+  actions:
+    # ── Step 1: Calculate capacities ──
+    - variables:
+        export_w: "{{ states('sensor.energy_solar_surplus_w') | float(0) }}"
+
+    - variables:
+        # Jacuzzi capacity: 6kW if temp < 40, else 0
+        jac_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(99) }}"
+        jac_cap: "{{ 6000 if jac_temp < 40 else 0 }}"
+
+        # EV capacities: 11kW per car if plugged + at home + SOC < charge limit
+        horace_plugged: "{{ is_state('binary_sensor.horace_plugged', 'on') }}"
+        horace_home: "{{ is_state('device_tracker.horace_location', 'home') }}"
+        horace_soc: "{{ states('input_number.ev_horace_current_soc') | float(100) }}"
+        horace_limit: "{{ states('input_number.ev_horace_charge_limit') | float(80) }}"
+        horatio_plugged: "{{ is_state('binary_sensor.horatio_plugged', 'on') }}"
+        horatio_home: "{{ is_state('device_tracker.horatio_location', 'home') }}"
+        horatio_soc: "{{ states('input_number.ev_horatio_current_soc') | float(100) }}"
+        horatio_limit: "{{ states('input_number.ev_horatio_charge_limit') | float(80) }}"
+
+    - variables:
+        # Cat 1: Actionable — plugged cars with SOC < limit + jacuzzi
+        horace_plugged_cap: >
+          {{ 11000 if (horace_plugged and horace_home and horace_soc < horace_limit) else 0 }}
+        horatio_plugged_cap: >
+          {{ 11000 if (horatio_plugged and horatio_home and horatio_soc < horatio_limit) else 0 }}
+        cat1_capacity: >
+          {{ jac_cap | float(0) + horace_plugged_cap | float(0) + horatio_plugged_cap | float(0) }}
+
+    - variables:
+        cat1_w: "{{ [export_w | float(0), cat1_capacity | float(0)] | min }}"
+
+    - variables:
+        remaining_after_cat1: "{{ export_w | float(0) - cat1_w | float(0) }}"
+
+    - variables:
+        # Cat 2: Cable away — car at home, NOT plugged, SOC < limit
+        horace_away_cap: >
+          {{ 11000 if (not horace_plugged and horace_home and horace_soc < horace_limit) else 0 }}
+        horatio_away_cap: >
+          {{ 11000 if (not horatio_plugged and horatio_home and horatio_soc < horatio_limit) else 0 }}
+        cat2_capacity: "{{ horace_away_cap | float(0) + horatio_away_cap | float(0) }}"
+
+    - variables:
+        cat2_w: "{{ [remaining_after_cat1 | float(0), cat2_capacity | float(0)] | min }}"
+
+    - variables:
+        remaining_after_cat2: "{{ remaining_after_cat1 | float(0) - cat2_w | float(0) }}"
+
+    - variables:
+        # Cat 3: Battery — placeholder (not installed)
+        battery_installed: "{{ is_state('input_boolean.energy_battery_installed', 'on') }}"
+        cat3_capacity: "{{ 5000 if battery_installed else 0 }}"
+
+    - variables:
+        cat3_w: "{{ [remaining_after_cat2 | float(0), cat3_capacity | float(0)] | min }}"
+
+    - variables:
+        remaining_after_cat3: "{{ remaining_after_cat2 | float(0) - cat3_w | float(0) }}"
+
+    - variables:
+        # Cat 4: Unavoidable — whatever is left
+        cat4_w: "{{ remaining_after_cat3 | float(0) }}"
+
+    - variables:
+        # Convert to kWh for 5-min interval: W * (5/60) / 1000
+        cat1_kwh: "{{ (cat1_w | float(0) * 5 / 60 / 1000) | round(4) }}"
+        cat2_kwh: "{{ (cat2_w | float(0) * 5 / 60 / 1000) | round(4) }}"
+        cat3_kwh: "{{ (cat3_w | float(0) * 5 / 60 / 1000) | round(4) }}"
+        cat4_kwh: "{{ (cat4_w | float(0) * 5 / 60 / 1000) | round(4) }}"
+
+    - variables:
+        # Cost: regret = kWh * (buy-back rate - feed-in rate)
+        tariff_rate: "{{ state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.26) }}"
+        feed_in_rate: 0.06
+        regret_rate: "{{ tariff_rate - feed_in_rate }}"
+
+    - variables:
+        cat1_chf: "{{ (cat1_kwh | float(0) * regret_rate | float(0)) | round(4) }}"
+        cat2_chf: "{{ (cat2_kwh | float(0) * regret_rate | float(0)) | round(4) }}"
+        cat3_chf: "{{ (cat3_kwh | float(0) * regret_rate | float(0)) | round(4) }}"
+        cat4_chf: "{{ (cat4_kwh | float(0) * regret_rate | float(0)) | round(4) }}"
+
+    # ── Step 2: Accumulate to helpers ──
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.energy_regret_cat1_kwh_today
+      data:
+        value: >
+          {{ (states('input_number.energy_regret_cat1_kwh_today') | float(0) + cat1_kwh | float(0)) | round(2) }}
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.energy_regret_cat1_chf_today
+      data:
+        value: >
+          {{ (states('input_number.energy_regret_cat1_chf_today') | float(0) + cat1_chf | float(0)) | round(2) }}
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.energy_regret_cat2_kwh_today
+      data:
+        value: >
+          {{ (states('input_number.energy_regret_cat2_kwh_today') | float(0) + cat2_kwh | float(0)) | round(2) }}
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.energy_regret_cat2_chf_today
+      data:
+        value: >
+          {{ (states('input_number.energy_regret_cat2_chf_today') | float(0) + cat2_chf | float(0)) | round(2) }}
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.energy_regret_cat3_kwh_today
+      data:
+        value: >
+          {{ (states('input_number.energy_regret_cat3_kwh_today') | float(0) + cat3_kwh | float(0)) | round(2) }}
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.energy_regret_cat3_chf_today
+      data:
+        value: >
+          {{ (states('input_number.energy_regret_cat3_chf_today') | float(0) + cat3_chf | float(0)) | round(2) }}
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.energy_regret_cat4_kwh_today
+      data:
+        value: >
+          {{ (states('input_number.energy_regret_cat4_kwh_today') | float(0) + cat4_kwh | float(0)) | round(2) }}
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.energy_regret_cat4_chf_today
+      data:
+        value: >
+          {{ (states('input_number.energy_regret_cat4_chf_today') | float(0) + cat4_chf | float(0)) | round(2) }}
+
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.energy_regret_total_chf_today
+      data:
+        value: >
+          {% set t = states('input_number.energy_regret_total_chf_today') | float(0) %}
+          {% set delta = cat1_chf | float(0) + cat2_chf | float(0) + cat3_chf | float(0) + cat4_chf | float(0) %}
+          {{ (t + delta) | round(2) }}
+
+# =============================================================================
+# 031 — REGRET DAILY RESET
+# Midnight: reset all regret helpers to zero
+# =============================================================================
+- id: auto_energy_031_regret_daily_reset
+  alias: "Energy 031 – Regret Daily Reset"
+  description: >
+    Resets all regret accumulators to zero at midnight.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time
+      at: "00:00:00"
+
+  actions:
+    - action: input_number.set_value
+      target:
+        entity_id:
+          - input_number.energy_regret_cat1_kwh_today
+          - input_number.energy_regret_cat1_chf_today
+          - input_number.energy_regret_cat2_kwh_today
+          - input_number.energy_regret_cat2_chf_today
+          - input_number.energy_regret_cat3_kwh_today
+          - input_number.energy_regret_cat3_chf_today
+          - input_number.energy_regret_cat4_kwh_today
+          - input_number.energy_regret_cat4_chf_today
+          - input_number.energy_regret_total_chf_today
+      data:
+        value: 0

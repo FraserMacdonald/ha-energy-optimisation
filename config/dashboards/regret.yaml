@@ -1,0 +1,174 @@
+###############################################################################
+# REGRET DASHBOARD — Exported Solar Cost Analysis
+# File: dashboards/regret.yaml
+# Path: lovelace-regret
+#
+# Shows the daily cost of exporting solar energy that could have been
+# self-consumed, broken down by category.
+###############################################################################
+
+views:
+  - title: Regret
+    path: regret
+    icon: mdi:cash-remove
+    cards:
+
+      # ── HEADER: Today's Total Regret ──
+      - type: custom:mushroom-template-card
+        primary: >
+          {% set chf = states('input_number.energy_regret_total_chf_today') | float(0) %}
+          {{ chf | round(2) }} CHF Regret Today
+        secondary: >
+          {% set kwh = state_attr('sensor.energy_regret_summary', 'export_kwh_today') | float(0) %}
+          {% set earned = state_attr('sensor.energy_regret_summary', 'earned_chf_today') | float(0) %}
+          {{ kwh | round(1) }} kWh exported · {{ earned | round(2) }} CHF earned at 0.06
+        icon: mdi:cash-remove
+        icon_color: >
+          {% set chf = states('input_number.energy_regret_total_chf_today') | float(0) %}
+          {% if chf > 1 %}red
+          {% elif chf > 0.5 %}orange
+          {% elif chf > 0 %}amber
+          {% else %}green{% endif %}
+
+      # ── SELF-CONSUMPTION % ──
+      - type: custom:mushroom-template-card
+        primary: >
+          Self-Consumption: {{ states('sensor.energy_self_consumption_pct') | float(0) | round(0) }}%
+        secondary: >
+          {% set prod = state_attr('sensor.energy_self_consumption_pct', 'production_w') | float(0) %}
+          {% set surplus = state_attr('sensor.energy_self_consumption_pct', 'surplus_w') | float(0) %}
+          {% if prod > 100 %}
+            Producing {{ (prod / 1000) | round(1) }}kW · Exporting {{ (surplus / 1000) | round(1) }}kW
+          {% else %}
+            No solar production
+          {% endif %}
+        icon: mdi:solar-power
+        icon_color: >
+          {% set pct = states('sensor.energy_self_consumption_pct') | float(0) %}
+          {% if pct >= 80 %}green
+          {% elif pct >= 50 %}amber
+          {% else %}orange{% endif %}
+
+      # ── CAT 1: ACTIONABLE (jacuzzi + plugged car) ──
+      - type: custom:mushroom-template-card
+        primary: >
+          Actionable: {{ states('input_number.energy_regret_cat1_kwh_today') | float(0) | round(1) }} kWh
+        secondary: >
+          {{ states('input_number.energy_regret_cat1_chf_today') | float(0) | round(2) }} CHF regret
+          · Jacuzzi + plugged cars
+        icon: mdi:alert-circle
+        icon_color: red
+
+      # ── CAT 2: CABLE AWAY (car at home, unplugged) ──
+      - type: custom:mushroom-template-card
+        primary: >
+          Cable Away: {{ states('input_number.energy_regret_cat2_kwh_today') | float(0) | round(1) }} kWh
+        secondary: >
+          {{ states('input_number.energy_regret_cat2_chf_today') | float(0) | round(2) }} CHF regret
+          · Car at home but not plugged in
+        icon: mdi:ev-plug-type2
+        icon_color: orange
+
+      # ── CAT 3: BATTERY (placeholder) ──
+      - type: custom:mushroom-template-card
+        primary: >
+          Battery: {{ states('input_number.energy_regret_cat3_kwh_today') | float(0) | round(1) }} kWh
+        secondary: >
+          {{ states('input_number.energy_regret_cat3_chf_today') | float(0) | round(2) }} CHF regret
+          · {% if is_state('input_boolean.energy_battery_installed', 'on') %}Battery not full{% else %}No battery installed{% endif %}
+        icon: mdi:battery-charging
+        icon_color: blue
+
+      # ── CAT 4: UNAVOIDABLE ──
+      - type: custom:mushroom-template-card
+        primary: >
+          Unavoidable: {{ states('input_number.energy_regret_cat4_kwh_today') | float(0) | round(1) }} kWh
+        secondary: >
+          {{ states('input_number.energy_regret_cat4_chf_today') | float(0) | round(2) }} CHF regret
+          · All loads satisfied
+        icon: mdi:check-circle
+        icon_color: green
+
+      # ── CURRENT STATE: What's exporting and what could consume ──
+      - type: custom:mushroom-template-card
+        primary: >
+          {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
+          {% if surplus > 0 %}
+            Exporting {{ (surplus / 1000) | round(1) }}kW now
+          {% else %}
+            Not exporting
+          {% endif %}
+        secondary: >
+          {% set jac_temp = state_attr('climate.jacuzzi', 'current_temperature') | float(99) %}
+          {% set horace_plugged = is_state('binary_sensor.horace_plugged', 'on') %}
+          {% set horatio_plugged = is_state('binary_sensor.horatio_plugged', 'on') %}
+          {% set horace_home = is_state('device_tracker.horace_location', 'home') %}
+          {% set horatio_home = is_state('device_tracker.horatio_location', 'home') %}
+          {% set horace_soc = states('input_number.ev_horace_current_soc') | float(100) %}
+          {% set horatio_soc = states('input_number.ev_horatio_current_soc') | float(100) %}
+          {% set horace_limit = states('input_number.ev_horace_charge_limit') | float(80) %}
+          {% set horatio_limit = states('input_number.ev_horatio_charge_limit') | float(80) %}
+          {% set consumers = [] %}
+          {% if jac_temp < 40 %}
+            {% set consumers = consumers + ['Jacuzzi ' ~ jac_temp | round(0) ~ '°C (6kW)'] %}
+          {% endif %}
+          {% if horace_plugged and horace_home and horace_soc < horace_limit %}
+            {% set consumers = consumers + ['Horace plugged ' ~ horace_soc | round(0) ~ '% (11kW)'] %}
+          {% endif %}
+          {% if horatio_plugged and horatio_home and horatio_soc < horatio_limit %}
+            {% set consumers = consumers + ['Horatio plugged ' ~ horatio_soc | round(0) ~ '% (11kW)'] %}
+          {% endif %}
+          {% if horace_home and not horace_plugged and horace_soc < horace_limit %}
+            {% set consumers = consumers + ['Horace home unplugged ' ~ horace_soc | round(0) ~ '%'] %}
+          {% endif %}
+          {% if horatio_home and not horatio_plugged and horatio_soc < horatio_limit %}
+            {% set consumers = consumers + ['Horatio home unplugged ' ~ horatio_soc | round(0) ~ '%'] %}
+          {% endif %}
+          {% if consumers | length > 0 %}
+            Could consume: {{ consumers | join(' · ') }}
+          {% else %}
+            All loads satisfied
+          {% endif %}
+        icon: >
+          {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
+          {% if surplus > 0 %}mdi:transmission-tower-export
+          {% else %}mdi:transmission-tower{% endif %}
+        icon_color: >
+          {% set surplus = states('sensor.energy_solar_surplus_w') | float(0) %}
+          {% if surplus > 0 %}amber
+          {% else %}green{% endif %}
+
+      # ── REGRET BREAKDOWN BAR (% by category) ──
+      - type: custom:mushroom-template-card
+        primary: >
+          {% set regret_pct = state_attr('sensor.energy_regret_summary', 'regret_pct') | float(0) %}
+          {{ regret_pct | round(0) }}% of exports were avoidable
+        secondary: >
+          {% set c1 = states('input_number.energy_regret_cat1_chf_today') | float(0) %}
+          {% set c2 = states('input_number.energy_regret_cat2_chf_today') | float(0) %}
+          {% set c3 = states('input_number.energy_regret_cat3_chf_today') | float(0) %}
+          {% set total = c1 + c2 + c3 %}
+          {% if total > 0 %}
+            Actionable {{ c1 | round(2) }} + Cable {{ c2 | round(2) }} + Battery {{ c3 | round(2) }} = {{ total | round(2) }} CHF avoidable
+          {% else %}
+            No avoidable regret today
+          {% endif %}
+        icon: mdi:chart-donut
+        icon_color: >
+          {% set regret_pct = state_attr('sensor.energy_regret_summary', 'regret_pct') | float(0) %}
+          {% if regret_pct > 50 %}red
+          {% elif regret_pct > 25 %}orange
+          {% else %}green{% endif %}
+
+      # ── TARIFF INFO ──
+      - type: custom:mushroom-template-card
+        primary: >
+          Tariff: {{ states('sensor.energy_tariff_current') | title }}
+          ({{ state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') }} CHF/kWh)
+        secondary: >
+          {% set rate = state_attr('sensor.energy_tariff_current', 'rate_chf_kwh') | float(0.26) %}
+          Regret rate: {{ (rate - 0.06) | round(2) }} CHF/kWh (buy-back {{ rate }} minus feed-in 0.06)
+        icon: mdi:cash-clock
+        icon_color: >
+          {% if is_state('sensor.energy_tariff_current', 'high') %}red
+          {% else %}green{% endif %}

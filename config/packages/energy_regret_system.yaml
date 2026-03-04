@@ -1,0 +1,95 @@
+###############################################################################
+# ENERGY REGRET SYSTEM — Exported Solar Cost Analysis
+# File: packages/energy_regret_system.yaml
+#
+# Tracks the cost of exporting solar energy that could have been self-consumed.
+# Four categories: Actionable, Cable Away, Battery, Unavoidable.
+# Daily accumulators reset at midnight by energy_031.
+###############################################################################
+
+input_number:
+  # ── Category 1: Actionable (jacuzzi + plugged car) ──
+  energy_regret_cat1_kwh_today:
+    name: "Regret Cat1 kWh Today"
+    min: 0
+    max: 500
+    step: 0.01
+    unit_of_measurement: "kWh"
+    icon: mdi:alert-circle
+    initial: 0
+
+  energy_regret_cat1_chf_today:
+    name: "Regret Cat1 CHF Today"
+    min: 0
+    max: 500
+    step: 0.01
+    unit_of_measurement: "CHF"
+    icon: mdi:alert-circle
+    initial: 0
+
+  # ── Category 2: Cable Away (car at home but unplugged) ──
+  energy_regret_cat2_kwh_today:
+    name: "Regret Cat2 kWh Today"
+    min: 0
+    max: 500
+    step: 0.01
+    unit_of_measurement: "kWh"
+    icon: mdi:ev-plug-type2
+    initial: 0
+
+  energy_regret_cat2_chf_today:
+    name: "Regret Cat2 CHF Today"
+    min: 0
+    max: 500
+    step: 0.01
+    unit_of_measurement: "CHF"
+    icon: mdi:ev-plug-type2
+    initial: 0
+
+  # ── Category 3: Battery (placeholder, not yet installed) ──
+  energy_regret_cat3_kwh_today:
+    name: "Regret Cat3 kWh Today"
+    min: 0
+    max: 500
+    step: 0.01
+    unit_of_measurement: "kWh"
+    icon: mdi:battery-charging
+    initial: 0
+
+  energy_regret_cat3_chf_today:
+    name: "Regret Cat3 CHF Today"
+    min: 0
+    max: 500
+    step: 0.01
+    unit_of_measurement: "CHF"
+    icon: mdi:battery-charging
+    initial: 0
+
+  # ── Category 4: Unavoidable (nothing could consume) ──
+  energy_regret_cat4_kwh_today:
+    name: "Regret Cat4 kWh Today"
+    min: 0
+    max: 500
+    step: 0.01
+    unit_of_measurement: "kWh"
+    icon: mdi:check-circle
+    initial: 0
+
+  energy_regret_cat4_chf_today:
+    name: "Regret Cat4 CHF Today"
+    min: 0
+    max: 500
+    step: 0.01
+    unit_of_measurement: "CHF"
+    icon: mdi:check-circle
+    initial: 0
+
+  # ── Total regret cost ──
+  energy_regret_total_chf_today:
+    name: "Regret Total CHF Today"
+    min: 0
+    max: 500
+    step: 0.01
+    unit_of_measurement: "CHF"
+    icon: mdi:cash-remove
+    initial: 0
