@@ -412,30 +412,73 @@
         last_update: "{{ states('input_datetime.jacuzzi_last_sample_time') }}"
 
     # Minimum Standby Temp (readiness guarantee)
-    # Inverted heat-up formula: T_min = T_amb + P/k - (P/k - (40 - T_amb)) * e^(k * max_h / C)
+    # Calendar-aware: uses hours_to_event instead of fixed max_heat_up_hours.
+    # Inverted heat-up formula: T_min = T_amb + P/k - (P/k - (40 - T_amb)) * e^(k * h / C)
+    # No event or event in past → T_min = 5°C (freeze protection only).
     - name: "Jacuzzi Minimum Standby Temp"
       unique_id: jacuzzi_minimum_standby_temp
       unit_of_measurement: "°C"
       icon: mdi:thermometer-alert
       state: >
-        {% set t_ambient = states('sensor.la_dole_temperature') | float(10) %}
-        {% set k = states('sensor.jacuzzi_current_k') | float(0.035) %}
-        {% set p = states('input_number.jacuzzi_effective_power_kw') | float(3.7) %}
-        {% set c = states('sensor.jacuzzi_thermal_capacity') | float(3.72) %}
-        {% set max_h = states('input_number.jacuzzi_max_heat_up_hours') | float(8) %}
-        {% set eq = p / k %}
-        {% set dt_target = 40 - t_ambient %}
-        {% if eq <= dt_target %}
-          {# Can't reach 40°C at all — standby must be 40°C #}
-          40
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {% if cal is none or cal.attributes.start_time is not defined %}
+          5
         {% else %}
-          {% set t_min = t_ambient + eq - (eq - dt_target) * (2.718281828 ** (k * max_h / c)) %}
-          {# Floor at 5°C (freeze protection), cap at 40°C #}
-          {{ [[t_min | round(1), 5] | max, 40] | min }}
+          {% set event_ts = as_timestamp(cal.attributes.start_time) %}
+          {% set now_ts = as_timestamp(now()) %}
+          {% set hours_to_event = (event_ts - now_ts) / 3600 %}
+          {% if hours_to_event <= 0 or hours_to_event > 48 %}
+            5
+          {% else %}
+            {% set t_ambient = states('sensor.la_dole_temperature') | float(10) %}
+            {% set k = states('sensor.jacuzzi_current_k') | float(0.035) %}
+            {% set p = states('input_number.jacuzzi_effective_power_kw') | float(3.7) %}
+            {% set c = states('sensor.jacuzzi_thermal_capacity') | float(3.72) %}
+            {% set effective_h = [hours_to_event, 1.0] | max %}
+            {% set eq = p / k %}
+            {% set dt_target = 40 - t_ambient %}
+            {% if eq <= dt_target %}
+              40
+            {% else %}
+              {% set t_min = t_ambient + eq - (eq - dt_target) * (2.718281828 ** (k * effective_h / c)) %}
+              {{ [[t_min | round(1), 5] | max, 40] | min }}
+            {% endif %}
+          {% endif %}
         {% endif %}
       attributes:
-        max_heat_up_hours: "{{ states('input_number.jacuzzi_max_heat_up_hours') | float(8) }}"
         ambient_temp: "{{ states('sensor.la_dole_temperature') | float(0) }}"
+        event_aware: >
+          {% set cal = states.calendar.jacuzzi_schedule %}
+          {% if cal is none or cal.attributes.start_time is not defined %}
+            false
+          {% else %}
+            {% set hours = (as_timestamp(cal.attributes.start_time) - as_timestamp(now())) / 3600 %}
+            {{ hours > 0 and hours <= 48 }}
+          {% endif %}
+        hours_to_event: >
+          {% set cal = states.calendar.jacuzzi_schedule %}
+          {% if cal is none or cal.attributes.start_time is not defined %}
+            null
+          {% else %}
+            {% set hours = (as_timestamp(cal.attributes.start_time) - as_timestamp(now())) / 3600 %}
+            {% if hours > 0 and hours <= 48 %}
+              {{ hours | round(1) }}
+            {% else %}
+              null
+            {% endif %}
+          {% endif %}
+        effective_hours: >
+          {% set cal = states.calendar.jacuzzi_schedule %}
+          {% if cal is none or cal.attributes.start_time is not defined %}
+            null
+          {% else %}
+            {% set hours = (as_timestamp(cal.attributes.start_time) - as_timestamp(now())) / 3600 %}
+            {% if hours > 0 and hours <= 48 %}
+              {{ [hours, 1.0] | max | round(1) }}
+            {% else %}
+              null
+            {% endif %}
+          {% endif %}
         is_binding: >
           {% set min_standby = states('sensor.jacuzzi_minimum_standby_temp') | float(5) %}
           {% set normal = states('input_number.jacuzzi_standby_temp') | float(15) %}
