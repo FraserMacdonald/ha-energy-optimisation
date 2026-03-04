@@ -105,6 +105,8 @@ shell_command:
   fix_token: "rm -f /config/python_scripts/.ha_token && python3 /config/python_scripts/deploy_zip.py && echo 'deployed'"
   api_test: "python3 /config/scripts/api_test_20260304.py"
   read_api_test: "cat /config/api_test_output.txt 2>/dev/null || echo 'no output'"
+  diag_minimal: "python3 /config/python_scripts/diag_minimal.py"
+  read_diag: "cat /config/diag_output.txt 2>/dev/null || echo 'no output'"
 
 # =============================================================================
 # REST COMMANDS
