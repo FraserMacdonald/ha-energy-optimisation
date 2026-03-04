@@ -50,7 +50,7 @@
       device_class: connectivity
       icon: mdi:chart-line
       state: >
-        {{ states('sensor.spot_price_chf_kwh') not in ['unknown', 'unavailable', 'none', ''] }}
+        {{ states('sensor.epex_spot_data_market_price') not in ['unknown', 'unavailable', 'none', ''] }}
       attributes:
         group: "EPEX Spot"
         criticality: "high"
