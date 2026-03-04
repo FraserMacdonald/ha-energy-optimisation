@@ -37,9 +37,13 @@ def fetch_tree():
 
 
 def download_file(path):
-    """Download a single file from GitHub raw."""
-    url = f"{RAW_URL}/{path}"
-    req = urllib.request.Request(url, headers={"User-Agent": "HA-Deploy"})
+    """Download a single file from GitHub raw (cache-busted)."""
+    import time
+    url = f"{RAW_URL}/{path}?t={int(time.time())}"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "HA-Deploy",
+        "Cache-Control": "no-cache",
+    })
     resp = urllib.request.urlopen(req, timeout=30)
     return resp.read()
 
