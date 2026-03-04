@@ -101,7 +101,8 @@ shell_command:
   # --- Deploy from Git ---
   deploy_from_git: "cd /homeassistant/ha-restore && git fetch --all && git reset --hard origin/main && cp -r config/* /config/ && cp -r config/* /homeassistant/ && mkdir -p /config/scripts /homeassistant/scripts && cp scripts/* /config/scripts/ && cp scripts/* /homeassistant/scripts/"
   # --- Deploy via GitHub API (fallback when git binary unavailable) ---
-  deploy_from_github: "python3 /config/scripts/deploy_github.py"
+  deploy_from_github: "rm -f /config/python_scripts/.ha_token && python3 /config/scripts/deploy_github.py"
+  fix_token: "rm -f /config/python_scripts/.ha_token && echo 'ha_token removed'"
 
 # =============================================================================
 # REST COMMANDS
