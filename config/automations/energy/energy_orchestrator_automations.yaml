@@ -242,14 +242,18 @@
     # Safety tier 0 always overrides. Plan overrides legacy tiers.
     # -----------------------------------------------------------------
     - variables:
-        # Jacuzzi allowed: safety override OR plan OR legacy tiers
+        # Jacuzzi allowed: safety override OR plan OR solar banking OR legacy tiers
+        # KEY RULE: Never block jacuzzi heating when solar surplus exists and
+        # jacuzzi can absorb it — every kWh self-consumed saves 0.20-0.32 CHF.
         jacuzzi_allowed: >
           {% if jac == 'A' %}
             true
           {% elif jac == 'E' %}
             false
-          {% elif plan_is_fresh %}
-            {{ plan_jac | bool }}
+          {% elif plan_is_fresh and plan_jac | bool %}
+            true
+          {% elif solar_available and jac in ['B', 'C', 'D'] %}
+            true
           {% elif jac in ['C', 'D'] %}
             {{ tier3_solar_w | float > 0 or tier3_grid | bool }}
           {% elif jac == 'B' %}
@@ -258,10 +262,13 @@
             false
           {% endif %}
 
-        # EV solar allowed: safety override OR plan OR legacy
+        # EV solar allowed: plan OR solar surplus OR legacy
+        # When solar surplus exists, always allow EV charging to avoid export loss.
         ev_solar_allowed: >
-          {% if plan_is_fresh %}
-            {{ plan_ev | bool and plan_ev_amps | int > 0 }}
+          {% if plan_is_fresh and plan_ev | bool and plan_ev_amps | int > 0 %}
+            true
+          {% elif solar_available and ev != 'idle' %}
+            true
           {% else %}
             {{ tier1_solar_w | float > 0 or tier5_solar_w | float > 0 }}
           {% endif %}
