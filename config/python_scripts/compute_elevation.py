@@ -7,20 +7,20 @@ import os
 import urllib.request
 
 def get_token():
-    """Get HA API token. Prefer SUPERVISOR_TOKEN."""
-    token = os.environ.get("SUPERVISOR_TOKEN", "")
-    if token:
-        return token
+    """Get HA API token."""
     try:
         with open('/config/python_scripts/.ha_token', 'r') as f:
-            return f.read().strip()
+            t = f.read().strip()
+            if t:
+                return t
     except Exception:
-        return ""
+        pass
+    return os.environ.get("SUPERVISOR_TOKEN", "")
 
 def ha_state(entity_id, token):
     """Get entity state from HA API."""
     try:
-        url = f"http://supervisor/core/api/states/{entity_id}"
+        url = f"http://localhost:8123/api/states/{entity_id}"
         req = urllib.request.Request(url)
         req.add_header("Authorization", f"Bearer {token}")
         resp = urllib.request.urlopen(req, timeout=5)
@@ -32,7 +32,7 @@ def ha_state(entity_id, token):
 def ha_attr(entity_id, attr, token):
     """Get entity attribute from HA API."""
     try:
-        url = f"http://supervisor/core/api/states/{entity_id}"
+        url = f"http://localhost:8123/api/states/{entity_id}"
         req = urllib.request.Request(url)
         req.add_header("Authorization", f"Bearer {token}")
         resp = urllib.request.urlopen(req, timeout=5)
@@ -45,10 +45,10 @@ def ha_set(entity_id, value, token):
     """Set HA entity value via API."""
     try:
         if entity_id.startswith("input_number."):
-            url = "http://supervisor/core/api/services/input_number/set_value"
+            url = "http://localhost:8123/api/services/input_number/set_value"
             payload = {"entity_id": entity_id, "value": float(value)}
         elif entity_id.startswith("input_select."):
-            url = "http://supervisor/core/api/services/input_select/set_options"
+            url = "http://localhost:8123/api/services/input_select/set_options"
             payload = {"entity_id": entity_id, "options": [str(value)[:255]]}
         else:
             return False

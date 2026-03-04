@@ -95,22 +95,22 @@ def conn():
 def get_token():
     """Get HA API token.
 
-    Prefer SUPERVISOR_TOKEN (always valid inside Core container).
-    Fall back to .ha_token file for backward compat.
+    Try .ha_token file first (long-lived token, works with localhost:8123).
+    Fall back to SUPERVISOR_TOKEN.
     """
-    token = os.environ.get("SUPERVISOR_TOKEN", "")
-    if token:
-        return token
     try:
         with open("/config/python_scripts/.ha_token", "r") as f:
-            return f.read().strip()
+            t = f.read().strip()
+            if t:
+                return t
     except Exception:
-        return ""
+        pass
+    return os.environ.get("SUPERVISOR_TOKEN", "")
 
 
 def ha_get(entity_id, token):
     """Get full entity data from HA API."""
-    url = f"http://supervisor/core/api/states/{entity_id}"
+    url = f"http://localhost:8123/api/states/{entity_id}"
     req = urllib.request.Request(url)
     req.add_header("Authorization", f"Bearer {token}")
     resp = urllib.request.urlopen(req, timeout=5)
@@ -137,14 +137,14 @@ def ha_set(entity_id, value, token):
     """Set HA entity value via API."""
     try:
         if entity_id.startswith("input_number."):
-            url = "http://supervisor/core/api/services/input_number/set_value"
+            url = "http://localhost:8123/api/services/input_number/set_value"
             payload = {"entity_id": entity_id, "value": float(value)}
         elif entity_id.startswith("input_select."):
-            url = "http://supervisor/core/api/services/input_select/set_options"
+            url = "http://localhost:8123/api/services/input_select/set_options"
             payload = {"entity_id": entity_id, "options": [str(value)[:255]]}
         elif entity_id.startswith("input_boolean."):
             svc = "turn_on" if value else "turn_off"
-            url = f"http://supervisor/core/api/services/input_boolean/{svc}"
+            url = f"http://localhost:8123/api/services/input_boolean/{svc}"
             payload = {"entity_id": entity_id}
         else:
             return False
@@ -161,7 +161,7 @@ def ha_set(entity_id, value, token):
 def ha_select_option(entity_id, option, token):
     """Select an option on an input_select with predefined options."""
     try:
-        url = "http://supervisor/core/api/services/input_select/select_option"
+        url = "http://localhost:8123/api/services/input_select/select_option"
         payload = {"entity_id": entity_id, "option": str(option)}
         data = json.dumps(payload).encode()
         req = urllib.request.Request(url, data=data, method="POST")
@@ -1693,7 +1693,7 @@ def _fetch_calendar_events(entity_id, start_utc, end_utc, token):
     start_iso = start_utc.strftime("%Y-%m-%dT%H:%M:%S")
     end_iso = end_utc.strftime("%Y-%m-%dT%H:%M:%S")
     url = (
-        f"http://supervisor/core/api/calendars/{entity_id}"
+        f"http://localhost:8123/api/calendars/{entity_id}"
         f"?start={start_iso}&end={end_iso}"
     )
     req = urllib.request.Request(url)

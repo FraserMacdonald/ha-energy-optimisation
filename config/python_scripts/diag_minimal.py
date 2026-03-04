@@ -30,7 +30,7 @@ except Exception as e:
 # 4. Try supervisor API
 if token:
     try:
-        req = urllib.request.Request("http://supervisor/core/api/")
+        req = urllib.request.Request("http://localhost:8123/api/")
         req.add_header("Authorization", f"Bearer {token}")
         resp = urllib.request.urlopen(req, timeout=5)
         results.append(f"supervisor_api=OK({resp.status})")
@@ -53,7 +53,7 @@ if token:
             "attributes": {"detail": " | ".join(results)}
         }).encode()
         req = urllib.request.Request(
-            "http://supervisor/core/api/states/sensor.diag_minimal",
+            "http://localhost:8123/api/states/sensor.diag_minimal",
             data=payload, method="POST"
         )
         req.add_header("Authorization", f"Bearer {token}")

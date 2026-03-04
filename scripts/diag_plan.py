@@ -7,7 +7,7 @@ import traceback
 import urllib.request
 
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
-API = "http://supervisor/core/api"
+API = "http://localhost:8123/api"
 
 
 def set_state(entity_id, state, attrs=None):

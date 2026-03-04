@@ -102,7 +102,8 @@ shell_command:
   deploy_from_git: "cd /homeassistant/ha-restore && git fetch --all && git reset --hard origin/main && cp -r config/* /config/ && cp -r config/* /homeassistant/ && mkdir -p /config/scripts /homeassistant/scripts && cp scripts/* /config/scripts/ && cp scripts/* /homeassistant/scripts/"
   # --- Deploy via GitHub ZIP (no CDN caching, single download) ---
   deploy_from_github: "rm -f /config/python_scripts/.ha_token; python3 /config/python_scripts/deploy_zip.py"
-  fix_token: "rm -f /config/python_scripts/.ha_token && python3 /config/python_scripts/deploy_zip.py && echo 'deployed'"
+  write_ha_token: "python3 -c \"import os; open('/config/python_scripts/.ha_token','w').write(os.environ.get('SUPERVISOR_TOKEN',''))\" && echo 'token written'"
+  fix_token: "python3 /config/python_scripts/deploy_zip.py && echo 'deployed'"
   api_test: "python3 /config/scripts/api_test_20260304.py"
   read_api_test: "cat /config/api_test_output.txt 2>/dev/null || echo 'no output'"
   diag_minimal: "python3 /config/python_scripts/diag_minimal.py"
