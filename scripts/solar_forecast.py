@@ -1808,15 +1808,14 @@ def _log_banking_decision(code, text, context, token):
 def cmd_banking(token):
     """Compute optimal thermal banking target for jacuzzi.
 
-    Uses calendar events, solar forecast, tariff schedule, and Met.no
-    ambient forecast to determine the best temperature to pre-heat to
-    during cheap energy periods.
-
-    NOTE: This command is superseded by cmd_plan() which provides more
-    comprehensive cost-optimal scheduling. Kept for backward compat.
+    Forward-simulation algorithm:
+    1. Simulate solar-only heating + Newton's cooling from now to event
+    2. If solar alone reaches 40°C, clear banking (no grid needed)
+    3. Binary search for T_bank where simulate(T_bank) >= 40°C
+    4. Cap at BANKING_CAP, cost-check vs heating at peak
+    5. Set helpers: banking_target_temp, strategy, solar_hours, solar_gain
     """
     BANKING_CAP = 37.0
-    SOLAR_THRESHOLD_W = 6000
 
     lat, lon = get_location(token)
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1825,14 +1824,9 @@ def cmd_banking(token):
     t_water = ha_attr("climate.jacuzzi", "current_temperature", token)
     t_water = float(t_water) if t_water is not None else 20.0
 
-    standby = float(ha_state("input_number.jacuzzi_standby_temp", token) or 20)
     p_net = float(ha_state("input_number.jacuzzi_effective_power_kw", token) or 5.7)
     c_thermal = float(ha_state("sensor.jacuzzi_thermal_capacity", token) or 3.72)
     t_ambient = float(ha_state("sensor.la_dole_temperature", token) or 10)
-    min_standby_str = ha_state("sensor.jacuzzi_minimum_standby_temp", token)
-    min_standby = float(min_standby_str) if min_standby_str and min_standby_str not in (
-        "unknown", "unavailable"
-    ) else standby
 
     # Check if banking is currently active (for cleared logging)
     prev_target_str = ha_state("input_number.jacuzzi_banking_target_temp", token)
@@ -1918,15 +1912,11 @@ def cmd_banking(token):
         # Convert 15-min Wh to hourly W equivalent
         if solar_w < 100:  # Likely Wh from 15-min slot, not W
             solar_w = solar_w * 4  # 15-min Wh -> hourly equivalent W
-        is_solar = solar_w > SOLAR_THRESHOLD_W
         is_low = _is_low_tariff_hour(local)
-        is_cheap = is_solar or is_low
 
         timeline.append({
             "utc": current_hour,
             "ambient": amb,
-            "is_cheap": is_cheap,
-            "is_solar": is_solar,
             "is_low_tariff": is_low,
             "solar_w": solar_w,
             "k": k_for_ambient(amb),
@@ -1945,108 +1935,145 @@ def cmd_banking(token):
         print("Banking: No hours to analyse. Cleared.")
         return
 
+    # --- Forward simulation: solar-only heating + Newton's cooling ---
+    BASE_LOAD_KW = 0.5  # conservative household base load deducted from solar
+
+    def _simulate_solar_only(t_start, tl):
+        """Simulate temperature from t_start using only solar energy.
+
+        For each hour: apply Newton's cooling, then solar heating if available.
+        Returns final temperature at end of timeline.
+        """
+        temp = t_start
+        for h in tl:
+            amb = h["ambient"]
+            k = h["k"]
+            solar_w = h["solar_w"]
+            # Newton's cooling for 1 hour
+            temp = amb + (temp - amb) * math.exp(-k / c_thermal)
+            # Solar heating (if available and temp below 40°C)
+            if solar_w > 0 and temp < 40:
+                usable_kw = min(p_net, max(0, solar_w / 1000 - BASE_LOAD_KW))
+                if usable_kw > 0:
+                    t_eq = amb + usable_kw / k
+                    temp = t_eq - (t_eq - temp) * math.exp(-k / c_thermal)
+                    temp = min(40.0, temp)
+        return temp
+
     # --- Compute expected solar hours and gain ---
-    solar_hours_list = [h for h in timeline if h["is_solar"]]
+    solar_hours_list = [h for h in timeline if h["solar_w"] > BASE_LOAD_KW * 1000]
     expected_solar_hours = len(solar_hours_list)
 
-    expected_solar_gain = 0.0
-    if expected_solar_hours > 0:
-        avg_amb_solar = sum(h["ambient"] for h in solar_hours_list) / expected_solar_hours
-        avg_k_solar = sum(h["k"] for h in solar_hours_list) / expected_solar_hours
-        delta = max(0, standby - avg_amb_solar)
-        net_p = p_net - avg_k_solar * delta
-        if net_p > 0:
-            expected_solar_gain = (net_p / c_thermal) * expected_solar_hours
+    # Estimate solar gain by simulating from current temp
+    t_after_solar = _simulate_solar_only(t_water, timeline)
+    expected_solar_gain = max(0, t_after_solar - t_water)
 
-    # --- Build segments of consecutive cheap/expensive hours ---
-    segments = []
-    for h in timeline:
-        if not segments or segments[-1][0] != h["is_cheap"]:
-            segments.append((h["is_cheap"], [h]))
+    # --- Quick check: solar alone sufficient? ---
+    if t_after_solar >= 40.0:
+        # Solar alone gets us to 40°C — no grid banking needed
+        banking_target = 0
+        strategy = "none"
+        grid_deficit_kwh = 0.0
+        solar_contribution_kwh = c_thermal * expected_solar_gain
+        print(f"Banking: Solar alone sufficient "
+              f"(projected {t_after_solar:.1f}°C >= 40°C). Clearing.")
+        if banking_was_active:
+            _log_banking_decision(
+                "banking_cleared",
+                "Banking cleared — solar alone sufficient",
+                {"reason": "solar_sufficient",
+                 "projected_temp": round(t_after_solar, 1),
+                 "water_temp": round(t_water, 1)},
+                token,
+            )
+        _clear_banking(token)
+        tz_offset = get_tz_offset(now_utc.replace(tzinfo=timezone.utc))
+        event_local = event_start + timedelta(hours=tz_offset)
+        print(f"Banking: target=0.0°C, strategy=none, "
+              f"solar={expected_solar_hours:.0f}h(+{expected_solar_gain:.1f}°C), "
+              f"event={event_local.strftime('%a %H:%M')} ({hours_to_event:.1f}h), "
+              f"water={t_water:.1f}°C")
+        return
+
+    # --- Binary search for banking target ---
+    # Find T_bank such that simulate(T_bank) >= 40°C
+    lo = t_water
+    hi = 45.0
+    for _ in range(20):
+        mid = (lo + hi) / 2
+        if _simulate_solar_only(mid, timeline) >= 40.0:
+            hi = mid
         else:
-            segments[-1][1].append(h)
+            lo = mid
+    banking_target = min(round(hi, 1), BANKING_CAP)
 
-    # --- Backward induction: compute banking target ---
-    t_required = min_standby
-    target_per_cheap = {}
+    # If banking target is barely above current water temp, skip
+    if banking_target <= t_water + 0.5:
+        banking_target = 0
+        strategy = "none"
+        if banking_was_active:
+            _log_banking_decision(
+                "banking_cleared",
+                "Banking cleared — target near current temp",
+                {"reason": "marginal", "water_temp": round(t_water, 1)},
+                token,
+            )
+        _clear_banking(token)
+        tz_offset = get_tz_offset(now_utc.replace(tzinfo=timezone.utc))
+        event_local = event_start + timedelta(hours=tz_offset)
+        print(f"Banking: target=0.0°C, strategy=none, "
+              f"solar={expected_solar_hours:.0f}h(+{expected_solar_gain:.1f}°C), "
+              f"event={event_local.strftime('%a %H:%M')} ({hours_to_event:.1f}h), "
+              f"water={t_water:.1f}°C")
+        return
 
-    for i in range(len(segments) - 1, -1, -1):
-        is_cheap, hours = segments[i]
-        if not is_cheap:
-            for h in reversed(hours):
-                amb = h["ambient"]
-                k = h["k"]
-                t_required = amb + (t_required - amb) * math.exp(k / c_thermal)
-        else:
-            target_per_cheap[i] = min(t_required, BANKING_CAP)
-            t_required = standby
+    # --- Cost check: grid banking now vs heating at peak later ---
+    grid_deficit_kwh = c_thermal * (banking_target - t_water)
+    banking_cost = grid_deficit_kwh * RATE_LOW
 
-    banking_target = standby
-    for i in range(len(segments)):
-        if segments[i][0] and i in target_per_cheap:
-            banking_target = target_per_cheap[i]
-            break
+    # What would it cost to heat at peak if we don't bank?
+    # Simulate without banking to find temp at event, then cost to heat from there
+    t_no_bank = _simulate_solar_only(t_water, timeline)
+    peak_deficit_kwh = c_thermal * max(0, 40.0 - t_no_bank)
+    peak_cost = peak_deficit_kwh * RATE_HIGH
 
-    banking_target = min(BANKING_CAP, max(standby, banking_target))
-
-    # --- Cost check ---
-    if banking_target > standby + 0.5:
-        first_cheap_idx = None
-        for i in range(len(segments)):
-            if segments[i][0]:
-                first_cheap_idx = i
-                break
-
-        if first_cheap_idx is not None:
-            expensive_hours = []
-            for i in range(first_cheap_idx + 1, len(segments)):
-                if not segments[i][0]:
-                    expensive_hours = segments[i][1]
-                    break
-
-            if expensive_hours:
-                gap_hours = len(expensive_hours)
-                avg_amb = sum(h["ambient"] for h in expensive_hours) / gap_hours
-                avg_k = sum(h["k"] for h in expensive_hours) / gap_hours
-
-                cheap_hours = segments[first_cheap_idx][1]
-                has_solar = any(h["is_solar"] for h in cheap_hours)
-                cheap_rate = RATE_SOLAR if has_solar else RATE_LOW
-
-                banking_energy = c_thermal * (banking_target - standby)
-                banking_cost = banking_energy * cheap_rate
-
-                decay = math.exp(-avg_k * gap_hours / c_thermal)
-                t_end_bank = avg_amb + (banking_target - avg_amb) * decay
-                t_end_standby = avg_amb + (standby - avg_amb) * decay
-                preserved = max(0, t_end_bank - t_end_standby)
-
-                alternative_cost = c_thermal * preserved * RATE_HIGH
-
-                if banking_cost >= alternative_cost:
-                    banking_target = standby
-                    print(f"Banking: Cost check failed "
-                          f"(bank={banking_cost:.2f} >= alt={alternative_cost:.2f} CHF). "
-                          f"Skipping.")
+    if banking_cost >= peak_cost and peak_cost > 0:
+        banking_target = 0
+        strategy = "none"
+        print(f"Banking: Cost check failed "
+              f"(bank={banking_cost:.2f} >= peak={peak_cost:.2f} CHF). Skipping.")
+        if banking_was_active:
+            _log_banking_decision(
+                "banking_cleared",
+                "Banking cleared — not cost-effective",
+                {"reason": "cost_check_failed",
+                 "banking_cost": round(banking_cost, 2),
+                 "peak_cost": round(peak_cost, 2),
+                 "water_temp": round(t_water, 1)},
+                token,
+            )
+        _clear_banking(token)
+        tz_offset = get_tz_offset(now_utc.replace(tzinfo=timezone.utc))
+        event_local = event_start + timedelta(hours=tz_offset)
+        print(f"Banking: target=0.0°C, strategy=none, "
+              f"solar={expected_solar_hours:.0f}h(+{expected_solar_gain:.1f}°C), "
+              f"event={event_local.strftime('%a %H:%M')} ({hours_to_event:.1f}h), "
+              f"water={t_water:.1f}°C")
+        return
 
     # --- Determine strategy ---
-    if banking_target <= standby + 0.5:
-        strategy = "none"
-        banking_target = 0
+    # Check what kind of cheap energy is available now
+    has_solar = any(h["solar_w"] > BASE_LOAD_KW * 1000 for h in timeline[:6])
+    has_low_tariff = any(h["is_low_tariff"] for h in timeline[:6])
+    if has_solar and has_low_tariff:
+        strategy = "combined"
+    elif has_solar:
+        strategy = "solar"
     else:
-        first_cheap_hours = []
-        for is_cheap, hours in segments:
-            if is_cheap:
-                first_cheap_hours = hours
-                break
-        has_solar = any(h["is_solar"] for h in first_cheap_hours)
-        has_low_tariff = any(h["is_low_tariff"] for h in first_cheap_hours)
-        if has_solar and has_low_tariff:
-            strategy = "combined"
-        elif has_solar:
-            strategy = "solar"
-        else:
-            strategy = "low_tariff"
+        strategy = "low_tariff"
+
+    # Solar contribution: energy from solar in the simulation
+    solar_contribution_kwh = c_thermal * expected_solar_gain
 
     # --- Write results to HA ---
     ha_set("input_number.jacuzzi_banking_target_temp",
@@ -2062,39 +2089,31 @@ def cmd_banking(token):
     event_local = event_start + timedelta(hours=tz_offset)
 
     # --- Log banking decision ---
-    if strategy != "none":
-        code = f"banking_{strategy}"
-        cheap_count = sum(1 for h in timeline if h["is_cheap"])
-        expensive_count = len(timeline) - cheap_count
-        _log_banking_decision(
-            code,
-            f"Banking target set to {banking_target:.1f}\u00b0C ({strategy})",
-            {
-                "event_time": event_local.strftime("%Y-%m-%d %H:%M"),
-                "hours_to_event": round(hours_to_event, 1),
-                "target_temp": round(banking_target, 1),
-                "strategy": strategy,
-                "water_temp": round(t_water, 1),
-                "cheap_hours": cheap_count,
-                "expensive_hours": expensive_count,
-                "solar_hours": expected_solar_hours,
-                "solar_gain_c": round(expected_solar_gain, 1),
-            },
-            token,
-        )
-    elif banking_was_active:
-        _log_banking_decision(
-            "banking_cleared",
-            "Banking cleared \u2014 strategy is none",
-            {"reason": "not_worthwhile", "water_temp": round(t_water, 1),
-             "event_time": event_local.strftime("%Y-%m-%d %H:%M")},
-            token,
-        )
+    _log_banking_decision(
+        f"banking_{strategy}",
+        f"Banking target set to {banking_target:.1f}\u00b0C ({strategy})",
+        {
+            "event_time": event_local.strftime("%Y-%m-%d %H:%M"),
+            "hours_to_event": round(hours_to_event, 1),
+            "target_temp": round(banking_target, 1),
+            "strategy": strategy,
+            "water_temp": round(t_water, 1),
+            "solar_hours": expected_solar_hours,
+            "solar_gain_c": round(expected_solar_gain, 1),
+            "grid_deficit_kwh": round(grid_deficit_kwh, 1),
+            "solar_contribution_kwh": round(solar_contribution_kwh, 1),
+            "projected_solar_only": round(t_after_solar, 1),
+            "banking_cost_chf": round(banking_cost, 2),
+            "peak_alternative_chf": round(peak_cost, 2),
+        },
+        token,
+    )
 
     print(f"Banking: target={banking_target:.1f}\u00b0C, strategy={strategy}, "
           f"solar={expected_solar_hours:.0f}h(+{expected_solar_gain:.1f}\u00b0C), "
+          f"grid_deficit={grid_deficit_kwh:.1f}kWh, "
           f"event={event_local.strftime('%a %H:%M')} ({hours_to_event:.1f}h), "
-          f"water={t_water:.1f}\u00b0C, min_standby={min_standby:.1f}\u00b0C")
+          f"water={t_water:.1f}\u00b0C")
 
 
 # =============================================================================
