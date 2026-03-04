@@ -1,0 +1,58 @@
+###############################################################################
+# ENERGY REGRET SENSORS — Dashboard summary sensor
+# File: templates/energy/energy_regret_sensors.yaml
+#
+# Provides sensor.energy_regret_summary with per-category breakdown.
+###############################################################################
+
+- sensor:
+    - name: "Energy Regret Summary"
+      unique_id: energy_regret_summary
+      unit_of_measurement: "CHF"
+      icon: mdi:cash-remove
+      state: >
+        {{ states('input_number.energy_regret_total_chf_today') | float(0) | round(2) }}
+      attributes:
+        cat1_kwh: >
+          {{ states('input_number.energy_regret_cat1_kwh_today') | float(0) | round(2) }}
+        cat1_chf: >
+          {{ states('input_number.energy_regret_cat1_chf_today') | float(0) | round(2) }}
+        cat1_label: "Actionable"
+        cat2_kwh: >
+          {{ states('input_number.energy_regret_cat2_kwh_today') | float(0) | round(2) }}
+        cat2_chf: >
+          {{ states('input_number.energy_regret_cat2_chf_today') | float(0) | round(2) }}
+        cat2_label: "Cable Away"
+        cat3_kwh: >
+          {{ states('input_number.energy_regret_cat3_kwh_today') | float(0) | round(2) }}
+        cat3_chf: >
+          {{ states('input_number.energy_regret_cat3_chf_today') | float(0) | round(2) }}
+        cat3_label: "Battery"
+        cat4_kwh: >
+          {{ states('input_number.energy_regret_cat4_kwh_today') | float(0) | round(2) }}
+        cat4_chf: >
+          {{ states('input_number.energy_regret_cat4_chf_today') | float(0) | round(2) }}
+        cat4_label: "Unavoidable"
+        export_kwh_today: >
+          {% set c1 = states('input_number.energy_regret_cat1_kwh_today') | float(0) %}
+          {% set c2 = states('input_number.energy_regret_cat2_kwh_today') | float(0) %}
+          {% set c3 = states('input_number.energy_regret_cat3_kwh_today') | float(0) %}
+          {% set c4 = states('input_number.energy_regret_cat4_kwh_today') | float(0) %}
+          {{ (c1 + c2 + c3 + c4) | round(2) }}
+        earned_chf_today: >
+          {% set c1 = states('input_number.energy_regret_cat1_kwh_today') | float(0) %}
+          {% set c2 = states('input_number.energy_regret_cat2_kwh_today') | float(0) %}
+          {% set c3 = states('input_number.energy_regret_cat3_kwh_today') | float(0) %}
+          {% set c4 = states('input_number.energy_regret_cat4_kwh_today') | float(0) %}
+          {{ ((c1 + c2 + c3 + c4) * 0.06) | round(2) }}
+        regret_pct: >
+          {% set c1 = states('input_number.energy_regret_cat1_kwh_today') | float(0) %}
+          {% set c2 = states('input_number.energy_regret_cat2_kwh_today') | float(0) %}
+          {% set c3 = states('input_number.energy_regret_cat3_kwh_today') | float(0) %}
+          {% set c4 = states('input_number.energy_regret_cat4_kwh_today') | float(0) %}
+          {% set total = c1 + c2 + c3 + c4 %}
+          {% if total > 0 %}
+            {{ ((c1 + c2 + c3) / total * 100) | round(0) }}
+          {% else %}
+            0
+          {% endif %}
