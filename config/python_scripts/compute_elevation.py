@@ -7,12 +7,15 @@ import os
 import urllib.request
 
 def get_token():
-    """Get HA API token."""
+    """Get HA API token. Prefer SUPERVISOR_TOKEN."""
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if token:
+        return token
     try:
         with open('/config/python_scripts/.ha_token', 'r') as f:
             return f.read().strip()
-    except:
-        return os.environ.get("SUPERVISOR_TOKEN", "")
+    except Exception:
+        return ""
 
 def ha_state(entity_id, token):
     """Get entity state from HA API."""

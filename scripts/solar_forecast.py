@@ -93,12 +93,19 @@ def conn():
 # =============================================================================
 
 def get_token():
-    """Get HA API token."""
+    """Get HA API token.
+
+    Prefer SUPERVISOR_TOKEN (always valid inside Core container).
+    Fall back to .ha_token file for backward compat.
+    """
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if token:
+        return token
     try:
         with open("/config/python_scripts/.ha_token", "r") as f:
             return f.read().strip()
     except Exception:
-        return os.environ.get("SUPERVISOR_TOKEN", "")
+        return ""
 
 
 def ha_get(entity_id, token):
