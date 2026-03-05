@@ -84,18 +84,70 @@ views:
       # ── TARIFF + SURPLUS ──
       - type: custom:mushroom-template-card
         primary: >
+          {% if is_state('input_boolean.energy_spot_pricing_enabled', 'on')
+             and states('sensor.energy_spot_total_price_chf') not in ['unknown', 'unavailable'] %}
+          {{ states('sensor.energy_spot_total_price_chf') | float(0) | round(2) }} CHF/kWh
+          ({{ states('sensor.energy_tariff_current') | title }})
+          {% else %}
           {{ states('sensor.energy_tariff_current') | title }} Tariff
+          {% endif %}
         secondary: >
           {% set surplus = states('sensor.energy_solar_surplus_w') | int(0) %}
           {% if surplus > 0 %}{{ surplus }}W surplus
           {% elif surplus == 0 %}Balanced
           {% else %}Importing {{ surplus | abs }}W from grid{% endif %}
         icon: >
-          {% if states('sensor.energy_tariff_current') == 'low' %}mdi:cash-check
+          {% if states('sensor.energy_tariff_current') in ['low', 'cheap'] %}mdi:cash-check
           {% else %}mdi:cash{% endif %}
         icon_color: >
-          {% if states('sensor.energy_tariff_current') == 'low' %}green
+          {% set tariff = states('sensor.energy_tariff_current') %}
+          {% if tariff in ['low', 'cheap'] %}green
+          {% elif tariff in ['neutral'] %}amber
           {% else %}orange{% endif %}
+
+      # ── SPOT PRICING STATUS (conditional) ──
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: input_boolean.energy_spot_pricing_enabled
+            state: "on"
+        card:
+          type: custom:mushroom-template-card
+          primary: >
+            {% set epex = states('sensor.epex_spot_data_net_price') %}
+            {% if epex not in ['unknown', 'unavailable', 'none', ''] %}
+            Spot: {{ states('sensor.energy_spot_total_price_chf') | float(0) | round(2) }} CHF/kWh
+            {% else %}Spot: EPEX Unavailable{% endif %}
+          secondary: >
+            {% set epex = states('sensor.epex_spot_data_net_price') %}
+            {% if epex not in ['unknown', 'unavailable', 'none', ''] %}
+              {% set q = state_attr('sensor.epex_spot_data_net_price', 'quantile') | float(0) %}
+              {% set data = state_attr('sensor.epex_spot_data_net_price', 'data') %}
+              {% set fx = states('input_number.energy_spot_eur_chf_rate') | float(0.95) %}
+              {% set sc = states('input_number.energy_spot_surcharge_chf_kwh') | float(0.12) %}
+              Quantile: {{ (q * 100) | round(0) }}%
+              · Market: {{ epex | float(0) | round(3) }} EUR/kWh
+              {% if data %}
+                {% set prices = data | map(attribute='price_per_kwh') | list %}
+                {% set chf_prices = [] %}
+                {% for p in prices %}
+                  {% set _ = chf_prices.append(p * fx + sc) %}
+                {% endfor %}
+                · Today: {{ (prices | min * fx + sc) | round(2) }}–{{ (prices | max * fx + sc) | round(2) }} CHF
+              {% endif %}
+            {% else %}
+              Fallback: fixed Mon-Fri 17:00-22:00 schedule
+            {% endif %}
+          icon: mdi:flash-auto
+          icon_color: >
+            {% set epex = states('sensor.epex_spot_data_net_price') %}
+            {% if epex in ['unknown', 'unavailable', 'none', ''] %}red
+            {% else %}
+              {% set q = state_attr('sensor.epex_spot_data_net_price', 'quantile') | float(0.5) %}
+              {% if q <= 0.33 %}green
+              {% elif q >= 0.67 %}red
+              {% else %}amber{% endif %}
+            {% endif %}
 
       # ── SOLAR PRODUCTION ──
       - type: custom:mini-graph-card
@@ -244,6 +296,28 @@ views:
           icon_color: >
             {% if is_state('binary_sensor.energy_greenhouse_photoperiod_active', 'on') %}green
             {% else %}grey{% endif %}
+
+      # ── SPOT PRICING SETTINGS ──
+      - type: entities
+        title: Spot Pricing
+        entities:
+          - entity: input_boolean.energy_spot_pricing_enabled
+            name: Spot Pricing Enabled
+          - entity: sensor.energy_spot_total_price_chf
+            name: Current Spot Price
+          - entity: sensor.energy_tariff_current
+            name: Tariff State
+          - type: divider
+          - entity: input_number.energy_spot_eur_chf_rate
+            name: EUR/CHF Rate
+          - entity: input_number.energy_spot_surcharge_chf_kwh
+            name: Network Surcharge
+          - entity: input_number.energy_spot_cheap_quantile
+            name: Cheap Quantile Threshold
+          - entity: input_number.energy_spot_expensive_quantile
+            name: Expensive Quantile Threshold
+          - entity: input_number.energy_spot_solar_feed_in_chf_kwh
+            name: Solar Feed-In Rate
 
       # ── SOLAR FORECAST CONTROLS ──
       - type: entities

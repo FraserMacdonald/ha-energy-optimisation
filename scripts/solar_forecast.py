@@ -1805,6 +1805,53 @@ def _log_banking_decision(code, text, context, token):
                  json.dumps(context))
 
 
+def _fetch_epex_prices(token):
+    """Fetch EPEX hourly price data from HA sensor.
+
+    Reads the 'data' attribute from sensor.epex_spot_data_net_price which
+    contains entries like {start_time, end_time, price_per_kwh}.
+    Returns dict of {utc_naive_hour: eur_kwh} or empty dict if unavailable.
+    """
+    try:
+        data = ha_attr("sensor.epex_spot_data_net_price", "data", token)
+        if not data:
+            return {}
+        prices = {}
+        for entry in data:
+            start = entry.get("start_time")
+            price = entry.get("price_per_kwh")
+            if start is None or price is None:
+                continue
+            if isinstance(start, str):
+                # Parse ISO datetime, strip timezone for naive UTC
+                start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+                start_utc = start_dt.astimezone(timezone.utc).replace(tzinfo=None)
+            else:
+                start_utc = start
+            prices[start_utc.replace(minute=0, second=0, microsecond=0)] = float(price)
+        return prices
+    except Exception as e:
+        print(f"WARNING: EPEX price fetch failed ({e})")
+        return {}
+
+
+def _get_spot_config(token):
+    """Read spot pricing configuration from HA helpers.
+
+    Returns dict with keys: enabled, eur_chf, surcharge, cheap_q, exp_q,
+    solar_feed_in. All values are floats with sensible defaults.
+    """
+    enabled = ha_state("input_boolean.energy_spot_pricing_enabled", token)
+    return {
+        "enabled": enabled == "on",
+        "eur_chf": float(ha_state("input_number.energy_spot_eur_chf_rate", token) or 0.95),
+        "surcharge": float(ha_state("input_number.energy_spot_surcharge_chf_kwh", token) or 0.12),
+        "cheap_q": float(ha_state("input_number.energy_spot_cheap_quantile", token) or 0.33),
+        "exp_q": float(ha_state("input_number.energy_spot_expensive_quantile", token) or 0.67),
+        "solar_feed_in": float(ha_state("input_number.energy_spot_solar_feed_in_chf_kwh", token) or 0.06),
+    }
+
+
 def cmd_banking(token):
     """Compute optimal thermal banking target for jacuzzi.
 
@@ -1847,6 +1894,16 @@ def cmd_banking(token):
             return k_mild
         else:
             return k_warm
+
+    # --- Fetch EPEX spot prices ---
+    spot_cfg = _get_spot_config(token)
+    epex_prices = {}
+    if spot_cfg["enabled"]:
+        epex_prices = _fetch_epex_prices(token)
+        if epex_prices:
+            print(f"Banking: EPEX prices loaded ({len(epex_prices)} hours)")
+        else:
+            print("Banking: EPEX enabled but no prices available, using fixed tariff")
 
     # --- Fetch calendar events within 48h ---
     end_utc = now_utc + timedelta(hours=48)
@@ -1914,12 +1971,19 @@ def cmd_banking(token):
             solar_w = solar_w * 4  # 15-min Wh -> hourly equivalent W
         is_low = _is_low_tariff_hour(local)
 
+        # Compute price_chf for this hour
+        if epex_prices and current_hour in epex_prices:
+            price_chf = epex_prices[current_hour] * spot_cfg["eur_chf"] + spot_cfg["surcharge"]
+        else:
+            price_chf = RATE_LOW if is_low else RATE_HIGH
+
         timeline.append({
             "utc": current_hour,
             "ambient": amb,
             "is_low_tariff": is_low,
             "solar_w": solar_w,
             "k": k_for_ambient(amb),
+            "price_chf": price_chf,
         })
         current_hour += timedelta(hours=1)
 
@@ -2027,15 +2091,26 @@ def cmd_banking(token):
               f"water={t_water:.1f}°C")
         return
 
-    # --- Cost check: grid banking now vs heating at peak later ---
+    # --- Cost check: grid banking now vs heating at event-adjacent hours ---
     grid_deficit_kwh = c_thermal * (banking_target - t_water)
-    banking_cost = grid_deficit_kwh * RATE_LOW
 
-    # What would it cost to heat at peak if we don't bank?
-    # Simulate without banking to find temp at event, then cost to heat from there
+    # Banking cost: use avg price of cheapest available hours (enough to cover deficit)
+    hours_needed = max(1, math.ceil(grid_deficit_kwh / p_net))
+    sorted_by_price = sorted(timeline, key=lambda h: h["price_chf"])
+    cheapest_hours = sorted_by_price[:hours_needed]
+    avg_cheap_price = sum(h["price_chf"] for h in cheapest_hours) / len(cheapest_hours)
+    banking_cost = grid_deficit_kwh * avg_cheap_price
+
+    # Alternative cost: heating at event-adjacent hours (last N hours before event)
     t_no_bank = _simulate_solar_only(t_water, timeline)
     peak_deficit_kwh = c_thermal * max(0, 40.0 - t_no_bank)
-    peak_cost = peak_deficit_kwh * RATE_HIGH
+    alt_hours_needed = max(1, math.ceil(peak_deficit_kwh / p_net))
+    event_adjacent = timeline[-alt_hours_needed:] if timeline else []
+    if event_adjacent:
+        avg_alt_price = sum(h["price_chf"] for h in event_adjacent) / len(event_adjacent)
+    else:
+        avg_alt_price = RATE_HIGH
+    peak_cost = peak_deficit_kwh * avg_alt_price
 
     if banking_cost >= peak_cost and peak_cost > 0:
         banking_target = 0
