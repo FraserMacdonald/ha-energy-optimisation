@@ -668,9 +668,10 @@ Switched tariff abstraction layer from fixed schedule to EPEX Spot quantile-base
 - [x] `config/dashboards/admin.yaml` — Tariff card spot-aware, new conditional spot pricing status card (price, quantile, today min/max), new spot pricing settings section
 - [x] yamllint passes on all modified files
 
-### EPEX Sensor Entity:
-- `sensor.epex_spot_data_net_price` — net price with `quantile` and `data` attributes
-- `sensor.epex_spot_data_market_price` — raw price (used by watchdog health check only)
+### EPEX Sensor Entities:
+- `sensor.epex_spot_data_market_price` — current hourly price (EUR/kWh), `data` attr has 48h hourly prices
+- `sensor.epex_spot_data_quantile` — current hour quantile (0.0-1.0) as state, `data` attr has per-hour quantiles
+- Also available: `sensor.epex_spot_data_rank`, `lowest_price`, `highest_price`, `average_price`, `median_price`
 
 ### No Changes Required (abstraction works):
 All automations (jacuzzi 020/021/022/040, EV 040/041/044, orchestrator 001), effective standby cascade, notification automations, smart start

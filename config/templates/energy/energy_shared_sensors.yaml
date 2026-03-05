@@ -29,10 +29,10 @@
       icon: mdi:cash-clock
       state: >
         {% set spot_on = is_state('input_boolean.energy_spot_pricing_enabled', 'on') %}
-        {% set epex = states('sensor.epex_spot_data_net_price') %}
+        {% set epex = states('sensor.epex_spot_data_market_price') %}
         {% set epex_ok = epex not in ['unknown', 'unavailable', 'none', ''] %}
         {% if spot_on and epex_ok %}
-          {% set q = state_attr('sensor.epex_spot_data_net_price', 'quantile') | float(0.5) %}
+          {% set q = states('sensor.epex_spot_data_quantile') | float(0.5) %}
           {% set cheap_q = states('input_number.energy_spot_cheap_quantile') | float(0.33) %}
           {% set exp_q = states('input_number.energy_spot_expensive_quantile') | float(0.67) %}
           {% if q <= cheap_q %}cheap
@@ -47,10 +47,10 @@
       attributes:
         rate_chf_kwh: >
           {% set spot_on = is_state('input_boolean.energy_spot_pricing_enabled', 'on') %}
-          {% set epex = states('sensor.epex_spot_data_net_price') %}
+          {% set epex = states('sensor.epex_spot_data_market_price') %}
           {% set epex_ok = epex not in ['unknown', 'unavailable', 'none', ''] %}
           {% if spot_on and epex_ok %}
-            {% set eur = states('sensor.epex_spot_data_net_price') | float(0) %}
+            {% set eur = states('sensor.epex_spot_data_market_price') | float(0) %}
             {% set fx = states('input_number.energy_spot_eur_chf_rate') | float(0.95) %}
             {% set surcharge = states('input_number.energy_spot_surcharge_chf_kwh') | float(0.12) %}
             {{ (eur * fx + surcharge) | round(4) }}
@@ -64,10 +64,10 @@
           {{ states('input_number.energy_spot_solar_feed_in_chf_kwh') | float(0.06) }}
         is_high: >
           {% set spot_on = is_state('input_boolean.energy_spot_pricing_enabled', 'on') %}
-          {% set epex = states('sensor.epex_spot_data_net_price') %}
+          {% set epex = states('sensor.epex_spot_data_market_price') %}
           {% set epex_ok = epex not in ['unknown', 'unavailable', 'none', ''] %}
           {% if spot_on and epex_ok %}
-            {% set q = state_attr('sensor.epex_spot_data_net_price', 'quantile') | float(0.5) %}
+            {% set q = states('sensor.epex_spot_data_quantile') | float(0.5) %}
             {% set exp_q = states('input_number.energy_spot_expensive_quantile') | float(0.67) %}
             {{ q >= exp_q }}
           {% else %}
@@ -78,14 +78,14 @@
         spot_enabled: >
           {{ is_state('input_boolean.energy_spot_pricing_enabled', 'on') }}
         market_price_eur: >
-          {% set epex = states('sensor.epex_spot_data_net_price') %}
+          {% set epex = states('sensor.epex_spot_data_market_price') %}
           {% if epex not in ['unknown', 'unavailable', 'none', ''] %}
             {{ epex | float(0) }}
           {% else %}{{ 0 }}{% endif %}
         quantile: >
-          {% set epex = states('sensor.epex_spot_data_net_price') %}
+          {% set epex = states('sensor.epex_spot_data_market_price') %}
           {% if epex not in ['unknown', 'unavailable', 'none', ''] %}
-            {{ state_attr('sensor.epex_spot_data_net_price', 'quantile') | float(0) }}
+            {{ states('sensor.epex_spot_data_quantile') | float(0) }}
           {% else %}{{ 0 }}{% endif %}
 
 # --- Spot total price (always-on, for dashboard display) ---
@@ -94,7 +94,7 @@
       icon: mdi:currency-eur
       unit_of_measurement: "CHF/kWh"
       state: >
-        {% set epex = states('sensor.epex_spot_data_net_price') %}
+        {% set epex = states('sensor.epex_spot_data_market_price') %}
         {% if epex not in ['unknown', 'unavailable', 'none', ''] %}
           {% set eur = epex | float(0) %}
           {% set fx = states('input_number.energy_spot_eur_chf_rate') | float(0.95) %}
@@ -105,16 +105,16 @@
         {% endif %}
       attributes:
         market_price_eur: >
-          {% set epex = states('sensor.epex_spot_data_net_price') %}
+          {% set epex = states('sensor.epex_spot_data_market_price') %}
           {{ epex | float(0) if epex not in ['unknown', 'unavailable', 'none', ''] else 0 }}
         eur_chf_rate: >
           {{ states('input_number.energy_spot_eur_chf_rate') | float(0.95) }}
         surcharge_chf: >
           {{ states('input_number.energy_spot_surcharge_chf_kwh') | float(0.12) }}
         quantile: >
-          {% set epex = states('sensor.epex_spot_data_net_price') %}
+          {% set epex = states('sensor.epex_spot_data_market_price') %}
           {% if epex not in ['unknown', 'unavailable', 'none', ''] %}
-            {{ state_attr('sensor.epex_spot_data_net_price', 'quantile') | float(0) }}
+            {{ states('sensor.epex_spot_data_quantile') | float(0) }}
           {% else %}{{ 0 }}{% endif %}
 
 
@@ -129,10 +129,10 @@
       icon: mdi:transmission-tower-off
       state: >
         {% set spot_on = is_state('input_boolean.energy_spot_pricing_enabled', 'on') %}
-        {% set epex = states('sensor.epex_spot_data_net_price') %}
+        {% set epex = states('sensor.epex_spot_data_market_price') %}
         {% set epex_ok = epex not in ['unknown', 'unavailable', 'none', ''] %}
         {% if spot_on and epex_ok %}
-          {% set q = state_attr('sensor.epex_spot_data_net_price', 'quantile') | float(0.5) %}
+          {% set q = states('sensor.epex_spot_data_quantile') | float(0.5) %}
           {% set cheap_q = states('input_number.energy_spot_cheap_quantile') | float(0.33) %}
           {{ q <= cheap_q }}
         {% else %}
@@ -153,10 +153,10 @@
       icon: mdi:transmission-tower-export
       state: >
         {% set spot_on = is_state('input_boolean.energy_spot_pricing_enabled', 'on') %}
-        {% set epex = states('sensor.epex_spot_data_net_price') %}
+        {% set epex = states('sensor.epex_spot_data_market_price') %}
         {% set epex_ok = epex not in ['unknown', 'unavailable', 'none', ''] %}
         {% if spot_on and epex_ok %}
-          {% set q = state_attr('sensor.epex_spot_data_net_price', 'quantile') | float(0.5) %}
+          {% set q = states('sensor.epex_spot_data_quantile') | float(0.5) %}
           {% set exp_q = states('input_number.energy_spot_expensive_quantile') | float(0.67) %}
           {{ q >= exp_q }}
         {% else %}

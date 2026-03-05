@@ -3,7 +3,8 @@
 # File: packages/energy_spot_pricing_system.yaml
 #
 # EPEX Spot dynamic pricing configuration.
-# Requires: EPEX Spot integration (sensor.epex_spot_data_net_price)
+# Requires: EPEX Spot integration (sensor.epex_spot_data_market_price,
+#           sensor.epex_spot_data_quantile)
 #
 # Helpers:
 #   - EUR/CHF exchange rate
