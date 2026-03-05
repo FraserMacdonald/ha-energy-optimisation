@@ -1808,12 +1808,12 @@ def _log_banking_decision(code, text, context, token):
 def _fetch_epex_prices(token):
     """Fetch EPEX hourly price data from HA sensor.
 
-    Reads the 'data' attribute from sensor.epex_spot_data_net_price which
+    Reads the 'data' attribute from sensor.epex_spot_data_market_price which
     contains entries like {start_time, end_time, price_per_kwh}.
     Returns dict of {utc_naive_hour: eur_kwh} or empty dict if unavailable.
     """
     try:
-        data = ha_attr("sensor.epex_spot_data_net_price", "data", token)
+        data = ha_attr("sensor.epex_spot_data_market_price", "data", token)
         if not data:
             return {}
         prices = {}
