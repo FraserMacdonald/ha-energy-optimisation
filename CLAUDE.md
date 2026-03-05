@@ -634,5 +634,58 @@ Two changes to eliminate wasteful overnight grid heating when events are far awa
 - [x] `scripts/solar_forecast.py` — `cmd_banking()` core algorithm replaced (lines ~1938-2116)
 - [x] yamllint + python syntax check pass
 
+## What's Done (EPEX Spot Dynamic Pricing Integration)
+Switched tariff abstraction layer from fixed schedule to EPEX Spot quantile-based pricing, with fixed-schedule fallback. All downstream automations adapt automatically via existing `binary_sensor.energy_low/high_tariff_active` gates — zero automation file changes required.
+
+### Threshold Strategy:
+- **Cheap** = EPEX quantile < 0.33 (bottom third) → actively heat/charge
+- **Expensive** = EPEX quantile > 0.67 (top third) → avoid grid
+- **Neutral** = between → solar-only, no grid seeking/avoidance
+- **Fallback**: EPEX unavailable or `energy_spot_pricing_enabled` = off → fixed Mon-Fri 17:00-22:00 schedule
+
+### New File:
+- [x] `config/packages/energy_spot_pricing_system.yaml` — 5 input_numbers + 1 input_boolean
+  - `energy_spot_eur_chf_rate` (default 0.95)
+  - `energy_spot_surcharge_chf_kwh` (default 0.12 — set from utility bill)
+  - `energy_spot_cheap_quantile` (default 0.33)
+  - `energy_spot_expensive_quantile` (default 0.67)
+  - `energy_spot_solar_feed_in_chf_kwh` (default 0.06)
+  - `energy_spot_pricing_enabled` (default OFF — enable after validation)
+
+### Modified Files:
+- [x] `config/configuration.yaml` — Added `energy_spot_pricing` package include
+- [x] `config/templates/energy/energy_shared_sensors.yaml` — Rewrote 3 tariff sensors + added 1 new:
+  - `sensor.energy_tariff_current`: spot mode returns `cheap`/`neutral`/`expensive`, fallback returns `high`/`low`. Rate from EPEX × EUR/CHF + surcharge. New attrs: `spot_enabled`, `market_price_eur`, `quantile`. Removed `next_high_start`/`next_high_end`
+  - `binary_sensor.energy_low_tariff_active`: spot mode = `quantile <= cheap_quantile`, fallback unchanged
+  - `binary_sensor.energy_high_tariff_active`: spot mode = `quantile >= expensive_quantile`, fallback unchanged
+  - `sensor.energy_spot_total_price_chf` (NEW): always-on CHF conversion for dashboard display
+- [x] `config/templates/ev/ev_templates.yaml` — `sensor.ev_cheap_tariff_active` replaced duplicated schedule logic with delegation to `binary_sensor.energy_low_tariff_active`. Removed `next_high_start` attribute
+- [x] `scripts/solar_forecast.py` — Added 2 new functions + updated banking cost comparison:
+  - `_fetch_epex_prices(token)`: reads EPEX `data` attribute → `{utc_naive: eur_kwh}` dict
+  - `_get_spot_config(token)`: reads all spot helpers from HA
+  - `cmd_banking()`: fetches EPEX prices, adds `price_chf` per timeline hour, banking cost uses avg of cheapest available hours, alternative cost uses event-adjacent hours. Fixed RATE_HIGH/RATE_LOW fallback when EPEX unavailable
+- [x] `config/dashboards/home.yaml` — At-a-glance shows spot price CHF when enabled
+- [x] `config/dashboards/admin.yaml` — Tariff card spot-aware, new conditional spot pricing status card (price, quantile, today min/max), new spot pricing settings section
+- [x] yamllint passes on all modified files
+
+### EPEX Sensor Entity:
+- `sensor.epex_spot_data_net_price` — net price with `quantile` and `data` attributes
+- `sensor.epex_spot_data_market_price` — raw price (used by watchdog health check only)
+
+### No Changes Required (abstraction works):
+All automations (jacuzzi 020/021/022/040, EV 040/041/044, orchestrator 001), effective standby cascade, notification automations, smart start
+
+### Deferred:
+- `sensor.jacuzzi_smart_start_time` peak avoidance stays Mon-Fri 17:00-22:00 for now. Heating gates use `binary_sensor.energy_high_tariff_active` which IS EPEX-aware, so decisions are correct.
+
+### Deployment:
+1. Deploy: `cd /homeassistant/ha-restore && git fetch --all && git reset --hard origin/main && cp -r config/* /config/ && mkdir -p /config/scripts && cp scripts/* /config/scripts/ && ha core restart`
+2. Verify with `energy_spot_pricing_enabled = off` → identical to current fixed-schedule behavior
+3. Enable → verify tariff sensors react to EPEX quantile
+4. Check `sensor.energy_spot_total_price_chf` shows correct CHF conversion
+5. Run `solar_banking` manually → verify EPEX prices used in cost comparison
+6. Monitor decision logs for 24h
+7. Test fallback: temporarily disable EPEX → sensors revert to fixed schedule
+
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
