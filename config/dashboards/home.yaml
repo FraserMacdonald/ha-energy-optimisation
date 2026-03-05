@@ -25,7 +25,13 @@ views:
           {% elif h == 'degraded' %}Some Systems Degraded
           {% else %}Systems Down{% endif %}
         secondary: >
+          {% if is_state('input_boolean.energy_spot_pricing_enabled', 'on')
+             and states('sensor.energy_spot_total_price_chf') not in ['unknown', 'unavailable'] %}
+          {{ states('sensor.energy_spot_total_price_chf') | float(0) | round(2) }} CHF/kWh
+          ({{ states('sensor.energy_tariff_current') | title }})
+          {% else %}
           {{ states('sensor.energy_tariff_current') | title }} Tariff
+          {% endif %}
           · {% set surplus = states('sensor.energy_solar_surplus_w') | int(0) %}
           {% if surplus > 0 %}{{ surplus }}W surplus
           {% elif surplus == 0 %}Balanced

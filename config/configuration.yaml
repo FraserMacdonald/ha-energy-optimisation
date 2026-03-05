@@ -54,6 +54,7 @@ homeassistant:
     energy_solar_forecast: !include packages/energy_solar_forecast_system.yaml
     watchdog: !include packages/watchdog_system.yaml
     energy_regret: !include packages/energy_regret_system.yaml
+    energy_spot_pricing: !include packages/energy_spot_pricing_system.yaml
     # --- Grow Tent (6 package files) ---
     grow_tent_system: !include packages/grow_tent/grow_tent_system.yaml
     grow_tent_sensors: !include packages/grow_tent/grow_tent_sensors.yaml

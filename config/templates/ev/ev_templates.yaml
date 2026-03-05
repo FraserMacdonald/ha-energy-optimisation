@@ -132,27 +132,10 @@
       unique_id: ev_cheap_tariff_active
       icon: mdi:currency-usd-off
       state: >
-        {% set dow = now().weekday() %}
-        {% set hour = now().hour %}
-        {% set is_high = dow in [0, 1, 2, 3, 4] and 17 <= hour < 22 %}
-        {{ 'off' if is_high else 'on' }}
+        {{ 'on' if is_state('binary_sensor.energy_low_tariff_active', 'on') else 'off' }}
       attributes:
         is_high_tariff: >
-          {% set dow = now().weekday() %}
-          {% set hour = now().hour %}
-          {{ dow in [0, 1, 2, 3, 4] and 17 <= hour < 22 }}
-        next_high_start: >
-          {% set dow = now().weekday() %}
-          {% set hour = now().hour %}
-          {% if dow in [0, 1, 2, 3, 4] and hour < 17 %}
-            {{ (now().replace(hour=17, minute=0, second=0)).isoformat() }}
-          {% elif dow in [5, 6] %}
-            {{ (now() + timedelta(days=(7 - dow))).replace(hour=17, minute=0, second=0).isoformat() }}
-          {% elif dow == 4 and hour >= 22 %}
-            {{ (now() + timedelta(days=(7 - dow))).replace(hour=17, minute=0, second=0).isoformat() }}
-          {% else %}
-            {{ (now() + timedelta(days=1)).replace(hour=17, minute=0, second=0).isoformat() }}
-          {% endif %}
+          {{ is_state('binary_sensor.energy_high_tariff_active', 'on') }}
 
 
 # =============================================================================

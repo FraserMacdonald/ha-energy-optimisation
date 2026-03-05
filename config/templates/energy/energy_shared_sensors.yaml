@@ -20,62 +20,107 @@
 
 # =============================================================================
 # 1. TARIFF SENSOR
-# Shared replacement for sensor.electricity_tariff (jacuzzi_sensors.yaml).
-# Schedule: Mon–Fri 17:00–22:00 = high (0.38 CHF/kWh).
-# All other hours (nights, weekends, weekday daytime) = low (0.26 CHF/kWh).
+# Spot-aware: when EPEX enabled + available, uses quantile thresholds.
+# Fallback: Mon–Fri 17:00–22:00 = high (0.38 CHF/kWh), else low (0.26).
 # =============================================================================
 - sensor:
     - name: "Energy Tariff Current"
       unique_id: energy_tariff_current
       icon: mdi:cash-clock
       state: >
-        {% set hour = now().hour %}
-        {% set dow = now().weekday() %}
-        {% set is_high = dow in [0, 1, 2, 3, 4] and 17 <= hour < 22 %}
-        {{ 'high' if is_high else 'low' }}
-      attributes:
-        rate_chf_kwh: >
+        {% set spot_on = is_state('input_boolean.energy_spot_pricing_enabled', 'on') %}
+        {% set epex = states('sensor.epex_spot_data_net_price') %}
+        {% set epex_ok = epex not in ['unknown', 'unavailable', 'none', ''] %}
+        {% if spot_on and epex_ok %}
+          {% set q = state_attr('sensor.epex_spot_data_net_price', 'quantile') | float(0.5) %}
+          {% set cheap_q = states('input_number.energy_spot_cheap_quantile') | float(0.33) %}
+          {% set exp_q = states('input_number.energy_spot_expensive_quantile') | float(0.67) %}
+          {% if q <= cheap_q %}cheap
+          {% elif q >= exp_q %}expensive
+          {% else %}neutral{% endif %}
+        {% else %}
           {% set hour = now().hour %}
           {% set dow = now().weekday() %}
           {% set is_high = dow in [0, 1, 2, 3, 4] and 17 <= hour < 22 %}
-          {{ 0.38 if is_high else 0.26 }}
-        opportunity_cost: 0.06
+          {{ 'high' if is_high else 'low' }}
+        {% endif %}
+      attributes:
+        rate_chf_kwh: >
+          {% set spot_on = is_state('input_boolean.energy_spot_pricing_enabled', 'on') %}
+          {% set epex = states('sensor.epex_spot_data_net_price') %}
+          {% set epex_ok = epex not in ['unknown', 'unavailable', 'none', ''] %}
+          {% if spot_on and epex_ok %}
+            {% set eur = states('sensor.epex_spot_data_net_price') | float(0) %}
+            {% set fx = states('input_number.energy_spot_eur_chf_rate') | float(0.95) %}
+            {% set surcharge = states('input_number.energy_spot_surcharge_chf_kwh') | float(0.12) %}
+            {{ (eur * fx + surcharge) | round(4) }}
+          {% else %}
+            {% set hour = now().hour %}
+            {% set dow = now().weekday() %}
+            {% set is_high = dow in [0, 1, 2, 3, 4] and 17 <= hour < 22 %}
+            {{ 0.38 if is_high else 0.26 }}
+          {% endif %}
+        opportunity_cost: >
+          {{ states('input_number.energy_spot_solar_feed_in_chf_kwh') | float(0.06) }}
         is_high: >
-          {% set hour = now().hour %}
-          {% set dow = now().weekday() %}
-          {{ dow in [0, 1, 2, 3, 4] and 17 <= hour < 22 }}
-        next_high_start: >
-          {% set now_time = now() %}
-          {% set hour = now_time.hour %}
-          {% set dow = now_time.weekday() %}
-          {% if dow in [0, 1, 2, 3, 4] and hour < 17 %}
-            {{ now_time.replace(hour=17, minute=0, second=0) }}
-          {% elif dow == 4 and hour >= 22 %}
-            {{ (now_time + timedelta(days=(7 - dow))).replace(hour=17, minute=0, second=0) }}
-          {% elif dow in [5, 6] %}
-            {{ (now_time + timedelta(days=(7 - dow))).replace(hour=17, minute=0, second=0) }}
+          {% set spot_on = is_state('input_boolean.energy_spot_pricing_enabled', 'on') %}
+          {% set epex = states('sensor.epex_spot_data_net_price') %}
+          {% set epex_ok = epex not in ['unknown', 'unavailable', 'none', ''] %}
+          {% if spot_on and epex_ok %}
+            {% set q = state_attr('sensor.epex_spot_data_net_price', 'quantile') | float(0.5) %}
+            {% set exp_q = states('input_number.energy_spot_expensive_quantile') | float(0.67) %}
+            {{ q >= exp_q }}
           {% else %}
-            {{ (now_time + timedelta(days=1)).replace(hour=17, minute=0, second=0) }}
+            {% set hour = now().hour %}
+            {% set dow = now().weekday() %}
+            {{ dow in [0, 1, 2, 3, 4] and 17 <= hour < 22 }}
           {% endif %}
-        next_high_end: >
-          {% set now_time = now() %}
-          {% set hour = now_time.hour %}
-          {% set dow = now_time.weekday() %}
-          {% if dow in [0, 1, 2, 3, 4] and hour < 22 %}
-            {{ now_time.replace(hour=22, minute=0, second=0) }}
-          {% elif dow == 4 and hour >= 22 %}
-            {{ (now_time + timedelta(days=(7 - dow))).replace(hour=22, minute=0, second=0) }}
-          {% elif dow in [5, 6] %}
-            {{ (now_time + timedelta(days=(7 - dow))).replace(hour=22, minute=0, second=0) }}
-          {% else %}
-            {{ (now_time + timedelta(days=1)).replace(hour=22, minute=0, second=0) }}
-          {% endif %}
+        spot_enabled: >
+          {{ is_state('input_boolean.energy_spot_pricing_enabled', 'on') }}
+        market_price_eur: >
+          {% set epex = states('sensor.epex_spot_data_net_price') %}
+          {% if epex not in ['unknown', 'unavailable', 'none', ''] %}
+            {{ epex | float(0) }}
+          {% else %}{{ 0 }}{% endif %}
+        quantile: >
+          {% set epex = states('sensor.epex_spot_data_net_price') %}
+          {% if epex not in ['unknown', 'unavailable', 'none', ''] %}
+            {{ state_attr('sensor.epex_spot_data_net_price', 'quantile') | float(0) }}
+          {% else %}{{ 0 }}{% endif %}
+
+# --- Spot total price (always-on, for dashboard display) ---
+    - name: "Energy Spot Total Price CHF"
+      unique_id: energy_spot_total_price_chf
+      icon: mdi:currency-eur
+      unit_of_measurement: "CHF/kWh"
+      state: >
+        {% set epex = states('sensor.epex_spot_data_net_price') %}
+        {% if epex not in ['unknown', 'unavailable', 'none', ''] %}
+          {% set eur = epex | float(0) %}
+          {% set fx = states('input_number.energy_spot_eur_chf_rate') | float(0.95) %}
+          {% set surcharge = states('input_number.energy_spot_surcharge_chf_kwh') | float(0.12) %}
+          {{ (eur * fx + surcharge) | round(4) }}
+        {% else %}
+          unavailable
+        {% endif %}
+      attributes:
+        market_price_eur: >
+          {% set epex = states('sensor.epex_spot_data_net_price') %}
+          {{ epex | float(0) if epex not in ['unknown', 'unavailable', 'none', ''] else 0 }}
+        eur_chf_rate: >
+          {{ states('input_number.energy_spot_eur_chf_rate') | float(0.95) }}
+        surcharge_chf: >
+          {{ states('input_number.energy_spot_surcharge_chf_kwh') | float(0.12) }}
+        quantile: >
+          {% set epex = states('sensor.epex_spot_data_net_price') %}
+          {% if epex not in ['unknown', 'unavailable', 'none', ''] %}
+            {{ state_attr('sensor.epex_spot_data_net_price', 'quantile') | float(0) }}
+          {% else %}{{ 0 }}{% endif %}
 
 
 # =============================================================================
 # 2. LOW TARIFF BINARY SENSOR
-# Simple boolean for condition blocks — low is the default, high is exception.
-# Low = NOT in high tariff window (Mon–Fri 17:00–22:00).
+# Spot-aware: cheap quantile when EPEX enabled. Fallback: NOT Mon-Fri 17-22.
 # =============================================================================
 - binary_sensor:
     - name: "Energy Low Tariff Active"
@@ -83,14 +128,23 @@
       device_class: power
       icon: mdi:transmission-tower-off
       state: >
-        {% set hour = now().hour %}
-        {% set dow = now().weekday() %}
-        {{ not (dow in [0, 1, 2, 3, 4] and 17 <= hour < 22) }}
+        {% set spot_on = is_state('input_boolean.energy_spot_pricing_enabled', 'on') %}
+        {% set epex = states('sensor.epex_spot_data_net_price') %}
+        {% set epex_ok = epex not in ['unknown', 'unavailable', 'none', ''] %}
+        {% if spot_on and epex_ok %}
+          {% set q = state_attr('sensor.epex_spot_data_net_price', 'quantile') | float(0.5) %}
+          {% set cheap_q = states('input_number.energy_spot_cheap_quantile') | float(0.33) %}
+          {{ q <= cheap_q }}
+        {% else %}
+          {% set hour = now().hour %}
+          {% set dow = now().weekday() %}
+          {{ not (dow in [0, 1, 2, 3, 4] and 17 <= hour < 22) }}
+        {% endif %}
 
 
 # =============================================================================
 # 2b. HIGH TARIFF BINARY SENSOR
-# True during Mon–Fri 17:00–22:00 peak window. Used by jacuzzi avoidance.
+# Spot-aware: expensive quantile when EPEX enabled. Fallback: Mon-Fri 17-22.
 # =============================================================================
 - binary_sensor:
     - name: "Energy High Tariff Active"
@@ -98,9 +152,18 @@
       device_class: power
       icon: mdi:transmission-tower-export
       state: >
-        {% set hour = now().hour %}
-        {% set dow = now().weekday() %}
-        {{ dow in [0, 1, 2, 3, 4] and 17 <= hour < 22 }}
+        {% set spot_on = is_state('input_boolean.energy_spot_pricing_enabled', 'on') %}
+        {% set epex = states('sensor.epex_spot_data_net_price') %}
+        {% set epex_ok = epex not in ['unknown', 'unavailable', 'none', ''] %}
+        {% if spot_on and epex_ok %}
+          {% set q = state_attr('sensor.epex_spot_data_net_price', 'quantile') | float(0.5) %}
+          {% set exp_q = states('input_number.energy_spot_expensive_quantile') | float(0.67) %}
+          {{ q >= exp_q }}
+        {% else %}
+          {% set hour = now().hour %}
+          {% set dow = now().weekday() %}
+          {{ dow in [0, 1, 2, 3, 4] and 17 <= hour < 22 }}
+        {% endif %}
 
 
 # =============================================================================

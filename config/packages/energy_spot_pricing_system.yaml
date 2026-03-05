@@ -1,0 +1,71 @@
+###############################################################################
+# ENERGY SPOT PRICING SYSTEM
+# File: packages/energy_spot_pricing_system.yaml
+#
+# EPEX Spot dynamic pricing configuration.
+# Requires: EPEX Spot integration (sensor.epex_spot_data_net_price)
+#
+# Helpers:
+#   - EUR/CHF exchange rate
+#   - Network surcharge (from utility bill)
+#   - Cheap/expensive quantile thresholds
+#   - Solar feed-in rate
+#   - Master enable switch (deploy with OFF, enable after validation)
+###############################################################################
+
+input_number:
+  energy_spot_eur_chf_rate:
+    name: "Energy Spot EUR/CHF Rate"
+    min: 0.50
+    max: 1.50
+    step: 0.01
+    initial: 0.95
+    mode: box
+    icon: mdi:currency-eur
+    unit_of_measurement: "CHF/EUR"
+
+  energy_spot_surcharge_chf_kwh:
+    name: "Energy Spot Surcharge"
+    min: 0.00
+    max: 0.50
+    step: 0.01
+    initial: 0.12
+    mode: box
+    icon: mdi:transmission-tower
+    unit_of_measurement: "CHF/kWh"
+
+  energy_spot_cheap_quantile:
+    name: "Energy Spot Cheap Quantile"
+    min: 0.0
+    max: 1.0
+    step: 0.01
+    initial: 0.33
+    mode: box
+    icon: mdi:arrow-down-bold
+    unit_of_measurement: "quantile"
+
+  energy_spot_expensive_quantile:
+    name: "Energy Spot Expensive Quantile"
+    min: 0.0
+    max: 1.0
+    step: 0.01
+    initial: 0.67
+    mode: box
+    icon: mdi:arrow-up-bold
+    unit_of_measurement: "quantile"
+
+  energy_spot_solar_feed_in_chf_kwh:
+    name: "Energy Spot Solar Feed-In Rate"
+    min: 0.00
+    max: 0.50
+    step: 0.01
+    initial: 0.06
+    mode: box
+    icon: mdi:solar-power
+    unit_of_measurement: "CHF/kWh"
+
+input_boolean:
+  energy_spot_pricing_enabled:
+    name: "Energy Spot Pricing Enabled"
+    icon: mdi:flash-auto
+    initial: false
