@@ -203,7 +203,8 @@
         remaining_4: "{{ remaining_3 | float }}"
 
     - variables:
-        # -- Tier 5: Car buffer to 80% --
+        # -- Tier 5: Car buffer to 80% — solar only, no grid --
+        # Grid charging for trips handled by ev_041; maintenance floor by ev_044
         tier5_active: "{{ ev == 'Y' and any_car_below_buffer | bool }}"
         tier5_solar_w: >
           {% if tier5_active and remaining_4 | float >= ev_min_w | float %}
@@ -211,7 +212,7 @@
           {% else %}
             0
           {% endif %}
-        tier5_grid: "{{ tier5_active and low_tariff | bool }}"
+        tier5_grid: false
         remaining_5: "{{ remaining_4 | float - tier5_solar_w | float }}"
 
     - variables:
@@ -268,12 +269,14 @@
             {{ tier1_solar_w | float > 0 or tier5_solar_w | float > 0 }}
           {% endif %}
 
-        # EV tariff allowed: safety override OR plan OR legacy
+        # EV tariff allowed: trip critical OR planned overnight charge
+        # Buffer charging (tier 5) is solar only — grid reserved for trips/maintenance
         ev_tariff_allowed: >
           {% if plan_is_fresh %}
             {{ plan_ev | bool }}
           {% else %}
-            {{ tier1_grid | bool or tier5_grid | bool }}
+            {% set has_planned_trip = states('input_select.ev_night_charge_car') in ['Horace', 'Horatio'] %}
+            {{ tier1_grid | bool or has_planned_trip }}
           {% endif %}
 
         # EV max solar amps: plan amps OR legacy calculation
