@@ -1486,6 +1486,12 @@ def _update_cloud_bias(cur, token):
 
 def cmd_calibrate(token):
     """Weekly auto-calibration from clear-sky days, per-array."""
+    # Skip calibration when snow is on the roof — actuals are invalid
+    snow = ha_state("input_boolean.energy_solar_snow_on_roof", token)
+    if snow == "on":
+        print("Calibrate: Skipped — snow on roof (preserving coefficients)")
+        return
+
     lat, lon = get_location(token)
     cal_east, cal_west = get_calibrations(token)
 
@@ -1862,6 +1868,19 @@ def cmd_banking(token):
     4. Cap at BANKING_CAP, cost-check vs heating at peak
     5. Set helpers: banking_target_temp, strategy, solar_hours, solar_gain
     """
+    # Snow on roof → no solar available, clear banking
+    snow = ha_state("input_boolean.energy_solar_snow_on_roof", token)
+    if snow == "on":
+        _log_banking_decision(
+            "banking_cleared_snow",
+            "Banking cleared — snow on roof, no solar available",
+            {"reason": "snow_on_roof"},
+            token,
+        )
+        _clear_banking(token)
+        print("Banking: Cleared — snow on roof")
+        return
+
     BANKING_CAP = 37.0
 
     lat, lon = get_location(token)
