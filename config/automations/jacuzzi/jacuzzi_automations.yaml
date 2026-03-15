@@ -137,6 +137,7 @@
         effective_standby: "{{ states('sensor.jacuzzi_effective_standby_temp') | float(20) }}"
         low_tariff: "{{ is_state('binary_sensor.energy_low_tariff_active', 'on') }}"
         solar_available: "{{ is_state('binary_sensor.solar_available_for_jacuzzi', 'on') }}"
+        jac_demand: "{{ states('sensor.energy_jacuzzi_demand_scenario') }}"
     - choose:
         # Solar surplus: heat toward effective standby (40°C during solar — thermal battery)
         - conditions:
@@ -178,10 +179,11 @@
                       'solar_w': state_attr('binary_sensor.solar_available_for_jacuzzi', 'solar_power_w') | float(0) | round(0)
                   } | tojson }}
 
-        # Low tariff: heat toward effective standby if below it
+        # Low tariff + event imminent (C/D): heat toward effective standby on grid
+        # State B (standby/banking): solar only — no grid heating without event
         - conditions:
             - condition: template
-              value_template: "{{ low_tariff and current_temp | float < (effective_standby | float - 0.5) }}"
+              value_template: "{{ low_tariff and jac_demand in ['C', 'D'] and current_temp | float < (effective_standby | float - 0.5) }}"
           sequence:
             - action: input_number.set_value
               target:
@@ -260,11 +262,13 @@
           value_template: >
             {% set hb = states('input_datetime.energy_orchestrator_last_heartbeat') %}
             {{ hb in ['unknown', 'unavailable'] or (as_timestamp(now()) - as_timestamp(hb)) > 300 }}
+    # Only heat on grid when event is imminent (state C/D) — state B is solar only
     - condition: template
       value_template: >
         {% set current = state_attr('climate.jacuzzi', 'current_temperature') | float(20) %}
         {% set standby = states('sensor.jacuzzi_effective_standby_temp') | float(20) %}
-        {{ current < (standby - 0.5) }}
+        {% set jac = states('sensor.energy_jacuzzi_demand_scenario') %}
+        {{ jac in ['C', 'D'] and current < (standby - 0.5) }}
 
   actions:
     - variables:
@@ -358,10 +362,12 @@
         low_tariff: "{{ is_state('binary_sensor.energy_low_tariff_active', 'on') }}"
         current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) }}"
         standby_temp: "{{ states('sensor.jacuzzi_effective_standby_temp') | float(states('input_number.jacuzzi_standby_temp') | float(15)) }}"
+        jac_demand: "{{ states('sensor.energy_jacuzzi_demand_scenario') }}"
 
-        # Continue heating check: low tariff means grid is cheap, don't revert
+        # Continue heating check: only continue on grid if event imminent (C/D)
+        # State B (standby/banking): revert when solar drops — no grid banking
         should_continue: >
-          {{ low_tariff }}
+          {{ low_tariff and jac_demand in ['C', 'D'] }}
 
     # During low tariff: continue heating (grid is cheap), don't revert
     - if:

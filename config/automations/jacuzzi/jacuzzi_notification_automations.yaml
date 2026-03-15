@@ -204,9 +204,11 @@
           {% if surplus | float > 500 and is_state('input_boolean.jacuzzi_solar_priority', 'on') %}
             solar ({{ surplus }}W)
           {% elif is_state('binary_sensor.energy_low_tariff_active', 'on') %}
-            low tariff
+            cheap tariff
+          {% elif is_state('binary_sensor.energy_high_tariff_active', 'on') %}
+            expensive tariff
           {% else %}
-            grid
+            {{ states('sensor.energy_tariff_current') }} tariff
           {% endif %}
         msg: >
           Jacuzzi heating started. {{ current_temp }}°C → 40°C.

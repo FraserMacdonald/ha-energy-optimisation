@@ -170,7 +170,7 @@
     - variables:
         new_tariff: "{{ trigger.to_state.state }}"
         old_tariff: "{{ trigger.from_state.state }}"
-        code: "{{ 'tariff_shift_to_high' if new_tariff == 'high' else 'tariff_shift_to_low' }}"
+        code: "tariff_shift_to_{{ new_tariff }}"
         rate: "{{ state_attr('sensor.energy_tariff_current', 'rate_chf') | float(0) }}"
         day_of_week: "{{ now().strftime('%A') }}"
         hour: "{{ now().hour }}"
