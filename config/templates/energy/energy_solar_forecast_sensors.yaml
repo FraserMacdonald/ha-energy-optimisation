@@ -23,10 +23,13 @@
       unique_id: energy_solar_forecast_summary
       icon: mdi:solar-power-variant
       state: >
+        {% set snow = is_state('input_boolean.energy_solar_snow_on_roof', 'on') %}
         {% set fc = states('input_number.energy_solar_forecast_today_kwh') | float(0) %}
         {% set actual = states('input_number.energy_solar_actual_today_kwh') | float(0) %}
         {% set hour = now().hour %}
-        {% if hour < 6 or fc == 0 %}
+        {% if snow %}
+          Snow: 0 / {{ fc | round(1) }}kWh clear-roof
+        {% elif hour < 6 or fc == 0 %}
           Tomorrow: {{ states('input_number.energy_solar_forecast_tomorrow_kwh') | float(0) | round(1) }}kWh
         {% elif actual > 0 %}
           {{ actual | round(1) }} / {{ fc | round(1) }}kWh
@@ -34,18 +37,38 @@
           Forecast: {{ fc | round(1) }}kWh
         {% endif %}
       attributes:
-        forecast_today_kwh: >
+        snow_on_roof: >
+          {{ is_state('input_boolean.energy_solar_snow_on_roof', 'on') }}
+        clear_roof_forecast_today_kwh: >
           {{ states('input_number.energy_solar_forecast_today_kwh') | float(0) | round(1) }}
+        forecast_today_kwh: >
+          {% if is_state('input_boolean.energy_solar_snow_on_roof', 'on') %}
+            0
+          {% else %}
+            {{ states('input_number.energy_solar_forecast_today_kwh') | float(0) | round(1) }}
+          {% endif %}
         forecast_tomorrow_kwh: >
           {{ states('input_number.energy_solar_forecast_tomorrow_kwh') | float(0) | round(1) }}
         actual_today_kwh: >
           {{ states('input_number.energy_solar_actual_today_kwh') | float(0) | round(1) }}
         current_hour_w: >
-          {{ states('input_number.energy_solar_forecast_current_hour_w') | float(0) | round(0) }}
+          {% if is_state('input_boolean.energy_solar_snow_on_roof', 'on') %}
+            0
+          {% else %}
+            {{ states('input_number.energy_solar_forecast_current_hour_w') | float(0) | round(0) }}
+          {% endif %}
         next_hour_w: >
-          {{ states('input_number.energy_solar_forecast_next_hour_w') | float(0) | round(0) }}
+          {% if is_state('input_boolean.energy_solar_snow_on_roof', 'on') %}
+            0
+          {% else %}
+            {{ states('input_number.energy_solar_forecast_next_hour_w') | float(0) | round(0) }}
+          {% endif %}
         peak_hour_w: >
-          {{ states('input_number.energy_solar_forecast_peak_hour_w') | float(0) | round(0) }}
+          {% if is_state('input_boolean.energy_solar_snow_on_roof', 'on') %}
+            0
+          {% else %}
+            {{ states('input_number.energy_solar_forecast_peak_hour_w') | float(0) | round(0) }}
+          {% endif %}
         peak_hour: >
           {{ states('input_number.energy_solar_forecast_peak_hour') | int(0) }}
         clear_sky_today_kwh: >
@@ -53,11 +76,15 @@
         cloud_pct: >
           {{ states('input_number.energy_solar_forecast_cloud_pct') | float(0) | round(0) }}
         tracking_pct: >
-          {% set fc = states('input_number.energy_solar_forecast_today_kwh') | float(0) %}
-          {% if fc > 0 %}
-            {{ (states('input_number.energy_solar_actual_today_kwh') | float(0) / fc * 100) | round(0) }}
-          {% else %}
+          {% if is_state('input_boolean.energy_solar_snow_on_roof', 'on') %}
             0
+          {% else %}
+            {% set fc = states('input_number.energy_solar_forecast_today_kwh') | float(0) %}
+            {% if fc > 0 %}
+              {{ (states('input_number.energy_solar_actual_today_kwh') | float(0) / fc * 100) | round(0) }}
+            {% else %}
+              0
+            {% endif %}
           {% endif %}
         last_run: >
           {{ states('input_select.energy_solar_forecast_last_run') }}

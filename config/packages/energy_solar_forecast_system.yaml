@@ -17,6 +17,11 @@ input_boolean:
     icon: mdi:weather-sunny
     initial: true
 
+  energy_solar_snow_on_roof:
+    name: "Solar Snow on Roof"
+    icon: mdi:snowflake
+    initial: false
+
 
 # =============================================================================
 # INPUT NUMBERS – Forecast outputs and configuration
