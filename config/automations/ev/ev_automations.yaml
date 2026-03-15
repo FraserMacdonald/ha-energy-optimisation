@@ -1516,20 +1516,6 @@
         {% set car = states('sensor.ev_plugged_vehicle') %}
         {{ (car == 'Horace' and is_state('device_tracker.horace_location', 'home'))
            or (car == 'Horatio' and is_state('device_tracker.horatio_location', 'home')) }}
-    # Orchestrator gate: legacy mode (off) OR orchestrator grants permission OR heartbeat stale
-    - condition: or
-      conditions:
-        - condition: state
-          entity_id: input_boolean.energy_orchestrator_enabled
-          state: "off"
-        - condition: state
-          entity_id: input_boolean.energy_ev_solar_charge_allowed
-          state: "on"
-        - condition: template
-          value_template: >
-            {% set hb = states('input_datetime.energy_orchestrator_last_heartbeat') %}
-            {{ hb in ['unknown', 'unavailable'] or (as_timestamp(now()) - as_timestamp(hb)) > 300 }}
-
   actions:
     - variables:
         plugged_car: "{{ states('sensor.ev_plugged_vehicle') }}"
@@ -1538,6 +1524,12 @@
         ev_demand: "{{ states('sensor.energy_ev_demand_scenario') }}"
         low_tariff: "{{ is_state('binary_sensor.energy_low_tariff_active', 'on') }}"
         buffer_target: "{{ states('input_number.energy_ev_buffer_target_soc') | float(80) }}"
+        # Orchestrator gate: legacy mode (off) OR granted OR heartbeat stale (5 min failsafe)
+        orchestrator_allows: >
+          {{ is_state('input_boolean.energy_orchestrator_enabled', 'off')
+             or is_state('input_boolean.energy_ev_solar_charge_allowed', 'on')
+             or (states('input_datetime.energy_orchestrator_last_heartbeat') in ['unknown', 'unavailable'])
+             or (as_timestamp(now()) - as_timestamp(states('input_datetime.energy_orchestrator_last_heartbeat'))) > 300 }}
         # When orchestrator enabled, cap amps to its calculated maximum
         max_amps: >
           {% if is_state('input_boolean.energy_orchestrator_enabled', 'on') %}
@@ -1545,7 +1537,7 @@
           {% else %}
             16
           {% endif %}
-        can_charge: "{{ available_amps >= min_amps }}"
+        can_charge: "{{ orchestrator_allows and available_amps | int >= min_amps | int }}"
         target_amps: "{{ [[available_amps, min_amps] | max, max_amps | int] | min }}"
 
         charge_current_entity: "{{ 'number.horace_charge_current' if plugged_car == 'Horace' else 'number.horatio_charge_current' }}"
@@ -1956,13 +1948,13 @@
                and states('sensor.ev_cheap_tariff_active') == 'on' }}
 
   actions:
-    # Tariff gate: non-critical buffer charging only during low tariff
-    # 10% hard floor charges at any tariff (safety override)
+    # Tariff gate: block buffer charging during expensive tariff only
+    # Neutral EPEX periods are allowed; 10% hard floor charges at any tariff (safety override)
     - variables:
-        low_tariff: "{{ is_state('binary_sensor.energy_low_tariff_active', 'on') }}"
+        high_tariff: "{{ is_state('binary_sensor.energy_high_tariff_active', 'on') }}"
     - if:
         - condition: template
-          value_template: "{{ not low_tariff }}"
+          value_template: "{{ high_tariff }}"
       then:
         - variables:
             horace_soc_check: "{{ states('sensor.horace_battery_level') | float(100) }}"

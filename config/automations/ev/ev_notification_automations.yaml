@@ -230,18 +230,19 @@
             {{ states('sensor.horatio_battery_level') | float(0) | round(0) }}
           {% endif %}
         target: "{{ states('input_number.ev_night_charge_target_soc') | float(0) | round(0) }}"
+        tariff: "{{ states('sensor.energy_tariff_current') | title }}"
 
     - action: notify.mobile_app_fraser_s_iphone
       data:
         title: "EV Night Charging"
         message: >
-          {{ car }} night charging started. Current: {{ soc }}% → Target: {{ target }}%. Tariff: low.
+          {{ car }} night charging started. Current: {{ soc }}% → Target: {{ target }}%. Tariff: {{ tariff }}.
 
     - action: notify.mobile_app_heather_s_iphone
       data:
         title: "EV Night Charging"
         message: >
-          {{ car }} night charging started. Current: {{ soc }}% → Target: {{ target }}%. Tariff: low.
+          {{ car }} night charging started. Current: {{ soc }}% → Target: {{ target }}%. Tariff: {{ tariff }}.
 
 
 # ==============================================================================
@@ -1149,9 +1150,11 @@
           {% if is_state('sun.sun', 'above_horizon') and is_state('input_boolean.ev_solar_mode_enabled', 'on') %}
             solar
           {% elif is_state('binary_sensor.energy_low_tariff_active', 'on') %}
-            low tariff
+            cheap tariff
+          {% elif is_state('binary_sensor.energy_high_tariff_active', 'on') %}
+            expensive tariff
           {% else %}
-            grid
+            {{ states('sensor.energy_tariff_current') }} tariff
           {% endif %}
         fraser_car: "{{ states('input_select.ev_fraser_assigned_car') }}"
         heather_car: "{{ states('input_select.ev_heather_assigned_car') }}"

@@ -19,6 +19,7 @@ input_boolean:
   energy_orchestrator_enabled:
     name: "Energy Orchestrator Enabled"
     icon: mdi:toggle-switch
+    initial: true
 
   energy_jacuzzi_heat_allowed:
     name: "Energy Jacuzzi Heat Allowed"

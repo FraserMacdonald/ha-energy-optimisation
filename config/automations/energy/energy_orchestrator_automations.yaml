@@ -215,7 +215,7 @@
         remaining_5: "{{ remaining_4 | float - tier5_solar_w | float }}"
 
     - variables:
-        # -- Tier 6: Jacuzzi standby/banking (state B) --
+        # -- Tier 6: Jacuzzi standby/banking (state B) — solar only, no grid --
         tier6_active: "{{ jac == 'B' }}"
         tier6_solar_w: >
           {% if tier6_active and remaining_5 | float > 0 %}
@@ -223,7 +223,7 @@
           {% else %}
             0
           {% endif %}
-        tier6_grid: "{{ tier6_active and low_tariff | bool }}"
+        tier6_grid: false
         remaining_6: "{{ remaining_5 | float - tier6_solar_w | float }}"
 
     - variables:
@@ -242,9 +242,9 @@
     # Safety tier 0 always overrides. Plan overrides legacy tiers.
     # -----------------------------------------------------------------
     - variables:
-        # Jacuzzi allowed: safety override OR plan OR solar banking OR legacy tiers
-        # KEY RULE: Never block jacuzzi heating when solar surplus exists and
-        # jacuzzi can absorb it — every kWh self-consumed saves 0.20-0.32 CHF.
+        # Jacuzzi allowed: safety override OR plan OR solar/grid per tier
+        # State B (standby/banking): solar only — grid heating wastes energy before event
+        # State C/D (event imminent): solar + grid during cheap tariff
         jacuzzi_allowed: >
           {% if jac == 'A' %}
             true
@@ -252,22 +252,17 @@
             false
           {% elif plan_is_fresh and plan_jac | bool %}
             true
-          {% elif solar_available and jac in ['B', 'C', 'D'] %}
-            true
           {% elif jac in ['C', 'D'] %}
-            {{ tier3_solar_w | float > 0 or tier3_grid | bool }}
+            {{ surplus | float > 0 or tier3_grid | bool }}
           {% elif jac == 'B' %}
-            {{ tier6_solar_w | float > 0 or tier6_grid | bool }}
+            {{ surplus | float > 0 and tier6_solar_w | float > 0 }}
           {% else %}
             false
           {% endif %}
 
-        # EV solar allowed: plan OR solar surplus OR legacy
-        # When solar surplus exists, always allow EV charging to avoid export loss.
+        # EV solar allowed: plan OR tier math (solar remaining after higher-priority loads)
         ev_solar_allowed: >
           {% if plan_is_fresh and plan_ev | bool and plan_ev_amps | int > 0 %}
-            true
-          {% elif solar_available and ev != 'idle' %}
             true
           {% else %}
             {{ tier1_solar_w | float > 0 or tier5_solar_w | float > 0 }}
