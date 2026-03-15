@@ -1622,44 +1622,6 @@
                       'surplus_w': states('sensor.energy_solar_surplus_w') | float(0) | round(0)
                   } | tojson }}
 
-        # Buffer mode: insufficient solar but low tariff and below buffer target
-        - conditions:
-            - condition: template
-              value_template: >
-                {{ ev_demand == 'Y' and low_tariff
-                   and plugged_car_soc | float < buffer_target | float }}
-          sequence:
-            - action: number.set_value
-              target:
-                entity_id: "{{ charge_current_entity }}"
-              data:
-                value: "{{ min_amps }}"
-
-            - action: input_boolean.turn_on
-              target:
-                entity_id: "{{ allow_charging_entity }}"
-            - action: switch.turn_on
-              target:
-                entity_id: "{{ charge_switch_entity }}"
-
-            - action: logbook.log
-              data:
-                name: "EV Solar"
-                message: "{{ plugged_car }} buffer charging @ {{ min_amps }}A (low tariff, {{ plugged_car_soc | round(0) }}% < {{ buffer_target }}%)"
-
-            - action: shell_command.log_action
-              data:
-                system: ev
-                action_type: charge_start
-                target_entity: "{{ 'switch.' ~ plugged_car | lower ~ '_charge' }}"
-                parameters: >
-                  {{ {'source': 'tariff_buffer',
-                      'car': plugged_car,
-                      'target_amps': min_amps | int,
-                      'current_soc': plugged_car_soc | float,
-                      'buffer_target': buffer_target | float
-                  } | tojson }}
-
       default:
         - action: input_boolean.turn_off
           target:
