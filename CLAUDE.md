@@ -731,10 +731,11 @@ EV 040 was rapidly cycling charging on/off and overriding the user's manual `all
 - Bridge automations (072/073) still mirror `allow_charging` → switch for user control
 
 **Fix 2: Solar margin allows over-consumption**
-- `input_number.ev_solar_margin_w`: min changed `0` → `-500`, initial `500` → `-200`
-- Negative margin means system accepts ~200W grid import to maximize solar absorption
+- `input_number.ev_solar_margin_w`: min extended to `-1000`, max `2000`, initial `-200`
+- Negative margin = aggressive (accept grid import); positive = conservative (export buffer)
 - Formula: `ev_solar_surplus_kw = (prod - cons + ev_draw - margin) / 1000`
-- User-tunable from Admin dashboard
+- Margin inflates both start/stop threshold AND amps target (e.g., -1000 → +1.4A above pure solar)
+- User-tunable from Admin dashboard. Currently set to **-1000** (accept ~1kW grid import)
 
 **Fix 3: 3-minute minimum ON duration**
 - Default (stop) branch checks: switch must be ON AND have been on for >180 seconds
@@ -753,7 +754,7 @@ EV 040 was rapidly cycling charging on/off and overriding the user's manual `all
 - EV 040 triggers on SolarEdge sensor changes (30s debounce), charges if available_amps >= min_amps (5A)
 
 ### Post-Deploy:
-- Manually set `input_number.ev_solar_margin_w` to `-200` in HA UI (`initial` only applies on first entity creation)
+- `input_number.ev_solar_margin_w` set to `-1000` in HA UI (persists in DB, `initial` only applies on first entity creation)
 
 ## What's Done (EV Priority over Speculative Jacuzzi Solar Banking)
 `sensor.jacuzzi_effective_standby_temp` was always 40°C when solar > 500W, regardless of EV state. This caused the jacuzzi to absorb all solar surplus even when an EV was plugged at 42% SOC with no jacuzzi event planned. Heating 39→40°C with no event is pure waste (heat dissipates), while EV stores solar with zero loss.
