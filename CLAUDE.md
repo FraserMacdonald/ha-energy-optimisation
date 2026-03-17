@@ -755,5 +755,26 @@ EV 040 was rapidly cycling charging on/off and overriding the user's manual `all
 ### Post-Deploy:
 - Manually set `input_number.ev_solar_margin_w` to `-200` in HA UI (`initial` only applies on first entity creation)
 
+## What's Done (EV Priority over Speculative Jacuzzi Solar Banking)
+`sensor.jacuzzi_effective_standby_temp` was always 40°C when solar > 500W, regardless of EV state. This caused the jacuzzi to absorb all solar surplus even when an EV was plugged at 42% SOC with no jacuzzi event planned. Heating 39→40°C with no event is pure waste (heat dissipates), while EV stores solar with zero loss.
+
+### Fix:
+- Solar banking to 40°C now **yields to EV** when a plugged home car with `allow_charging` on is below `energy_ev_buffer_target_soc` (80%)
+- Jacuzzi event imminent (demand states C/D) still overrides EV priority
+- New mode attribute value: `ev_priority` (visible on admin dashboard)
+
+### Priority Cascade (updated):
+1. **Event imminent + solar** → 40°C (jacuzzi wins, user committed)
+2. **Solar + no EV need** → 40°C (speculative banking, no conflict)
+3. **Solar + EV needs charging** → normal standby (EV wins, `ev_priority` mode)
+4. **Banking calculator target** → banking temp (event-driven grid banking)
+5. **Boost enabled + cheap** → boosted standby
+6. **Default** → normal standby (20°C)
+7. **Floor** → readiness minimum (calendar-aware freeze protection)
+
+### Modified Files:
+- [x] `config/templates/jacuzzi/jacuzzi_sensors.yaml` — `sensor.jacuzzi_effective_standby_temp` state + mode attribute updated with EV priority check
+- [x] yamllint passes
+
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
