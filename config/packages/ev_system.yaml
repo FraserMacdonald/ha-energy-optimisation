@@ -109,12 +109,12 @@ input_number:
 
   ev_solar_margin_w:
     name: "Solar Margin (Watts)"
-    min: 0
+    min: -500
     max: 2000
     step: 50
     unit_of_measurement: "W"
     icon: mdi:solar-power
-    initial: 500
+    initial: -200
 
   # --- Minimum SOC (maintenance charging threshold) ---
   ev_minimum_soc:
