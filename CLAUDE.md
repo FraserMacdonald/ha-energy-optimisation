@@ -713,5 +713,47 @@ Manual toggle to indicate snow covering solar panels. Overrides displayed foreca
 |------|--------|--------|------|
 | `banking_cleared_snow` | jacuzzi | solar_forecast.py | Banking cleared due to snow on roof |
 
+## What's Done (EV Solar Charging Cycling Fix)
+EV 040 was rapidly cycling charging on/off and overriding the user's manual `allow_charging` toggle.
+
+### Root Cause:
+- EV 040 used `input_boolean.ev_horace_allow_charging` as an **output** (toggling it on/off), not a **gate**
+- When surplus dropped below 5A minimum (3,450W), the default branch turned OFF `allow_charging`, overriding user manual control
+- No hysteresis: charging consumed surplus → surplus dropped → charging stopped → surplus recovered → cycling every 30s
+- 500W positive margin meant the system exported surplus instead of absorbing it
+
+### Fixes Applied:
+
+**Fix 1: EV 040 no longer controls `allow_charging`**
+- Removed `input_boolean.turn_on/off` from all three branches (trip-critical, solar, default)
+- Added `allow_charging` as a **condition gate** — automation skips entirely if user has it off
+- Removed unused `allow_charging_entity` variable
+- Bridge automations (072/073) still mirror `allow_charging` → switch for user control
+
+**Fix 2: Solar margin allows over-consumption**
+- `input_number.ev_solar_margin_w`: min changed `0` → `-500`, initial `500` → `-200`
+- Negative margin means system accepts ~200W grid import to maximize solar absorption
+- Formula: `ev_solar_surplus_kw = (prod - cons + ev_draw - margin) / 1000`
+- User-tunable from Admin dashboard
+
+**Fix 3: 3-minute minimum ON duration**
+- Default (stop) branch checks: switch must be ON AND have been on for >180 seconds
+- If charging started <3 min ago, stop is skipped — re-evaluated next trigger (30s later)
+- Prevents rapid cycling from cloud transients
+
+### Modified Files:
+- [x] `config/automations/ev/ev_automations.yaml` — EV 040: allow_charging as condition gate, removed from actions, 3-min minimum ON in default branch
+- [x] `config/packages/ev_system.yaml` — `ev_solar_margin_w` min/initial changed
+- [x] yamllint passes
+
+### Key Sensor Chain:
+- `sensor.solaredge_current_power` / `sensor.solaredge_power_consumption` → raw production/consumption
+- `sensor.ev_solar_surplus_kw` = `(prod - cons + ev_draw - margin) / 1000` — adds back charger draw to prevent feedback loop
+- `sensor.ev_solar_available_amps` = `surplus_kw * 1000 / (voltage × phases)` capped to max_amps
+- EV 040 triggers on SolarEdge sensor changes (30s debounce), charges if available_amps >= min_amps (5A)
+
+### Post-Deploy:
+- Manually set `input_number.ev_solar_margin_w` to `-200` in HA UI (`initial` only applies on first entity creation)
+
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
