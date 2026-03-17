@@ -688,5 +688,30 @@ All automations (jacuzzi 020/021/022/040, EV 040/041/044, orchestrator 001), eff
 6. Monitor decision logs for 24h
 7. Test fallback: temporarily disable EPEX → sensors revert to fixed schedule
 
+## What's Done (Snow on Roof Toggle for Solar Forecast)
+Manual toggle to indicate snow covering solar panels. Overrides displayed forecast to 0 and blocks banking/calibration while preserving clear-roof data and calibration coefficients for instant recovery when snow clears.
+
+### Approach:
+- Python forecast script continues running normally — helpers and DB keep the real (clear-roof) forecast
+- Toggle overrides the **displayed** forecast to 0 via template sensor
+- Banking and calibration check toggle and exit early when snow is on
+- Toggling snow off resumes everything instantly with preserved coefficients
+
+### Modified Files:
+- [x] `config/packages/energy_solar_forecast_system.yaml` — Added `input_boolean.energy_solar_snow_on_roof` (icon: snowflake, default: off)
+- [x] `config/templates/energy/energy_solar_forecast_sensors.yaml` — Forecast summary sensor:
+  - State: `"Snow: 0 / X.XkWh clear-roof"` when snow on
+  - New attrs: `snow_on_roof` (boolean), `clear_roof_forecast_today_kwh` (always real model value)
+  - `forecast_today_kwh`, `current_hour_w`, `next_hour_w`, `peak_hour_w`, `tracking_pct` return 0 when snow on
+- [x] `scripts/solar_forecast.py` — `cmd_banking()`: early exit when snow on, clears banking, logs `banking_cleared_snow`. `cmd_calibrate()`: early return when snow on, preserves coefficients
+- [x] `config/dashboards/home.yaml` — Solar card: snowflake icon + blue color + "Snow on roof (clear-roof: X.X kWh)" when on
+- [x] `config/dashboards/admin.yaml` — Conditional snow banner after forecast quality card; snow toggle as first item in Solar Forecast Controls
+- [x] yamllint + python syntax check pass
+
+### New Decision Code:
+| Code | System | Source | When |
+|------|--------|--------|------|
+| `banking_cleared_snow` | jacuzzi | solar_forecast.py | Banking cleared due to snow on roof |
+
 ## HA Version
 Targeting Home Assistant 2026.2+. Use `action:` not `service:`, `triggers:` not `trigger:` (list format), `conditions:` and `actions:` (plural).
