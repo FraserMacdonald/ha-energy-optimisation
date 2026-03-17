@@ -501,9 +501,17 @@
         {% set event_imminent = jac in ['C', 'D'] %}
         {# cheap: solar always counts; low_tariff only counts when event is imminent #}
         {% set cheap = solar or (low_tariff and event_imminent) %}
-        {# Solar banking: any solar surplus → heat to 40°C (thermal battery) #}
-        {# The jacuzzi stores solar energy as heat regardless of events #}
-        {% if solar %}
+        {# EV priority: plugged car at home below buffer target → EV gets solar first #}
+        {% set buffer = states('input_number.energy_ev_buffer_target_soc') | float(80) %}
+        {% set plugged = states('sensor.ev_plugged_vehicle') %}
+        {% set ev_needs_solar = false %}
+        {% if plugged == 'Horace' and is_state('input_boolean.ev_horace_allow_charging', 'on') %}
+          {% set ev_needs_solar = states('input_number.ev_horace_current_soc') | float(100) < buffer %}
+        {% elif plugged == 'Horatio' and is_state('input_boolean.ev_horatio_allow_charging', 'on') %}
+          {% set ev_needs_solar = states('input_number.ev_horatio_current_soc') | float(100) < buffer %}
+        {% endif %}
+        {# Solar banking: heat to 40°C only if no EV needs solar (or event imminent) #}
+        {% if solar and (event_imminent or not ev_needs_solar) %}
           {% set base = 40 %}
         {# Banking target from calculator: solar or grid-with-event #}
         {% elif banking > 0 and cheap %}
@@ -528,8 +536,18 @@
           {% set jac = states('sensor.energy_jacuzzi_demand_scenario') %}
           {% set event_imminent = jac in ['C', 'D'] %}
           {% set cheap = solar or (low_tariff and event_imminent) %}
-          {% if solar %}
+          {% set buffer = states('input_number.energy_ev_buffer_target_soc') | float(80) %}
+          {% set plugged = states('sensor.ev_plugged_vehicle') %}
+          {% set ev_needs_solar = false %}
+          {% if plugged == 'Horace' and is_state('input_boolean.ev_horace_allow_charging', 'on') %}
+            {% set ev_needs_solar = states('input_number.ev_horace_current_soc') | float(100) < buffer %}
+          {% elif plugged == 'Horatio' and is_state('input_boolean.ev_horatio_allow_charging', 'on') %}
+            {% set ev_needs_solar = states('input_number.ev_horatio_current_soc') | float(100) < buffer %}
+          {% endif %}
+          {% if solar and (event_imminent or not ev_needs_solar) %}
             solar_banking
+          {% elif solar and ev_needs_solar %}
+            ev_priority
           {% elif banking > 0 and cheap %}
             banking
           {% elif banking > 0 and not cheap %}
