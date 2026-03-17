@@ -1516,6 +1516,12 @@
         {% set car = states('sensor.ev_plugged_vehicle') %}
         {{ (car == 'Horace' and is_state('device_tracker.horace_location', 'home'))
            or (car == 'Horatio' and is_state('device_tracker.horatio_location', 'home')) }}
+    # User-level gate: allow_charging must be on (not controlled by this automation)
+    - condition: template
+      value_template: >
+        {% set car = states('sensor.ev_plugged_vehicle') %}
+        {{ (car == 'Horace' and is_state('input_boolean.ev_horace_allow_charging', 'on'))
+           or (car == 'Horatio' and is_state('input_boolean.ev_horatio_allow_charging', 'on')) }}
   actions:
     - variables:
         plugged_car: "{{ states('sensor.ev_plugged_vehicle') }}"
@@ -1542,7 +1548,6 @@
 
         charge_current_entity: "{{ 'number.horace_charge_current' if plugged_car == 'Horace' else 'number.horatio_charge_current' }}"
         charge_switch_entity: "{{ 'switch.horace_charge' if plugged_car == 'Horace' else 'switch.horatio_charge' }}"
-        allow_charging_entity: "{{ 'input_boolean.ev_horace_allow_charging' if plugged_car == 'Horace' else 'input_boolean.ev_horatio_allow_charging' }}"
         plugged_car_soc: >
           {% if plugged_car == 'Horace' %}
             {{ states('input_number.ev_horace_current_soc') | float(100) }}
@@ -1562,9 +1567,6 @@
               data:
                 value: "{{ max_amps | int }}"
 
-            - action: input_boolean.turn_on
-              target:
-                entity_id: "{{ allow_charging_entity }}"
             - action: switch.turn_on
               target:
                 entity_id: "{{ charge_switch_entity }}"
@@ -1597,9 +1599,6 @@
               data:
                 value: "{{ target_amps }}"
 
-            - action: input_boolean.turn_on
-              target:
-                entity_id: "{{ allow_charging_entity }}"
             - action: switch.turn_on
               target:
                 entity_id: "{{ charge_switch_entity }}"
@@ -1623,9 +1622,13 @@
                   } | tojson }}
 
       default:
-        - action: input_boolean.turn_off
-          target:
-            entity_id: "{{ allow_charging_entity }}"
+        # Only stop if charging has been active for at least 3 minutes
+        # (prevents rapid cycling from cloud transients)
+        - condition: template
+          value_template: >
+            {{ is_state(charge_switch_entity, 'on')
+               and (as_timestamp(now()) - as_timestamp(states[charge_switch_entity].last_changed)) > 180 }}
+
         - action: switch.turn_off
           target:
             entity_id: "{{ charge_switch_entity }}"
