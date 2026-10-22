@@ -2,18 +2,45 @@
 import sys, os
 from datetime import datetime, date
 
-try:
-    import mysql.connector
-except ImportError:
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "mysql-connector-python", "-q"])
-    import mysql.connector
+# Fail loudly rather than at runtime. The previous version attempted a runtime
+# `pip install mysql-connector-python` on ImportError; when that failed it died
+# with no traceback, which surfaced in Home Assistant as
+# "return code: 1 / NoneType: None" and made the fault undiagnosable.
+import mysql.connector
+
+def _secret(name):
+    """Read a secret from the Home Assistant secrets.yaml.
+
+    Credentials live in secrets.yaml, which is git-ignored, so they are never
+    committed or published. A flat "key: value" parse is used so the script
+    needs no YAML dependency.
+    """
+    import re
+    for base in ("/config", "/homeassistant"):
+        try:
+            with open(os.path.join(base, "secrets.yaml")) as fh:
+                for line in fh:
+                    m = re.match(r"^\s*%s\s*:\s*(.+?)\s*$" % re.escape(name), line)
+                    if not m:
+                        continue
+                    val = m.group(1).strip()
+                    if len(val) > 1 and val[0] == val[-1] and val[0] in "'\"":
+                        val = val[1:-1]
+                    if val:
+                        return val
+        except OSError:
+            continue
+    raise SystemExit(
+        "FATAL: secret '%s' not found (checked /config/secrets.yaml and "
+        "/homeassistant/secrets.yaml)" % name
+    )
+
 
 DB = {
     "host": "core-mariadb",
     "port": 3306,
     "user": "homeassistant",
-    "password": "***REMOVED***",
+    "password": _secret("mariadb_password"),
     "database": "ha_analytics",
 }
 
@@ -91,10 +118,10 @@ def query_decisions_today(to_file=False):
                 "system": r[1], "automation_id": r[2],
                 "code": r[3], "text": r[4], "context": r[5],
             })
-        os.makedirs("/config/www", exist_ok=True)
-        with open("/config/www/decisions.json", "w") as f:
+        os.makedirs("/config/data", exist_ok=True)
+        with open("/config/data/decisions.json", "w") as f:
             _json.dump({"count": len(out), "decisions": out}, f, indent=2)
-        print(f"Wrote {len(out)} decisions to /config/www/decisions.json")
+        print(f"Wrote {len(out)} decisions to /config/data/decisions.json")
         return
     if not rows:
         print("No decisions logged today.")
@@ -106,17 +133,36 @@ def query_decisions_today(to_file=False):
             print(f"  ctx: {r[5]}")
 
 
-if __name__ == "__main__":
-    cmd = sys.argv[1]
+def main(argv):
+    if len(argv) < 2:
+        print("usage: log_to_db.py <decision|action|feedback|cost|query_today|query_today_file> ...",
+              file=sys.stderr)
+        return 2
+    cmd = argv[1]
     if cmd == "decision":
-        log_decision(*sys.argv[2:7])
+        log_decision(*argv[2:7])
     elif cmd == "action":
-        log_action(*sys.argv[2:6])
+        log_action(*argv[2:6])
     elif cmd == "feedback":
-        log_feedback(*sys.argv[2:7])
+        log_feedback(*argv[2:7])
     elif cmd == "cost":
-        log_cost(*sys.argv[2:6])
+        log_cost(*argv[2:6])
     elif cmd == "query_today":
         query_decisions_today()
     elif cmd == "query_today_file":
         query_decisions_today(to_file=True)
+    else:
+        print(f"unknown command: {cmd}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    # Print a real traceback so failures are visible in the HA log instead of
+    # the opaque "return code: 1 / NoneType: None".
+    import traceback
+    try:
+        sys.exit(main(sys.argv))
+    except Exception:
+        traceback.print_exc()
+        sys.exit(1)

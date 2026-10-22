@@ -35,11 +35,39 @@ except ImportError:
 # Configuration
 # =============================================================================
 
+def _secret(name):
+    """Read a secret from the Home Assistant secrets.yaml.
+
+    Credentials live in secrets.yaml, which is git-ignored, so they are never
+    committed or published. A flat "key: value" parse is used so the script
+    needs no YAML dependency.
+    """
+    import re
+    for base in ("/config", "/homeassistant"):
+        try:
+            with open(os.path.join(base, "secrets.yaml")) as fh:
+                for line in fh:
+                    m = re.match(r"^\s*%s\s*:\s*(.+?)\s*$" % re.escape(name), line)
+                    if not m:
+                        continue
+                    val = m.group(1).strip()
+                    if len(val) > 1 and val[0] == val[-1] and val[0] in "'\"":
+                        val = val[1:-1]
+                    if val:
+                        return val
+        except OSError:
+            continue
+    raise SystemExit(
+        "FATAL: secret '%s' not found (checked /config/secrets.yaml and "
+        "/homeassistant/secrets.yaml)" % name
+    )
+
+
 DB = {
     "host": "core-mariadb",
     "port": 3306,
     "user": "homeassistant",
-    "password": "***REMOVED***",
+    "password": _secret("mariadb_password"),
     "database": "ha_analytics",
 }
 
@@ -118,11 +146,14 @@ def ha_get(entity_id, token):
 
 
 def ha_state(entity_id, token):
-    """Get entity state string."""
+    """Get entity state string, empty when the entity has no value."""
     try:
-        return ha_get(entity_id, token).get("state", "")
+        state = ha_get(entity_id, token).get("state", "")
     except Exception:
         return ""
+    if state is None or state in ("unavailable", "unknown", "none", "None"):
+        return ""
+    return state
 
 
 def ha_attr(entity_id, attr, token):
