@@ -652,64 +652,19 @@
 # production scenario is 1 or 2 (insufficient for both loads).
 # =============================================================================
 - id: auto_energy_061_conflict_alert
-  alias: "Energy 061 – Conflict Alert"
+  alias: "Energy 061 – Conflict Alert (DISABLED)"
   description: >
-    Sends a persistent notification when the orchestrator detects competing
-    energy demands that cannot be fully resolved with available solar surplus.
-    Uses persistent_notification so repeated fires replace rather than stack.
+    DISABLED per user request - conflict notifications do not help.
   mode: single
   trace:
     stored_traces: 10
 
   triggers:
-    - trigger: state
-      entity_id:
-        - sensor.energy_production_scenario
-        - sensor.energy_jacuzzi_demand_scenario
-        - sensor.energy_ev_demand_scenario
+    - trigger: time
+      at: "00:00:00"
 
   conditions:
-    # DISABLED — redundant with Energy 065 (conflict detail) which has
-    # orchestrator-enabled gate + 15-min cooldown. This fired on every
-    # sensor fluctuation with no cooldown, spamming notifications.
     - condition: template
       value_template: "{{ false }}"
-    - condition: template
-      value_template: >
-        {% set jac = states('sensor.energy_jacuzzi_demand_scenario') %}
-        {% set ev = states('sensor.energy_ev_demand_scenario') %}
-        {% set prod = states('sensor.energy_production_scenario') %}
-        {% set jac_active = jac not in ['E', 'unknown', 'unavailable'] %}
-        {% set ev_active = ev not in ['idle', 'unknown', 'unavailable'] %}
-        {% set insufficient = prod in ['1', '2'] %}
-        {{ jac_active and ev_active and insufficient }}
 
-  actions:
-    - action: notify.mobile_app_fraser_s_iphone
-      data:
-        title: "Energy Orchestrator – Solar Contention"
-        message: >
-          Competing demands with insufficient solar.
-          Prod: {{ states('sensor.energy_production_scenario') }}
-          Jac: {{ states('sensor.energy_jacuzzi_demand_scenario') }}
-          EV: {{ states('sensor.energy_ev_demand_scenario') }}
-          Surplus: {{ states('sensor.energy_solar_surplus_w') | float(0) | round(0) }}W
-          Decision: {{ states('sensor.energy_orchestrator_decision') }}
-        data:
-          tag: energy_orchestrator_conflict
-
-    - action: shell_command.log_decision
-      data:
-        system: orchestrator
-        automation_id: auto_energy_061
-        decision_code: conflict
-        decision_text: >
-          Conflict: prod={{ states('sensor.energy_production_scenario') }}
-          jac={{ states('sensor.energy_jacuzzi_demand_scenario') }}
-          ev={{ states('sensor.energy_ev_demand_scenario') }}
-        context: >
-          {{ {'jac_state': states('sensor.energy_jacuzzi_demand_scenario'),
-              'ev_state': states('sensor.energy_ev_demand_scenario'),
-              'prod_state': states('sensor.energy_production_scenario'),
-              'surplus': states('sensor.energy_solar_surplus_w') | float(0) | round(0)
-          } | tojson }}
+  actions: []

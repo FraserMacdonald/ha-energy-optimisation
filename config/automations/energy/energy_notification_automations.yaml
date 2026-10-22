@@ -14,7 +14,6 @@
 #   Dashboard: persistent_notification.create
 ###############################################################################
 
-
 # ==============================================================================
 # P4 — 062 – MORNING SUMMARY
 # Sends a daily morning briefing at 07:00.
@@ -88,7 +87,6 @@
         title: "Morning Energy Summary"
         message: "{{ msg }}"
 
-
 # ==============================================================================
 # A8 — 063 – DECISION CHANGE
 # Notifies Fraser when the orchestrator decision changes (with cooldown).
@@ -134,7 +132,6 @@
     - delay:
         minutes: 5
 
-
 # ==============================================================================
 # A9 — 064 – MODE CHANGED
 # Notifies both users when the orchestrator is enabled/disabled.
@@ -171,39 +168,25 @@
         title: "Energy Orchestrator"
         message: "Energy orchestrator turned {{ new_mode }}."
 
-
 # ==============================================================================
 # X7 — 065 – CONFLICT DETAIL
-# Detailed conflict notification when both loads compete for solar.
+# DISABLED - user requested no conflict notifications
 # ==============================================================================
 - id: auto_energy_065_conflict_detail
-  alias: "Energy 065 – Conflict Detail"
+  alias: "Energy 065 – Conflict Detail (DISABLED)"
   description: >
-    Sends a detailed conflict notification when both jacuzzi and EV
-    have active demand but insufficient solar for both.
+    DISABLED per user request - conflict notifications do not help.
   mode: single
   trace:
     stored_traces: 10
 
   triggers:
-    - trigger: state
-      entity_id:
-        - sensor.energy_jacuzzi_demand_scenario
-        - sensor.energy_ev_demand_scenario
-        - sensor.energy_production_scenario
+    - trigger: time
+      at: "00:00:00"
 
   conditions:
-    - condition: state
-      entity_id: input_boolean.energy_orchestrator_enabled
-      state: "on"
     - condition: template
-      value_template: >
-        {% set jac = states('sensor.energy_jacuzzi_demand_scenario') %}
-        {% set ev = states('sensor.energy_ev_demand_scenario') %}
-        {% set prod = states('sensor.energy_production_scenario') %}
-        {{ jac in ['A', 'B', 'C', 'D']
-           and ev in ['X', 'Y']
-           and prod in ['1', '2'] }}
+      value_template: "{{ false }}"
 
   actions:
     - variables:
@@ -229,7 +212,6 @@
 
     - delay:
         minutes: 15
-
 
 # ==============================================================================
 # X8 — 066 – SURPLUS WASTED
@@ -337,7 +319,6 @@
     - delay:
         hours: 2
 
-
 # ==============================================================================
 # S1 — 067 – DAILY SUMMARY
 # Sends a daily energy summary at 21:00.
@@ -389,8 +370,6 @@
         title: "Daily Energy Summary"
         message: "{{ msg }}"
 
-
-
 # ==============================================================================
 # S2 — 068 – WEEKLY SUMMARY
 # Sends a weekly energy summary on Sunday at 20:00.
@@ -427,8 +406,6 @@
       data:
         title: "Weekly Energy Summary"
         message: "{{ msg }}"
-
-
 
 # ==============================================================================
 # 069 – DAILY COST LOGGER
