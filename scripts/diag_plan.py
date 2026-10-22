@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Diagnostic: test cmd_plan dependencies and report via HA state API."""
+"""Diagnostic: test cmd_plan dependencies and report via HA state API.
+
+Read-only by default. cmd_plan() starts a planning cycle, so it only runs when
+--run-plan is passed explicitly. Previously it ran on every invocation, which
+meant a "diagnostic" could silently re-plan the house.
+"""
 import json
 import os
 import sys
@@ -8,6 +13,43 @@ import urllib.request
 
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 API = "http://localhost:8123/api"
+
+
+def _secret(name):
+    """Read a secret from the Home Assistant secrets.yaml.
+
+    Credentials live in secrets.yaml, which is git-ignored, so they are never
+    committed or published. A flat "key: value" parse is used so the script
+    needs no YAML dependency.
+    """
+    import re
+    for base in ("/config", "/homeassistant"):
+        try:
+            with open(os.path.join(base, "secrets.yaml")) as fh:
+                for line in fh:
+                    m = re.match(r"^\s*%s\s*:\s*(.+?)\s*$" % re.escape(name), line)
+                    if not m:
+                        continue
+                    val = m.group(1).strip()
+                    if len(val) > 1 and val[0] == val[-1] and val[0] in "'\"":
+                        val = val[1:-1]
+                    if val:
+                        return val
+        except OSError:
+            continue
+    raise SystemExit(
+        "FATAL: secret '%s' not found (checked /config/secrets.yaml and "
+        "/homeassistant/secrets.yaml)" % name
+    )
+
+
+DB = {
+    "host": "core-mariadb",
+    "port": 3306,
+    "user": "homeassistant",
+    "password": _secret("mariadb_password"),
+    "database": "ha_analytics",
+}
 
 
 def set_state(entity_id, state, attrs=None):
@@ -52,25 +94,20 @@ def main():
     # 3. Check DB connection
     try:
         import mysql.connector
-        c = mysql.connector.connect(
-            host="core-mariadb", user="homeassistant",
-            password="homeassistant", database="ha_analytics"
-        )
-        cur = c.cursor()
-        cur.execute("SHOW TABLES")
-        tables = [r[0] for r in cur.fetchall()]
-        results.append(f"tables: {len(tables)}")
+        with mysql.connector.connect(**DB) as c:
+            cur = c.cursor()
+            cur.execute("SHOW TABLES")
+            tables = [r[0] for r in cur.fetchall()]
+            results.append(f"tables: {len(tables)}")
 
-        has_plan = "supply_plan_schedule" in tables
-        has_fc = "solar_forecast_15min" in tables
-        results.append(f"plan_tbl: {has_plan}, fc_tbl: {has_fc}")
+            has_plan = "supply_plan_schedule" in tables
+            has_fc = "solar_forecast_15min" in tables
+            results.append(f"plan_tbl: {has_plan}, fc_tbl: {has_fc}")
 
-        if has_fc:
-            cur.execute("SELECT COUNT(*) FROM solar_forecast_15min")
-            cnt = cur.fetchone()[0]
-            results.append(f"fc_rows: {cnt}")
-
-        c.close()
+            if has_fc:
+                cur.execute("SELECT COUNT(*) FROM solar_forecast_15min")
+                cnt = cur.fetchone()[0]
+                results.append(f"fc_rows: {cnt}")
     except Exception as e:
         results.append(f"DB: {e}")
 
@@ -78,19 +115,22 @@ def main():
     set_state("sensor.plan_diag", "db_done",
               {"detail": " | ".join(results)})
 
-    # 4. Try running cmd_plan
-    try:
-        sys.path.insert(0, "/config/scripts")
-        from solar_forecast import cmd_plan, get_token
-        token = get_token()
-        results.append(f"token: {'ok' if token else 'FAIL'}")
-        if token:
-            cmd_plan(token)
-            results.append("plan: OK")
-    except Exception as e:
-        results.append(f"plan: {e}")
-        tb = traceback.format_exc()
-        results.append(tb[-300:])
+    # 4. Optionally run cmd_plan (side-effecting, opt-in only)
+    if "--run-plan" not in sys.argv[1:]:
+        results.append("plan: skipped (pass --run-plan to execute)")
+    else:
+        try:
+            sys.path.insert(0, "/config/scripts")
+            from solar_forecast import cmd_plan, get_token
+            token = get_token()
+            results.append(f"token: {'ok' if token else 'FAIL'}")
+            if token:
+                cmd_plan(token)
+                results.append("plan: OK")
+        except Exception as e:
+            results.append(f"plan: {e}")
+            tb = traceback.format_exc()
+            results.append(tb[-300:])
 
     # 5. Check plan status after run
     try:
