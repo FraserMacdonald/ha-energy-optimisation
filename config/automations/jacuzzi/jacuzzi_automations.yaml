@@ -12,7 +12,6 @@
 # Phase 1A: Renumbered, bug-fixed, syntax modernised
 ###############################################################################
 
-
 # ==============================================================================
 # 001 – TEMPERATURE CONTROL LOOP
 # ==============================================================================
@@ -58,7 +57,8 @@
               target:
                 entity_id: climate.jacuzzi
               data:
-                temperature: "{{ states('input_number.jacuzzi_target_temp') }}"
+                # The spa rejects anything below 26.5; the helper may be set lower to mean "off"
+                temperature: "{{ [states('input_number.jacuzzi_target_temp') | float(26.5), 26.5] | max }}"
             - action: climate.set_hvac_mode
               target:
                 entity_id: climate.jacuzzi
@@ -72,12 +72,18 @@
                 {% set target = states('input_number.jacuzzi_target_temp') | float(40) %}
                 {{ current >= target }}
           sequence:
+            # "Off" is the spa's Rest/economy mode, which still heats to the stored
+            # setpoint during a filter cycle. Lower the setpoint first.
+            - action: climate.set_temperature
+              target:
+                entity_id: climate.jacuzzi
+              data:
+                temperature: "{{ [states('input_number.jacuzzi_target_temp') | float(26.5), 26.5] | max }}"
             - action: climate.set_hvac_mode
               target:
                 entity_id: climate.jacuzzi
               data:
                 hvac_mode: "off"
-
 
 # ==============================================================================
 # 020 – SOLAR OPPORTUNISTIC HEATING
@@ -218,7 +224,6 @@
                       'target_temp': effective_standby | float
                   } | tojson }}
 
-
 # ==============================================================================
 # 021 – LOW TARIFF HEATING PREFERENCE
 # Note: Will be retired in Phase 1C when orchestrator handles tariff logic.
@@ -307,7 +312,6 @@
               'current_temp': current_temp | float | round(1),
               'target_temp': effective_standby | float
           } | tojson }}
-
 
 # ==============================================================================
 # 022 – SOLAR OFF FALLBACK
@@ -406,7 +410,6 @@
                   'low_tariff': low_tariff,
                   'target_achievable': target_still_achievable
               } | tojson }}
-
 
 # ==============================================================================
 # 040 – CALENDAR EVENT SCHEDULER
@@ -586,7 +589,6 @@
                   'standby_temp': states('sensor.jacuzzi_effective_standby_temp') | float(states('input_number.jacuzzi_standby_temp') | float(15))
               } | tojson }}
 
-
 # ==============================================================================
 # 041 – EVENT HEATING PERSISTENCE
 # Restarts heating if turned off during an event-driven heating session.
@@ -663,7 +665,6 @@
               'current_temp': state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1)
           } | tojson }}
 
-
 # ==============================================================================
 # 042 – FORECAST AMBIENT UPDATER
 # Fetches Met.no hourly forecast and stores ambient at event time + mid-heating.
@@ -692,24 +693,63 @@
         {{ cal is not none and cal.attributes.start_time is defined }}
 
   actions:
+    # MeteoSwiss is the house forecast. Met.no stays as the fallback so the
+    # planning ambient is never left stale when one of the two is unavailable.
+    - action: weather.get_forecasts
+      target:
+        entity_id: weather.9_chemin_de_l_oursiere_saint_cergue
+      data:
+        type: hourly
+      response_variable: forecast_meteoswiss
+      continue_on_error: true
+
     - action: weather.get_forecasts
       target:
         entity_id: weather.forecast_home
       data:
         type: hourly
-      response_variable: forecast_data
+      response_variable: forecast_metno
+      continue_on_error: true
 
     - variables:
         event_start_str: "{{ state_attr('calendar.jacuzzi_schedule', 'start_time') }}"
         event_ts: "{{ as_timestamp(state_attr('calendar.jacuzzi_schedule', 'start_time')) }}"
-        heat_hours_est: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(3) }}"
+        heat_hours_est: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(states('input_number.jacuzzi_max_heat_up_hours') | float(6)) }}"
         mid_heat_ts: "{{ event_ts | float - (heat_hours_est | float * 1800) }}"
-        forecasts: "{{ forecast_data['weather.forecast_home'].forecast }}"
+        meteoswiss_forecasts: >
+          {% if forecast_meteoswiss is defined
+             and forecast_meteoswiss['weather.9_chemin_de_l_oursiere_saint_cergue'] is defined %}
+            {{ forecast_meteoswiss['weather.9_chemin_de_l_oursiere_saint_cergue'].forecast }}
+          {% else %}
+            []
+          {% endif %}
+        metno_forecasts: >
+          {% if forecast_metno is defined
+             and forecast_metno['weather.forecast_home'] is defined %}
+            {{ forecast_metno['weather.forecast_home'].forecast }}
+          {% else %}
+            []
+          {% endif %}
+        forecasts: >
+          {% if meteoswiss_forecasts | count > 0 %}
+            {{ meteoswiss_forecasts }}
+          {% elif metno_forecasts | count > 0 %}
+            {{ metno_forecasts }}
+          {% else %}
+            []
+          {% endif %}
+        forecast_source: >
+          {% if meteoswiss_forecasts | count > 0 %}meteoswiss
+          {% elif metno_forecasts | count > 0 %}metno
+          {% else %}none
+          {% endif %}
+        measured_ambient: "{{ states('sensor.jacuzzi_measured_ambient') | float(-999) }}"
+        ambient_source: "{{ state_attr('sensor.jacuzzi_ambient_temperature', 'ambient_source') }}"
 
     - variables:
         # Find forecast closest to event time
         forecast_at_event: >
-          {% set ns = namespace(best_temp=states('sensor.la_dole_temperature') | float(10), best_diff=999999) %}
+          {% set ns = namespace(best_temp=measured_ambient | float(-999), best_diff=999999) %}
           {% for fc in forecasts %}
             {% set fc_ts = as_timestamp(fc.datetime) %}
             {% set diff = (fc_ts - event_ts | float) | abs %}
@@ -721,7 +761,7 @@
           {{ ns.best_temp }}
         # Find forecast closest to mid-heating time
         forecast_at_heating: >
-          {% set ns = namespace(best_temp=states('sensor.la_dole_temperature') | float(10), best_diff=999999) %}
+          {% set ns = namespace(best_temp=measured_ambient | float(-999), best_diff=999999) %}
           {% for fc in forecasts %}
             {% set fc_ts = as_timestamp(fc.datetime) %}
             {% set diff = (fc_ts - mid_heat_ts | float) | abs %}
@@ -732,28 +772,46 @@
           {% endfor %}
           {{ ns.best_temp }}
 
-    - action: input_number.set_value
-      target:
-        entity_id: input_number.jacuzzi_forecast_temp_at_event
-      data:
-        value: "{{ forecast_at_event | float(10) }}"
-
-    - action: input_number.set_value
-      target:
-        entity_id: input_number.jacuzzi_forecast_temp_at_heating
-      data:
-        value: "{{ forecast_at_heating | float(10) }}"
-
-    - action: logbook.log
-      data:
-        name: "Jacuzzi Forecast"
-        message: >
-          Forecast updated for event at {{ event_start_str }}.
-          Current ambient: {{ states('sensor.la_dole_temperature') }}°C.
-          Forecast at event: {{ forecast_at_event }}°C.
-          Forecast at mid-heating: {{ forecast_at_heating }}°C.
-          Delta: {{ (forecast_at_event | float - states('sensor.la_dole_temperature') | float(10)) | round(1) }}°C
-
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: >
+                {{ forecast_at_event | float(-999) > -999
+                   and forecast_at_heating | float(-999) > -999 }}
+          sequence:
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.jacuzzi_forecast_temp_at_event
+              data:
+                value: "{{ forecast_at_event | float }}"
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.jacuzzi_forecast_temp_at_heating
+              data:
+                value: "{{ forecast_at_heating | float }}"
+            - action: logbook.log
+              data:
+                name: "Jacuzzi Forecast"
+                message: >
+                  Forecast updated for event at {{ event_start_str }}.
+                  Forecast source: {{ forecast_source }}.
+                  Current ambient: {{ states('sensor.jacuzzi_ambient_temperature') }}°C ({{ ambient_source }}).
+                  Forecast at event: {{ forecast_at_event }}°C.
+                  Forecast at mid-heating: {{ forecast_at_heating }}°C.
+                  Delta: {% if measured_ambient > -999 %}{{ (forecast_at_event | float - measured_ambient) | round(1) }}°C{% else %}n/a (no measured ambient){% endif %}
+        - conditions:
+            - condition: template
+              value_template: >
+                {{ forecast_at_event | float(-999) <= -999
+                   or forecast_at_heating | float(-999) <= -999 }}
+          sequence:
+            - action: logbook.log
+              data:
+                name: "Jacuzzi Forecast"
+                message: >
+                  No forecast entries available — planning ambient not updated
+                  (last known forecast retained). Measured ambient is
+                  {{ states('sensor.jacuzzi_ambient_temperature') }}°C.
 
 # ==============================================================================
 # 043 – SMART START LOGGER
@@ -837,7 +895,6 @@
                   'solar_priority': solar_priority
               } | tojson }}
 
-
 # ==============================================================================
 # 060 – EVENT READINESS REMINDER
 # ==============================================================================
@@ -903,7 +960,6 @@
           Jacuzzi at {{ current_temp }}°C and ready for your {{ event_time }} session!
           Heated from {{ start_temp }}°C using {{ source }}.
 
-
 # ==============================================================================
 # 061 – NOT READY WARNING
 # Companion to 060 – fires when jacuzzi is NOT ready before an event.
@@ -943,8 +999,10 @@
   actions:
     - variables:
         current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1) }}"
-        heat_hours: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(3) }}"
-        outdoor_temp: "{{ states('sensor.la_dole_temperature') | float(10) }}"
+        heat_hours: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(states('input_number.jacuzzi_max_heat_up_hours') | float(6)) }}"
+        outdoor_temp: "{{ state_attr('sensor.jacuzzi_ambient_temperature', 'model_ambient') | float(-999) }}"
+        measured_ambient: "{{ states('sensor.jacuzzi_ambient_temperature') }}"
+        ambient_source: "{{ state_attr('sensor.jacuzzi_ambient_temperature', 'ambient_source') }}"
         rate: >
           {% if outdoor_temp | float > 15 %}
             {{ states('input_number.jacuzzi_heat_rate_summer') | float(5) }}
@@ -969,6 +1027,7 @@
         message: >
           Jacuzzi at {{ current_temp }}°C. Event in 30 min.
           At current rate ({{ rate }}°C/h), ready at {{ eta }} ({{ late_mins }} min late).
+          Ambient {{ measured_ambient }}°C ({{ ambient_source }}).
         data:
           push:
             interruption-level: time-sensitive
@@ -979,10 +1038,10 @@
         message: >
           Jacuzzi at {{ current_temp }}°C. Event in 30 min.
           At current rate ({{ rate }}°C/h), ready at {{ eta }} ({{ late_mins }} min late).
+          Ambient {{ measured_ambient }}°C ({{ ambient_source }}).
         data:
           push:
             interruption-level: time-sensitive
-
 
 # ==============================================================================
 # 080 – MANUAL OVERRIDE HANDLER
@@ -1043,7 +1102,6 @@
                 name: "Jacuzzi Manual Override"
                 message: "Override expired, returning to automatic control"
 
-
 # ==============================================================================
 # 090 – FREEZE PROTECTION
 # ==============================================================================
@@ -1080,7 +1138,6 @@
           ({{ state_attr('climate.jacuzzi', 'current_temperature') }}°C).
           Freeze protection activated, heating to 10°C.
 
-
 # ==============================================================================
 # 091 – PIPE FREEZE PUMP CYCLING
 # Safety tier 0 — bypasses orchestrator. Runs independently of heating demand.
@@ -1104,7 +1161,7 @@
       entity_id: input_boolean.jacuzzi_automation_enabled
       state: "on"
     - condition: numeric_state
-      entity_id: sensor.la_dole_temperature
+      entity_id: sensor.jacuzzi_measured_ambient
       below: 0
     # Only cycle when in standby (not actively heating for an event)
     - condition: template
@@ -1133,8 +1190,7 @@
       data:
         name: "Jacuzzi Pipe Protection"
         message: >
-          Pump cycled for 5 min (outdoor: {{ states('sensor.la_dole_temperature') }}°C)
-
+          Pump cycled for 5 min (outdoor: {{ states('sensor.jacuzzi_ambient_temperature') }}°C)
 
 # ==============================================================================
 # 095 – THERMAL MODEL UPDATE (Adaptive Feedback Loop)
@@ -1164,12 +1220,17 @@
     - variables:
         # Current readings
         t_now: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) }}"
-        t_ambient_now: "{{ states('sensor.la_dole_temperature') | float(10) }}"
+        t_ambient_now: "{{ states('sensor.jacuzzi_measured_ambient') | float(-999) }}"
         heater_now: "{{ state_attr('climate.jacuzzi', 'hvac_action') | default('idle') }}"
+
+        # The model must never learn against a fabricated ambient. While the
+        # measured outside temperature is unavailable the sample window is
+        # frozen and no parameter is updated.
+        ambient_valid: "{{ states('sensor.jacuzzi_measured_ambient') not in ['unknown', 'unavailable', 'none', ''] }}"
 
         # Last sample
         t_last: "{{ states('input_number.jacuzzi_last_sample_temp') | float(20) }}"
-        t_ambient_last: "{{ states('input_number.jacuzzi_last_sample_ambient') | float(10) }}"
+        t_ambient_last: "{{ states('input_number.jacuzzi_last_sample_ambient') | float(-999) }}"
         time_last: "{{ states('input_datetime.jacuzzi_last_sample_time') }}"
         heater_last: "{{ states('input_select.jacuzzi_last_sample_heater_state') }}"
 
@@ -1202,7 +1263,7 @@
     - choose:
         - conditions:
             - condition: template
-              value_template: "{{ should_update and heater_now == 'heating' }}"
+              value_template: "{{ should_update and heater_now == 'heating' and ambient_valid }}"
           sequence:
             - variables:
                 # P_observed = C * dT/dt + k * (T_avg - T_amb_avg)
@@ -1237,11 +1298,14 @@
                           Ambient {{ t_ambient_avg }}°C. P_obs={{ p_observed }}kW → P_net={{ p_new }}kW
 
     # Cooling observation
+    # The climate entity reports "off" when the heater is not running, so both
+    # "off" and "idle" count as cooling. Before this was fixed the branch
+    # never fired and the k bands were never learned.
     - choose:
         - conditions:
             - condition: template
               value_template: >
-                {{ should_update and heater_now == 'idle'
+                {{ should_update and heater_now in ['idle', 'off'] and ambient_valid
                    and (t_avg_water | float - t_ambient_avg | float) >= 3
                    and t_now | float < t_last | float }}
           sequence:
@@ -1289,41 +1353,59 @@
                           Ambient {{ t_ambient_avg }}°C. k_obs={{ k_observed }}kW/°C → k_{{ band }}={{ k_new }}kW/°C
 
     # Always: update sample state and increment total count
-    - action: input_number.set_value
-      target:
-        entity_id: input_number.jacuzzi_last_sample_temp
-      data:
-        value: "{{ t_now }}"
-
-    - action: input_number.set_value
-      target:
-        entity_id: input_number.jacuzzi_last_sample_ambient
-      data:
-        value: "{{ t_ambient_now }}"
-
-    - action: input_datetime.set_datetime
-      target:
-        entity_id: input_datetime.jacuzzi_last_sample_time
-      data:
-        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
-
-    - action: input_select.select_option
-      target:
-        entity_id: input_select.jacuzzi_last_sample_heater_state
-      data:
-        option: "{{ heater_now if heater_now in ['heating', 'idle'] else 'unknown' }}"
-
+    # Paused while the measured ambient is unavailable: without a real ambient
+    # the model must not learn, and the sample window is frozen so the first
+    # valid sample after recovery starts a clean window.
     - choose:
         - conditions:
             - condition: template
-              value_template: "{{ should_update }}"
+              value_template: "{{ ambient_valid }}"
           sequence:
             - action: input_number.set_value
               target:
-                entity_id: input_number.jacuzzi_model_observation_count
+                entity_id: input_number.jacuzzi_last_sample_temp
               data:
-                value: "{{ states('input_number.jacuzzi_model_observation_count') | int(0) + 1 }}"
+                value: "{{ t_now }}"
 
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.jacuzzi_last_sample_ambient
+              data:
+                value: "{{ t_ambient_now }}"
+
+            - action: input_datetime.set_datetime
+              target:
+                entity_id: input_datetime.jacuzzi_last_sample_time
+              data:
+                datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.jacuzzi_last_sample_heater_state
+              data:
+                option: "{{ heater_now if heater_now in ['heating', 'idle', 'off'] else 'unknown' }}"
+
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ should_update }}"
+                  sequence:
+                    - action: input_number.set_value
+                      target:
+                        entity_id: input_number.jacuzzi_model_observation_count
+                      data:
+                        value: "{{ states('input_number.jacuzzi_model_observation_count') | int(0) + 1 }}"
+        - conditions:
+            - condition: template
+              value_template: "{{ now().minute == 0 }}"
+          sequence:
+            - action: logbook.log
+              data:
+                name: "Thermal Model"
+                message: >
+                  Measured ambient unavailable — thermal model learning paused.
+                  No parameter update, no fabricated ambient used. Last valid
+                  sample ambient: {{ states('input_number.jacuzzi_last_sample_ambient') }}°C.
 
 # ==============================================================================
 # 096 – THERMAL MODEL RESET SAMPLE (Heater State Change)
@@ -1333,7 +1415,8 @@
   alias: "Jacuzzi 096 – Thermal Model Reset Sample"
   description: >
     Immediately resets the thermal model sample window when the heater
-    changes state between heating and idle, since transition data is unreliable.
+    changes state between heating, idle and off, since transition data is
+    unreliable.
   mode: single
   trace:
     stored_traces: 10
@@ -1347,33 +1430,342 @@
     - variables:
         heater_state: "{{ state_attr('climate.jacuzzi', 'hvac_action') | default('unknown') }}"
         t_now: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(20) }}"
-        t_ambient: "{{ states('sensor.la_dole_temperature') | float(10) }}"
+        t_ambient: "{{ states('sensor.jacuzzi_measured_ambient') | float(-999) }}"
+        # No real ambient reading → the sample window is left untouched so the
+        # model never resets against a fabricated ambient.
+        ambient_valid: "{{ states('sensor.jacuzzi_measured_ambient') not in ['unknown', 'unavailable', 'none', ''] }}"
 
-    - action: input_number.set_value
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ ambient_valid }}"
+          sequence:
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.jacuzzi_last_sample_temp
+              data:
+                value: "{{ t_now }}"
+
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.jacuzzi_last_sample_ambient
+              data:
+                value: "{{ t_ambient }}"
+
+            - action: input_datetime.set_datetime
+              target:
+                entity_id: input_datetime.jacuzzi_last_sample_time
+              data:
+                datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.jacuzzi_last_sample_heater_state
+              data:
+                option: "{{ heater_state if heater_state in ['heating', 'idle', 'off'] else 'unknown' }}"
+
+            - action: logbook.log
+              data:
+                name: "Thermal Model"
+                message: "Heater changed to {{ heater_state }}. Reset sample window."
+
+# ==============================================================================
+# 098 – AUTOMATIC RESERVATION RESCHEDULE
+# Moves the calendar reservation when the jacuzzi cannot be ready in time and
+# appends the reason to the event.
+# ==============================================================================
+- id: auto_jacuzzi_098_auto_reschedule
+  alias: "Jacuzzi 098 – Automatic Reservation Reschedule"
+  description: >
+    When the thermal model predicts the water will be more than 1 °C below the
+    target at the start of the calendar reservation, the reservation is moved
+    later by the time the jacuzzi actually needs to reach the target and the
+    reason is appended to the event description.
+
+    Home Assistant core cannot edit an existing CalDAV event (the caldav
+    integration only supports create_event), so the custom
+    jacuzzi_calendar.move_event service updates the event in place, keeping
+    its UID so the reservation stays a single event.
+  mode: single
+  trace:
+    stored_traces: 10
+
+  triggers:
+    - trigger: time_pattern
+      minutes: "/15"
+    - trigger: state
+      entity_id: sensor.jacuzzi_predicted_temp_at_event
+    - trigger: state
+      entity_id: sensor.jacuzzi_smart_start_time
+
+  conditions:
+    - condition: state
+      entity_id: input_boolean.jacuzzi_automation_enabled
+      state: "on"
+    # A real reservation with a real end time.
+    - condition: template
+      value_template: >
+        {% set cal = states.calendar.jacuzzi_schedule %}
+        {{ cal is not none and cal.attributes.start_time is defined
+           and cal.attributes.end_time is defined }}
+    # A real model prediction.
+    - condition: template
+      value_template: >
+        {% set predicted = states('sensor.jacuzzi_predicted_temp_at_event') %}
+        {{ predicted not in ['unknown', 'unavailable', 'none', ''] }}
+    # The trigger condition: the water will be more than 1 °C below target at
+    # the start of the reservation.
+    - condition: template
+      value_template: >
+        {% set predicted = states('sensor.jacuzzi_predicted_temp_at_event') | float(0) %}
+        {% set target = 40 %}
+        {{ target - predicted > 1.0 }}
+    # The reservation has not ended yet.
+    - condition: template
+      value_template: >
+        {{ as_timestamp(state_attr('calendar.jacuzzi_schedule', 'end_time'))
+           > as_timestamp(now()) }}
+    # Act only once per reservation: the marker in the event description
+    # stops a second move.
+    - condition: template
+      value_template: >
+        {{ 'jacuzzi-auto-rescheduled'
+           not in state_attr('calendar.jacuzzi_schedule', 'description') }}
+
+  actions:
+    # Read the reservation details (creation time) for the reason note. This
+    # only reads, it changes nothing.
+    - action: jacuzzi_calendar.get_event_details
       target:
-        entity_id: input_number.jacuzzi_last_sample_temp
-      data:
-        value: "{{ t_now }}"
+        entity_id: calendar.jacuzzi_schedule
+      response_variable: event_details
+      continue_on_error: true
 
-    - action: input_number.set_value
-      target:
-        entity_id: input_number.jacuzzi_last_sample_ambient
-      data:
-        value: "{{ t_ambient }}"
+    - variables:
+        event_start: "{{ state_attr('calendar.jacuzzi_schedule', 'start_time') }}"
+        event_end: "{{ state_attr('calendar.jacuzzi_schedule', 'end_time') }}"
+        event_start_ts: "{{ as_timestamp(state_attr('calendar.jacuzzi_schedule', 'start_time')) }}"
+        event_end_ts: "{{ as_timestamp(state_attr('calendar.jacuzzi_schedule', 'end_time')) }}"
+        hours_to_event: "{{ ((event_start_ts | float - as_timestamp(now())) / 3600) | round(2) }}"
+        # The event target: the thermal model uses 40 °C as the readiness
+        # target for a reservation.
+        target: 40
+        predicted: "{{ states('sensor.jacuzzi_predicted_temp_at_event') | float(0) }}"
+        current_temp: "{{ state_attr('climate.jacuzzi', 'current_temperature') | float(0) | round(1) }}"
+        ambient: "{{ state_attr('sensor.jacuzzi_ambient_temperature', 'model_ambient') | float(-999) }}"
+        measured_ambient: "{{ states('sensor.jacuzzi_measured_ambient') | float(-999) }}"
+        measured_source: "{{ states('sensor.jacuzzi_measured_ambient_source') }}"
+        forecast_ambient: "{{ states('input_number.jacuzzi_forecast_temp_at_heating') | float(-999) }}"
+        k: "{{ states('sensor.jacuzzi_current_k') | float(-999) }}"
+        p_net: "{{ states('input_number.jacuzzi_effective_power_kw') | float(0) }}"
+        c_water: "{{ states('sensor.jacuzzi_thermal_capacity') | float(3.72) }}"
+        heat_hours_needed: "{{ states('sensor.jacuzzi_heat_up_time_required') | float(-999) }}"
+        max_shift_hours: "{{ states('input_number.jacuzzi_max_heat_up_hours') | float(6) }}"
+        heater_action: "{{ state_attr('climate.jacuzzi', 'hvac_action') | default('unknown') }}"
+        created_ts: >
+          {% if event_details is defined and event_details.created is defined
+                and event_details.created %}
+            {{ as_timestamp(event_details.created) }}
+          {% else %}
+            -999
+          {% endif %}
 
-    - action: input_datetime.set_datetime
-      target:
-        entity_id: input_datetime.jacuzzi_last_sample_time
-      data:
-        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+        # Extra time needed to reach the target from the predicted temperature
+        # at the reservation:
+        #   T(t) = T_eq - (T_eq - T0) * exp(-k t / c)   with T_eq = amb + P/k
+        #   t    = -(c/k) * ln((T_eq - target) / (T_eq - predicted))
+        extra_hours: >
+          {% if ambient | float <= -999 or k | float <= -999 or k | float <= 0
+                or c_water | float <= 0 or p_net | float <= 0 %}
+            -999
+          {% else %}
+            {% set equilibrium = ambient | float + p_net | float / k | float %}
+            {% if equilibrium <= target | float or equilibrium <= predicted | float %}
+              -999
+            {% else %}
+              {{ ((-c_water | float / k | float)
+                 * (((equilibrium - target | float) / (equilibrium - predicted | float)) | log))
+                 | round(3) }}
+            {% endif %}
+          {% endif %}
 
-    - action: input_select.select_option
-      target:
-        entity_id: input_select.jacuzzi_last_sample_heater_state
-      data:
-        option: "{{ heater_state if heater_state in ['heating', 'idle'] else 'unknown' }}"
+        # Shift rounded up to the next quarter hour.
+        raw_shift_hours: >
+          {% if extra_hours | float <= -999 %}
+            -999
+          {% else %}
+            {{ ([extra_hours | float, 0.25] | max * 4) | round(0, 'ceil') | int / 4 }}
+          {% endif %}
+        shift_hours: >
+          {% if raw_shift_hours | float <= -999 %}
+            -999
+          {% else %}
+            {{ [raw_shift_hours | float, max_shift_hours | float] | min }}
+          {% endif %}
+        new_start_ts: "{{ event_start_ts | float + shift_hours | float * 3600 }}"
+        new_end_ts: "{{ event_end_ts | float + shift_hours | float * 3600 }}"
+        new_start: "{{ new_start_ts | float | timestamp_local('%Y-%m-%d %H:%M:%S') }}"
+        new_end: "{{ new_end_ts | float | timestamp_local('%Y-%m-%d %H:%M:%S') }}"
 
-    - action: logbook.log
-      data:
-        name: "Thermal Model"
-        message: "Heater changed to {{ heater_state }}. Reset sample window."
+        # Why the reservation could not be met.
+        reason_text: >
+          {% set ns = namespace(parts=[]) %}
+          {% if is_state('input_boolean.jacuzzi_manual_override', 'on') %}
+            {% set ns.parts = ns.parts + ['the heating was switched off manually'] %}
+          {% endif %}
+          {% if heater_action in ['off', 'idle'] and heat_hours_needed | float > 0
+                and hours_to_event | float < heat_hours_needed | float %}
+            {% set ns.parts = ns.parts + ['the heater was not running even though '
+              ~ heat_hours_needed ~ ' h of heating are needed and only '
+              ~ hours_to_event ~ ' h were left'] %}
+          {% endif %}
+          {% if measured_ambient | float > -999 and forecast_ambient | float > -999
+                and measured_ambient | float < forecast_ambient | float - 1 %}
+            {% set ns.parts = ns.parts + ['the measured outside temperature ('
+              ~ measured_ambient ~ ' °C) was lower than the forecast ('
+              ~ forecast_ambient ~ ' °C)'] %}
+          {% endif %}
+          {% if created_ts | float > -999 and heat_hours_needed | float > 0
+                and (event_start_ts | float - created_ts | float)
+                < heat_hours_needed | float * 3600 %}
+            {% set ns.parts = ns.parts + ['the reservation was created only '
+              ~ ((event_start_ts | float - created_ts | float) / 3600) | round(1)
+              ~ ' h before it starts, less than the ' ~ heat_hours_needed
+              ~ ' h of heating needed'] %}
+          {% endif %}
+          {% if heat_hours_needed | float > 0
+                and hours_to_event | float < heat_hours_needed | float %}
+            {% set ns.parts = ns.parts + ['the reservation was too close to the present time to complete the preheat'] %}
+          {% endif %}
+          {% if ns.parts | count == 0 %}
+            {% set ns.parts = ['the thermal model predicted the water would not reach the target in time'] %}
+          {% endif %}
+          {{ ns.parts | join('; ') }}
+
+        note: >
+          Moved by Home Assistant (jacuzzi-auto-rescheduled): the jacuzzi was
+          predicted to reach only {{ predicted }} °C at the original start time
+          (target {{ target }} °C), so the reservation was moved
+          {{ shift_hours | float }} h later. Reason: {{ reason_text }}.
+          Original: {{ event_start }} – {{ event_end }}.
+          New: {{ new_start }} – {{ new_end }}.
+          Model: ambient {{ ambient }} °C (measured {{ measured_ambient }} °C
+          from {{ measured_source }}), k {{ k }} kW/°C, P {{ p_net }} kW.
+
+    - choose:
+        # The reservation can be moved into a time when the jacuzzi is ready.
+        - conditions:
+            - condition: template
+              value_template: >
+                {{ raw_shift_hours | float > 0
+                   and raw_shift_hours | float <= max_shift_hours | float }}
+          sequence:
+            - action: jacuzzi_calendar.move_event
+              target:
+                entity_id: calendar.jacuzzi_schedule
+              data:
+                start_date_time: "{{ new_start }}"
+                end_date_time: "{{ new_end }}"
+                note: "{{ note | trim }}"
+              response_variable: move_result
+              continue_on_error: true
+
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ move_result is defined }}"
+                  sequence:
+                    - action: logbook.log
+                      data:
+                        name: "Jacuzzi Reservation"
+                        message: >
+                          Reservation moved by {{ shift_hours | float }} h.
+                          {{ event_start }} – {{ event_end }} →
+                          {{ new_start }} – {{ new_end }}.
+                          Predicted {{ predicted }} °C (target {{ target }} °C).
+                          Reason: {{ reason_text }}.
+                    - action: notify.mobile_app_fraser_s_iphone
+                      data:
+                        title: "Jacuzzi Reservation Moved"
+                        message: >
+                          Moved to {{ new_start_ts | float | timestamp_local('%H:%M') }}
+                          ({{ shift_hours | float | round(1) }} h later).
+                          {{ reason_text }}
+                        data:
+                          push:
+                            interruption-level: time-sensitive
+                    - action: notify.mobile_app_heather_s_iphone
+                      data:
+                        title: "Jacuzzi Reservation Moved"
+                        message: >
+                          Moved to {{ new_start_ts | float | timestamp_local('%H:%M') }}
+                          ({{ shift_hours | float | round(1) }} h later).
+                          {{ reason_text }}
+                        data:
+                          push:
+                            interruption-level: time-sensitive
+                - conditions:
+                    - condition: template
+                      value_template: "{{ true }}"
+                  sequence:
+                    - action: logbook.log
+                      data:
+                        name: "Jacuzzi Reservation"
+                        message: >
+                          The reservation could not be moved: the CalDAV update
+                          failed. Predicted {{ predicted }} °C (target
+                          {{ target }} °C).
+
+        # The gap is too large to close by moving the reservation: tell the
+        # user instead of silently doing nothing.
+        - conditions:
+            - condition: template
+              value_template: >
+                {{ raw_shift_hours | float > max_shift_hours | float }}
+          sequence:
+            - action: logbook.log
+              data:
+                name: "Jacuzzi Reservation"
+                message: >
+                  The reservation was not moved: the jacuzzi needs
+                  {{ raw_shift_hours | float }} h more heating than the maximum
+                  shift of {{ max_shift_hours | float }} h.
+                  Predicted {{ predicted }} °C (target {{ target }} °C).
+                  Reason: {{ reason_text }}.
+            - action: notify.mobile_app_fraser_s_iphone
+              data:
+                title: "Jacuzzi Reservation Not Moved"
+                message: >
+                  The jacuzzi needs {{ raw_shift_hours | float | round(1) }} h more
+                  heating than the maximum shift of {{ max_shift_hours | float }} h,
+                  so the reservation at
+                  {{ event_start_ts | float | timestamp_local('%H:%M') }}
+                  was left as it is.
+                data:
+                  push:
+                    interruption-level: time-sensitive
+            - action: notify.mobile_app_heather_s_iphone
+              data:
+                title: "Jacuzzi Reservation Not Moved"
+                message: >
+                  The jacuzzi needs {{ raw_shift_hours | float | round(1) }} h more
+                  heating than the maximum shift of {{ max_shift_hours | float }} h,
+                  so the reservation at
+                  {{ event_start_ts | float | timestamp_local('%H:%M') }}
+                  was left as it is.
+                data:
+                  push:
+                    interruption-level: time-sensitive
+
+        # The model cannot tell how long the extra heating takes.
+        - conditions:
+            - condition: template
+              value_template: "{{ true }}"
+          sequence:
+            - action: logbook.log
+              data:
+                name: "Jacuzzi Reservation"
+                message: >
+                  The reservation was not moved: the thermal model has no usable
+                  ambient or k value, so the extra heating time is unknown.
+                  Predicted {{ predicted }} °C (target {{ target }} °C).
