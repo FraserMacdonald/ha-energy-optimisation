@@ -14,27 +14,6 @@ frontend:
 lovelace:
   mode: storage
   dashboards:
-    lovelace-home:
-      mode: yaml
-      filename: dashboards/home.yaml
-      title: Home
-      icon: mdi:home
-      require_admin: false
-      show_in_sidebar: true
-    lovelace-admin:
-      mode: yaml
-      filename: dashboards/admin.yaml
-      title: Admin
-      icon: mdi:shield-crown
-      require_admin: true
-      show_in_sidebar: true
-    lovelace-debug:
-      mode: yaml
-      filename: dashboards/debug.yaml
-      title: Debug
-      icon: mdi:bug
-      require_admin: true
-      show_in_sidebar: true
     lovelace-regret:
       mode: yaml
       filename: dashboards/regret.yaml
